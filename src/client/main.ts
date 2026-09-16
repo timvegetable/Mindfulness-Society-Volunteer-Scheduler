@@ -1,0 +1,448 @@
+import './styles.css';
+import { ApiClient, ApiClientError, type IdentityData } from './api';
+import { IdentityController, type IdentityState } from './identity';
+import {
+  renderAdminImport,
+  renderAdminInsights,
+  renderAdminSchedule,
+  renderCenterSchedule,
+  renderUnauthorized,
+  renderVolunteerDashboard,
+  type AdminImportActions,
+  type AdminInsightsActions,
+  type AdminScheduleData,
+  type AvailabilityException,
+  type AvailabilityInterval,
+  type CenterCandidate,
+  type CenterScheduleData,
+  type InsightsData,
+  type ImportRunData,
+  type VolunteerDashboardData,
+  type ViewRole
+} from './views';
+
+export interface ClientConfig {
+  appsScriptUrl: string;
+  oauthClientId: string;
+}
+
+export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
+  appsScriptUrl: '',
+  oauthClientId: ''
+};
+
+const ROUTES = {
+  volunteer: ['dashboard'],
+  administrator: ['schedule', 'import', 'insights', 'centers'],
+  'center-contact': ['centers']
+} as const;
+
+type Route = (typeof ROUTES)[keyof typeof ROUTES][number];
+
+interface Runtime {
+  document: Document;
+  app: HTMLElement;
+  identityHost: HTMLElement | null;
+  config: ClientConfig;
+  api: ApiClient;
+  identity: IdentityController;
+  profile?: IdentityData;
+  route: Route;
+  rendering: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function parseRevision(value: unknown): number | string | undefined {
+  return typeof value === 'number' && Number.isFinite(value) || typeof value === 'string' ? value : undefined;
+}
+
+function parseInterval(value: unknown): AvailabilityInterval | undefined {
+  if (!isRecord(value)) return undefined;
+  const weekday = numberValue(value.weekday);
+  const start = stringValue(value.start);
+  const end = stringValue(value.end);
+  if (weekday === undefined || start === undefined || end === undefined) return undefined;
+  const interval: AvailabilityInterval = { weekday, start, end };
+  const id = stringValue(value.id);
+  const timeZone = stringValue(value.timeZone);
+  if (id !== undefined) interval.id = id;
+  if (timeZone !== undefined) interval.timeZone = timeZone;
+  return interval;
+}
+
+function parseException(value: unknown): AvailabilityException | undefined {
+  if (!isRecord(value)) return undefined;
+  const date = stringValue(value.date);
+  const start = stringValue(value.start);
+  const end = stringValue(value.end);
+  const kind = value.kind === 'available' || value.kind === 'unavailable' ? value.kind : undefined;
+  if (!date || !start || !end || !kind) return undefined;
+  const exception: AvailabilityException = { date, start, end, kind };
+  const id = stringValue(value.id);
+  const reason = stringValue(value.reason);
+  if (id !== undefined) exception.id = id;
+  if (reason !== undefined) exception.reason = reason;
+  return exception;
+}
+
+function parseDashboard(value: unknown): VolunteerDashboardData {
+  const data = isRecord(value) ? value : {};
+  const recurringAvailability = arrayValue(data.recurringAvailability).map(parseInterval).filter((item): item is AvailabilityInterval => item !== undefined);
+  const exceptions = arrayValue(data.exceptions).map(parseException).filter((item): item is AvailabilityException => item !== undefined);
+  const assignments = arrayValue(data.assignments).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const id = stringValue(item.id);
+    const date = stringValue(item.date);
+    const start = stringValue(item.start);
+    const end = stringValue(item.end);
+    if (!id || !date || !start || !end) return [];
+    return [{
+      id,
+      date,
+      start,
+      end,
+      ...(stringValue(item.sessionId) ? { sessionId: stringValue(item.sessionId) } : {}),
+      ...(stringValue(item.center) ? { center: stringValue(item.center) } : {}),
+      ...(stringValue(item.kind) ? { kind: stringValue(item.kind) } : {}),
+      ...(stringValue(item.status) ? { status: stringValue(item.status) } : {})
+    }];
+  });
+  return {
+    recurringAvailability,
+    exceptions,
+    assignments,
+    revision: parseRevision(data.revision),
+    stale: data.stale === true
+  };
+}
+
+function parseSchedule(value: unknown): AdminScheduleData {
+  const data = isRecord(value) ? value : {};
+  const sessions = arrayValue(data.sessions).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const id = stringValue(item.id);
+    const date = stringValue(item.date);
+    const start = stringValue(item.start);
+    const end = stringValue(item.end);
+    if (!id || !date || !start || !end) return [];
+    const assignments = arrayValue(item.assignments).flatMap((candidate) => {
+      if (!isRecord(candidate)) return [];
+      const assignmentDate = stringValue(candidate.date) ?? date;
+      const assignmentStart = stringValue(candidate.start) ?? start;
+      const assignmentEnd = stringValue(candidate.end) ?? end;
+      return [{
+        date: assignmentDate,
+        start: assignmentStart,
+        end: assignmentEnd,
+        ...(stringValue(candidate.id) ? { id: stringValue(candidate.id) } : {}),
+        ...(stringValue(candidate.volunteerId) ? { volunteerId: stringValue(candidate.volunteerId) } : {}),
+        ...(stringValue(candidate.volunteerName) ? { volunteerName: stringValue(candidate.volunteerName) } : {}),
+        ...(stringValue(candidate.sessionId) ? { sessionId: stringValue(candidate.sessionId) } : {}),
+        ...(stringValue(candidate.center) ? { center: stringValue(candidate.center) } : {}),
+        ...(stringValue(candidate.role) ? { role: stringValue(candidate.role) } : {})
+      };
+    });
+    return [{
+      id,
+      date,
+      start,
+      end,
+      assignments,
+      ...(stringValue(item.center) ? { center: stringValue(item.center) } : {}),
+      ...(stringValue(item.kind) ? { kind: stringValue(item.kind) } : {}),
+      ...(numberValue(item.requiredStaffCount) !== undefined ? { requiredStaffCount: numberValue(item.requiredStaffCount) } : {}),
+      ...(arrayValue(item.backups).every((entry) => typeof entry === 'string') ? { backups: arrayValue(item.backups) as string[] } : {}),
+      ...(numberValue(item.shortfall) !== undefined ? { shortfall: numberValue(item.shortfall) } : {}),
+      ...(stringValue(item.status) ? { status: stringValue(item.status) } : {})
+    }];
+  });
+  return {
+    sessions,
+    revision: parseRevision(data.revision),
+    inputRevision: parseRevision(data.inputRevision),
+    stale: data.stale === true,
+    runStatus: stringValue(data.runStatus),
+    diagnostic: stringValue(data.diagnostic)
+  };
+}
+
+function parseImport(value: unknown): ImportRunData {
+  const data = isRecord(value) ? value : {};
+  const preview = arrayValue(data.preview).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    return [{
+      ...(stringValue(item.name) ? { name: stringValue(item.name) } : {}),
+      ...(stringValue(item.email) ? { email: stringValue(item.email) } : {}),
+      ...(stringValue(item.status) ? { status: stringValue(item.status) } : {})
+    }];
+  });
+  return {
+    status: stringValue(data.status),
+    resultsCode: stringValue(data.resultsCode),
+    participantCount: numberValue(data.participantCount),
+    matchedCount: numberValue(data.matchedCount),
+    unmatchedCount: numberValue(data.unmatchedCount),
+    diagnostics: arrayValue(data.diagnostics).filter((item): item is string => typeof item === 'string'),
+    preview,
+    revision: parseRevision(data.revision)
+  };
+}
+
+function parseInsights(value: unknown): InsightsData {
+  const data = isRecord(value) ? value : {};
+  const cells = arrayValue(data.cells).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const weekday = numberValue(item.weekday);
+    const start = stringValue(item.start);
+    const end = stringValue(item.end);
+    const count = numberValue(item.count);
+    if (weekday === undefined || !start || !end || count === undefined) return [];
+    return [{
+      weekday,
+      start,
+      end,
+      count,
+      ...(arrayValue(item.volunteerNames).every((entry) => typeof entry === 'string') ? { volunteerNames: arrayValue(item.volunteerNames) as string[] } : {})
+    }];
+  });
+  return { cells, revision: parseRevision(data.revision), stale: data.stale === true, generatedAt: stringValue(data.generatedAt) };
+}
+
+function parseCenter(value: unknown): CenterScheduleData {
+  const data = isRecord(value) ? value : {};
+  const candidates = arrayValue(data.candidates).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const weekday = numberValue(item.weekday);
+    const start = stringValue(item.start);
+    const end = stringValue(item.end);
+    const requestedStaffCount = numberValue(item.requestedStaffCount);
+    if (weekday === undefined || !start || !end || requestedStaffCount === undefined) return [];
+    const candidate: CenterCandidate = { weekday, start, end, requestedStaffCount };
+    const id = stringValue(item.id);
+    const coverageCount = numberValue(item.coverageCount);
+    const status = stringValue(item.status);
+    if (id !== undefined) candidate.id = id;
+    if (coverageCount !== undefined) candidate.coverageCount = coverageCount;
+    if (status !== undefined) candidate.status = status;
+    if (arrayValue(item.volunteerNames).every((entry) => typeof entry === 'string')) candidate.volunteerNames = arrayValue(item.volunteerNames) as string[];
+    return [candidate];
+  });
+  return { centerName: stringValue(data.centerName), candidates, revision: parseRevision(data.revision) };
+}
+
+function configFrom(value: unknown): ClientConfig {
+  if (!isRecord(value)) return DEFAULT_CLIENT_CONFIG;
+  const appsScriptUrl = stringValue(value.appsScriptUrl) ?? '';
+  const oauthClientId = stringValue(value.oauthClientId) ?? '';
+  return { appsScriptUrl, oauthClientId };
+}
+
+export async function loadClientConfig(fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<ClientConfig> {
+  try {
+    const response = await fetchImpl('/config.json', { method: 'GET', credentials: 'omit', headers: { Accept: 'application/json' } });
+    if (!response.ok) return DEFAULT_CLIENT_CONFIG;
+    return configFrom(await response.json() as unknown);
+  } catch {
+    return DEFAULT_CLIENT_CONFIG;
+  }
+}
+
+function clear(element: HTMLElement): void {
+  while (element.firstChild) element.firstChild.remove();
+}
+
+function setIdentityText(host: HTMLElement, state: IdentityState, documentRef: Document, onSignOut: () => void): void {
+  clear(host);
+  if (state.status === 'authenticated') {
+    const label = documentRef.createElement('span');
+    label.className = 'identity-label';
+    label.textContent = state.profile.name ? `${state.profile.name} (${state.profile.role})` : `${state.profile.email} (${state.profile.role})`;
+    host.append(label);
+    const signOut = documentRef.createElement('button');
+    signOut.type = 'button';
+    signOut.className = 'text-button';
+    signOut.textContent = 'Sign out';
+    signOut.addEventListener('click', onSignOut);
+    host.append(signOut);
+    return;
+  }
+  const message = documentRef.createElement('span');
+  message.className = state.status === 'unavailable' ? 'muted' : 'identity-status';
+  message.textContent = state.status === 'loading' ? 'Loading sign-in…' : state.status === 'authenticating' ? 'Signing in…' : state.message ?? 'Sign in to continue.';
+  host.append(message);
+}
+
+function renderNavigation(runtime: Runtime): void {
+  const header = runtime.document.querySelector('header');
+  if (!header) return;
+  const oldNav = header.querySelector('.route-nav');
+  oldNav?.remove();
+  if (!runtime.profile) return;
+  const nav = runtime.document.createElement('nav');
+  nav.className = 'route-nav';
+  nav.setAttribute('aria-label', 'Scheduling sections');
+  for (const route of ROUTES[runtime.profile.role]) {
+    const link = runtime.document.createElement('a');
+    link.href = `#${route}`;
+    link.textContent = route === 'centers' ? 'Center candidates' : route[0].toUpperCase() + route.slice(1);
+    link.className = route === runtime.route ? 'active' : '';
+    nav.append(link);
+  }
+  header.append(nav);
+}
+
+function renderError(runtime: Runtime, message: string): void {
+  renderUnauthorized(runtime.app, message, runtime.document);
+}
+
+async function loadRoute(runtime: Runtime): Promise<void> {
+  if (!runtime.profile || runtime.rendering) return;
+  runtime.rendering = true;
+  renderNavigation(runtime);
+  try {
+    const credential = runtime.identity.getCredential();
+    if (!credential) {
+      renderError(runtime, 'Your sign-in session has ended. Please sign in again.');
+      return;
+    }
+    if (runtime.profile.role === 'volunteer') {
+      const dashboard = parseDashboard(await runtime.api.volunteerDashboard(credential));
+      renderVolunteerDashboard(runtime.app, dashboard, {
+        onRecurringUpdate: async (intervals, expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          await runtime.api.updateRecurringAvailability(intervals, expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        },
+        onExceptionCreate: async (exception, expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          await runtime.api.createAvailabilityException(exception, expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        },
+        onAssignmentCancel: async (assignmentId, reason, expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          await runtime.api.cancelAssignment(assignmentId, reason, expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        }
+      }, runtime.document);
+    } else if (runtime.profile.role === 'administrator' && runtime.route === 'schedule') {
+      const schedule = parseSchedule(await runtime.api.schedule(credential));
+      renderAdminSchedule(runtime.app, schedule, {
+        onRerun: async (expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          await runtime.api.rerunSchedule(expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        }
+      }, runtime.document);
+    } else if (runtime.profile.role === 'administrator' && runtime.route === 'import') {
+      const importData = parseImport(await runtime.api.importPreview('', credential).catch(() => ({})));
+      renderAdminImport(runtime.app, importData, {
+        onPreview: async (resultsCode) => {
+          const preview = parseImport(await runtime.api.importPreview(resultsCode, credential));
+          renderAdminImport(runtime.app, preview, {
+            onPreview: async (code) => renderAdminImport(runtime.app, parseImport(await runtime.api.importPreview(code, credential)), {}, preview.revision, runtime.document),
+            onPromote: async (code, expectedRevision) => {
+              if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+              await runtime.api.importPromote(code, expectedRevision, credential);
+              await loadRouteAfterAction(runtime);
+            }
+          }, preview.revision, runtime.document);
+        },
+        onPromote: async (resultsCode, expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
+          await runtime.api.importPromote(resultsCode, expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        }
+      }, importData.revision, runtime.document);
+    } else if (runtime.profile.role === 'administrator' && runtime.route === 'insights') {
+      const insights = parseInsights(await runtime.api.insights(credential));
+      renderAdminInsights(runtime.app, insights, {
+        onRefresh: async (expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          await runtime.api.refreshInsights(expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        }
+      }, true, runtime.document);
+    } else if ((runtime.profile.role === 'administrator' || runtime.profile.role === 'center-contact') && runtime.route === 'centers') {
+      const centerData = parseCenter(await runtime.api.centerCandidate(credential));
+      renderCenterSchedule(runtime.app, centerData, runtime.profile.role as ViewRole, {
+        onCandidateUpdate: async (candidate, expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          await runtime.api.updateCenterCandidate(candidate, expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        },
+        onCandidateConfirm: runtime.profile.role === 'administrator' ? async (candidateId, expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          await runtime.api.confirmCenterCandidate(candidateId, expectedRevision, credential);
+          await loadRouteAfterAction(runtime);
+        } : undefined
+      }, runtime.document);
+    }
+  } catch (error) {
+    const message = error instanceof ApiClientError && error.code === 'service_unavailable' ? 'The scheduling service is not configured for this deployment.' : 'We could not load this section. Please try again.';
+    renderError(runtime, message);
+  } finally {
+    runtime.rendering = false;
+  }
+}
+
+async function loadRouteAfterAction(runtime: Runtime): Promise<void> {
+  runtime.rendering = false;
+  await loadRoute(runtime);
+}
+
+function chooseRoute(runtime: Runtime): void {
+  if (!runtime.profile) return;
+  const requested = globalThis.location.hash.slice(1) as Route;
+  const allowed = ROUTES[runtime.profile.role] as readonly string[];
+  runtime.route = allowed.includes(requested) ? requested : ROUTES[runtime.profile.role][0];
+  void loadRoute(runtime);
+}
+
+export async function boot(documentRef: Document = globalThis.document): Promise<Runtime | undefined> {
+  if (!documentRef) return undefined;
+  const app = documentRef.getElementById('app');
+  if (!app) return undefined;
+  const identityHost = documentRef.getElementById('identity');
+  const config = await loadClientConfig();
+  const api = new ApiClient(config.appsScriptUrl);
+  const identity = new IdentityController(api, { oauthClientId: config.oauthClientId, buttonParent: identityHost ?? undefined });
+  const runtime: Runtime = { document: documentRef, app, identityHost, config, api, identity, route: 'dashboard', rendering: false };
+  identity.subscribe((state) => {
+    if (identityHost) setIdentityText(identityHost, state, documentRef, () => identity.signOut());
+    if (state.status === 'authenticated') {
+      runtime.profile = state.profile;
+      chooseRoute(runtime);
+    } else if (state.status === 'signed-out' || state.status === 'unavailable') {
+      runtime.profile = undefined;
+      renderNavigation(runtime);
+      renderError(runtime, state.message ?? 'Sign in with an authorized Google account to continue.');
+    }
+  });
+  globalThis.addEventListener('hashchange', () => chooseRoute(runtime));
+  if (!config.appsScriptUrl) {
+    if (identityHost) setIdentityText(identityHost, { status: 'unavailable', message: 'This deployment has no scheduling service configured.' }, documentRef, () => identity.signOut());
+    renderError(runtime, 'This static site is ready, but its scheduling service has not been configured.');
+    return runtime;
+  }
+  await identity.initialize();
+  return runtime;
+}
+
+if (typeof document !== 'undefined') {
+  void boot();
+}

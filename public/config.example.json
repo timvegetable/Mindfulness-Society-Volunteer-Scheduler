@@ -1,0 +1,4 @@
+{
+  "appsScriptUrl": "https://script.google.com/macros/s/DEPLOYMENT_ID/exec",
+  "oauthClientId": "PUBLIC_GOOGLE_OAUTH_CLIENT_ID"
+}
