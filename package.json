@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
-    "build:server": "esbuild src/server/main.ts --bundle --format=iife --platform=neutral --target=es2019 --outfile=dist/apps-script/Code.js && cp src/server/appsscript.json dist/apps-script/appsscript.json",
+    "build:server": "esbuild src/server/main.ts --bundle --format=iife --global-name=VolunteerScheduling --platform=neutral --target=es2019 --outfile=dist/apps-script/Code.js && node scripts/expose-appsscript.mjs && cp src/server/appsscript.json dist/apps-script/appsscript.json",
     "check": "tsc --noEmit && eslint src --max-warnings=0",
     "test": "vitest run",
     "deploy:client": "npm run build:client",

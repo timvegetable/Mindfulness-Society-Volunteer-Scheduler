@@ -1,4 +1,4 @@
-import './styles.css';
+import '../styles.css';
 import { ApiClient, ApiClientError, type IdentityData } from './api';
 import { IdentityController, type IdentityState } from './identity';
 import {
@@ -9,7 +9,6 @@ import {
   renderUnauthorized,
   renderVolunteerDashboard,
   type AdminImportActions,
-  type AdminInsightsActions,
   type AdminScheduleData,
   type AvailabilityException,
   type AvailabilityInterval,
@@ -87,12 +86,14 @@ function parseInterval(value: unknown): AvailabilityInterval | undefined {
 
 function parseException(value: unknown): AvailabilityException | undefined {
   if (!isRecord(value)) return undefined;
+  const interval = isRecord(value.interval) ? value.interval : value;
   const date = stringValue(value.date);
-  const start = stringValue(value.start);
-  const end = stringValue(value.end);
+  const start = stringValue(interval.start);
+  const end = stringValue(interval.end);
+  const timeZone = stringValue(interval.timeZone);
   const kind = value.kind === 'available' || value.kind === 'unavailable' ? value.kind : undefined;
-  if (!date || !start || !end || !kind) return undefined;
-  const exception: AvailabilityException = { date, start, end, kind };
+  if (!date || !start || !end || !timeZone || !kind) return undefined;
+  const exception: AvailabilityException = { date, start, end, timeZone, kind };
   const id = stringValue(value.id);
   const reason = stringValue(value.reason);
   if (id !== undefined) exception.id = id;
@@ -102,23 +103,34 @@ function parseException(value: unknown): AvailabilityException | undefined {
 
 function parseDashboard(value: unknown): VolunteerDashboardData {
   const data = isRecord(value) ? value : {};
-  const recurringAvailability = arrayValue(data.recurringAvailability).map(parseInterval).filter((item): item is AvailabilityInterval => item !== undefined);
+  const volunteer = isRecord(data.volunteer) ? data.volunteer : data;
+  const recurringSource = data.recurringAvailability ?? volunteer.recurringAvailability;
+  const recurringAvailability = arrayValue(recurringSource).map(parseInterval).filter((item): item is AvailabilityInterval => item !== undefined);
   const exceptions = arrayValue(data.exceptions).map(parseException).filter((item): item is AvailabilityException => item !== undefined);
+  const sessionsById: Record<string, Record<string, unknown>> = {};
+  for (const item of arrayValue(data.sessions)) {
+    if (!isRecord(item)) continue;
+    const id = stringValue(item.id);
+    if (id) sessionsById[id] = item;
+  }
   const assignments = arrayValue(data.assignments).flatMap((item) => {
     if (!isRecord(item)) return [];
     const id = stringValue(item.id);
-    const date = stringValue(item.date);
-    const start = stringValue(item.start);
-    const end = stringValue(item.end);
+    const sessionId = stringValue(item.sessionId);
+    const session = sessionId ? sessionsById[sessionId] : undefined;
+    const date = stringValue(item.date) ?? (session ? stringValue(session.date) : undefined);
+    const start = stringValue(item.start) ?? (session ? stringValue(session.start) : undefined);
+    const end = stringValue(item.end) ?? (session ? stringValue(session.end) : undefined);
     if (!id || !date || !start || !end) return [];
+    const center = session ? stringValue(session.title) ?? stringValue(session.centerId) : stringValue(item.center);
     return [{
       id,
       date,
       start,
       end,
-      ...(stringValue(item.sessionId) ? { sessionId: stringValue(item.sessionId) } : {}),
-      ...(stringValue(item.center) ? { center: stringValue(item.center) } : {}),
-      ...(stringValue(item.kind) ? { kind: stringValue(item.kind) } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ...(center ? { center } : {}),
+      ...(stringValue(session?.kind) ? { kind: stringValue(session?.kind) } : {}),
       ...(stringValue(item.status) ? { status: stringValue(item.status) } : {})
     }];
   });
@@ -126,7 +138,7 @@ function parseDashboard(value: unknown): VolunteerDashboardData {
     recurringAvailability,
     exceptions,
     assignments,
-    revision: parseRevision(data.revision),
+    revision: parseRevision(volunteer.revision ?? data.revision),
     stale: data.stale === true
   };
 }
@@ -155,7 +167,7 @@ function parseSchedule(value: unknown): AdminScheduleData {
         ...(stringValue(candidate.sessionId) ? { sessionId: stringValue(candidate.sessionId) } : {}),
         ...(stringValue(candidate.center) ? { center: stringValue(candidate.center) } : {}),
         ...(stringValue(candidate.role) ? { role: stringValue(candidate.role) } : {})
-      };
+      }];
     });
     return [{
       id,
@@ -232,14 +244,18 @@ function parseCenter(value: unknown): CenterScheduleData {
     const end = stringValue(item.end);
     const requestedStaffCount = numberValue(item.requestedStaffCount);
     if (weekday === undefined || !start || !end || requestedStaffCount === undefined) return [];
-    const candidate: CenterCandidate = { weekday, start, end, requestedStaffCount };
+    const candidate: CenterCandidate = { weekday, start, end, timeZone: stringValue(item.timeZone) ?? 'UTC', requestedStaffCount };
+    const coverage = isRecord(item.coverage) ? item.coverage : undefined;
+    const coverageCount = numberValue(item.coverageCount) ?? (coverage ? numberValue(coverage.matchingVolunteerCount) : undefined);
+    const status = stringValue(item.status) ?? (coverage?.label === 'Candidate coverage' ? 'Candidate coverage' : undefined);
+    const names = arrayValue(item.volunteerNames);
+    const rankedNames = coverage ? arrayValue(coverage.rankedVolunteers).flatMap((entry) => isRecord(entry) && typeof entry.name === 'string' ? [entry.name] : []) : [];
     const id = stringValue(item.id);
-    const coverageCount = numberValue(item.coverageCount);
-    const status = stringValue(item.status);
     if (id !== undefined) candidate.id = id;
     if (coverageCount !== undefined) candidate.coverageCount = coverageCount;
     if (status !== undefined) candidate.status = status;
-    if (arrayValue(item.volunteerNames).every((entry) => typeof entry === 'string')) candidate.volunteerNames = arrayValue(item.volunteerNames) as string[];
+    if (names.length > 0 && names.every((entry) => typeof entry === 'string')) candidate.volunteerNames = names as string[];
+    else if (rankedNames.length > 0) candidate.volunteerNames = rankedNames;
     return [candidate];
   });
   return { centerName: stringValue(data.centerName), candidates, revision: parseRevision(data.revision) };
@@ -299,7 +315,7 @@ function renderNavigation(runtime: Runtime): void {
   for (const route of ROUTES[runtime.profile.role]) {
     const link = runtime.document.createElement('a');
     link.href = `#${route}`;
-    link.textContent = route === 'centers' ? 'Center candidates' : route[0].toUpperCase() + route.slice(1);
+    link.textContent = route === 'centers' ? 'Center candidates' : route.charAt(0).toUpperCase() + route.slice(1);
     link.className = route === runtime.route ? 'active' : '';
     nav.append(link);
   }
@@ -349,25 +365,18 @@ async function loadRoute(runtime: Runtime): Promise<void> {
         }
       }, runtime.document);
     } else if (runtime.profile.role === 'administrator' && runtime.route === 'import') {
-      const importData = parseImport(await runtime.api.importPreview('', credential).catch(() => ({})));
-      renderAdminImport(runtime.app, importData, {
-        onPreview: async (resultsCode) => {
-          const preview = parseImport(await runtime.api.importPreview(resultsCode, credential));
-          renderAdminImport(runtime.app, preview, {
-            onPreview: async (code) => renderAdminImport(runtime.app, parseImport(await runtime.api.importPreview(code, credential)), {}, preview.revision, runtime.document),
-            onPromote: async (code, expectedRevision) => {
-              if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-              await runtime.api.importPromote(code, expectedRevision, credential);
-              await loadRouteAfterAction(runtime);
-            }
-          }, preview.revision, runtime.document);
-        },
-        onPromote: async (resultsCode, expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
-          await runtime.api.importPromote(resultsCode, expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        }
-      }, importData.revision, runtime.document);
+      const renderImport = (importData: ImportRunData): void => {
+        const actions: AdminImportActions = {
+          onPreview: async (resultsCode) => renderImport(parseImport(await runtime.api.importPreview(resultsCode, credential))),
+          onPromote: async (resultsCode, expectedRevision) => {
+            if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
+            await runtime.api.importPromote(resultsCode, expectedRevision, credential);
+            await loadRouteAfterAction(runtime);
+          }
+        };
+        renderAdminImport(runtime.app, importData, actions, importData.revision, runtime.document);
+      };
+      renderImport({});
     } else if (runtime.profile.role === 'administrator' && runtime.route === 'insights') {
       const insights = parseInsights(await runtime.api.insights(credential));
       renderAdminInsights(runtime.app, insights, {
@@ -407,7 +416,7 @@ async function loadRouteAfterAction(runtime: Runtime): Promise<void> {
 
 function chooseRoute(runtime: Runtime): void {
   if (!runtime.profile) return;
-  const requested = globalThis.location.hash.slice(1) as Route;
+  const requested = (globalThis.location?.hash ?? '').slice(1) as Route;
   const allowed = ROUTES[runtime.profile.role] as readonly string[];
   runtime.route = allowed.includes(requested) ? requested : ROUTES[runtime.profile.role][0];
   void loadRoute(runtime);
@@ -418,8 +427,15 @@ export async function boot(documentRef: Document = globalThis.document): Promise
   const app = documentRef.getElementById('app');
   if (!app) return undefined;
   const identityHost = documentRef.getElementById('identity');
-  const config = await loadClientConfig();
-  const api = new ApiClient(config.appsScriptUrl);
+  const loadedConfig = await loadClientConfig();
+  let config = loadedConfig;
+  let api: ApiClient;
+  try {
+    api = new ApiClient(config.appsScriptUrl);
+  } catch {
+    config = DEFAULT_CLIENT_CONFIG;
+    api = new ApiClient();
+  }
   const identity = new IdentityController(api, { oauthClientId: config.oauthClientId, buttonParent: identityHost ?? undefined });
   const runtime: Runtime = { document: documentRef, app, identityHost, config, api, identity, route: 'dashboard', rendering: false };
   identity.subscribe((state) => {

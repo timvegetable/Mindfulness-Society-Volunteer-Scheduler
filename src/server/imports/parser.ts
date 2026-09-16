@@ -1,3 +1,4 @@
+import type { Weekday } from '../../shared/domain.js';
 import type { ParsedAvailabilitySlot, ParsedParticipant, ParsedWhenIsGood } from './types.js';
 
 export class WhenIsGoodParseError extends Error {
@@ -63,6 +64,17 @@ function parseClock(value: unknown): string | undefined {
   return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
 }
 
+function weekday(value: unknown): Weekday | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 7) return value as Weekday;
+  const raw = text(value)?.toLowerCase();
+  if (!raw) return undefined;
+  const names: Record<string, Weekday> = { monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2, wednesday: 3, wed: 3, thursday: 4, thu: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6, sunday: 7, sun: 7 };
+  const named = names[raw];
+  if (named) return named;
+  const numeric = Number(raw);
+  return Number.isInteger(numeric) && numeric >= 1 && numeric <= 7 ? numeric as Weekday : undefined;
+}
+
 function dateOnly(value: unknown): string | undefined {
   const raw = text(value);
   if (!raw) return undefined;
@@ -70,27 +82,16 @@ function dateOnly(value: unknown): string | undefined {
   return match?.[1];
 }
 
-function weekday(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 7) return value;
-  const raw = text(value)?.toLowerCase();
-  if (!raw) return undefined;
-  const names: Record<string, number> = { monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2, wednesday: 3, wed: 3, thursday: 4, thu: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6, sunday: 7, sun: 7 };
-  const named = names[raw];
-  if (named) return named;
-  const numeric = Number(raw);
-  return Number.isInteger(numeric) && numeric >= 1 && numeric <= 7 ? numeric : undefined;
-}
-
-function weekdayForDate(value: string): number | undefined {
+function weekdayForDate(value: string): Weekday | undefined {
   const parts = value.split('-').map(Number);
   if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part))) return undefined;
   const date = new Date(Date.UTC(parts[0] ?? 0, (parts[1] ?? 1) - 1, parts[2] ?? 1));
   if (Number.isNaN(date.getTime())) return undefined;
   const day = date.getUTCDay();
-  return day === 0 ? 7 : day;
+  return (day === 0 ? 7 : day) as Weekday;
 }
 
-function intervalFromRecord(value: unknown, inheritedDate?: string, inheritedWeekday?: number, inheritedTimeZone?: string): ParsedAvailabilitySlot | undefined {
+function intervalFromRecord(value: unknown, inheritedDate?: string, inheritedWeekday?: Weekday, inheritedTimeZone?: string): ParsedAvailabilitySlot | undefined {
   if (Array.isArray(value)) {
     const [first, second, third, fourth] = value;
     const firstDate = dateOnly(first);
@@ -116,7 +117,7 @@ function intervalFromRecord(value: unknown, inheritedDate?: string, inheritedWee
   };
 }
 
-function slotsFromValue(value: unknown, inheritedTimeZone?: string, inheritedDate?: string, inheritedWeekday?: number): ParsedAvailabilitySlot[] {
+function slotsFromValue(value: unknown, inheritedTimeZone?: string, inheritedDate?: string, inheritedWeekday?: Weekday): ParsedAvailabilitySlot[] {
   if (Array.isArray(value)) {
     const direct = value.map((entry) => intervalFromRecord(entry, inheritedDate, inheritedWeekday, inheritedTimeZone)).filter((entry): entry is ParsedAvailabilitySlot => entry !== undefined);
     if (direct.length > 0) return direct;
@@ -149,8 +150,10 @@ function participantFromRecord(value: unknown, index: number, timeZone?: string)
   if (!name) return undefined;
   const email = firstText(record, ['email', 'emailAddress', 'mail']);
   const sourceParticipantId = firstText(record, ['id', 'participantId', 'userId', 'key', 'uid']) ?? `participant-${index + 1}`;
-  const availability = slotsFromValue(availabilityValue(record) ?? record, text(record.timeZone ?? record.timezone ?? record.tz) ?? timeZone);
-  return { sourceParticipantId, name, email, availability };
+  const rawAvailability = availabilityValue(record);
+  const availability = slotsFromValue(rawAvailability ?? record, text(record.timeZone ?? record.timezone ?? record.tz) ?? timeZone);
+  if (rawAvailability !== undefined && availability.length === 0) throw new WhenIsGoodParseError(`Participant ${name} has no supported availability intervals`);
+  return { sourceParticipantId, name, ...(email ? { email } : {}), availability };
 }
 
 function findParticipantCollection(value: unknown): unknown[] | undefined {
@@ -266,3 +269,6 @@ export function parseEmbeddedWhenIsGoodData(html: string, options: EmbeddedParse
 }
 
 export const parseWhenIsGoodPayload = parseEmbeddedWhenIsGoodData;
+
+export const parseWhenIsGoodEmbeddedData = parseEmbeddedWhenIsGoodData;
+export const parseEmbeddedPayload = parseEmbeddedWhenIsGoodData;

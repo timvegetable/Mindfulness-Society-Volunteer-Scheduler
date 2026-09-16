@@ -15,16 +15,15 @@ export type InsightRevisionChange = keyof InsightSourceRevision;
 export type InsightConfig = {
   timeZone: string;
   incrementMinutes: number;
-  /** Inclusive local start of the weekly grid. Defaults to the availability bounds. */
+  /** Local start of the weekly grid. Defaults to DEFAULT_INSIGHT_CONFIG.startTime. */
   startTime?: string;
-  /** Exclusive local end of the weekly grid. Defaults to the availability bounds. */
+  /** Local exclusive end of the weekly grid. Defaults to DEFAULT_INSIGHT_CONFIG.endTime. */
   endTime?: string;
   /** Optional operating hours applied to every weekday. */
   operatingHours?: { start: string; end: string };
   /** Include zero-count cells when a complete calendar grid is needed. */
   includeEmpty?: boolean;
 };
-
 export type OverlapCell = {
   weekday: Weekday;
   start: string;

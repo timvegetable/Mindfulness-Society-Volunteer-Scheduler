@@ -1,14 +1,5 @@
-import type {
-  ApiError,
-  Assignment,
-  AvailabilityException,
-  Backup,
-  RecurringAvailability,
-  Role,
-  Session,
-  Volunteer
-} from '../../shared/domain.js';
-import type { AuditEntry, RevisionedRepository, RevisionState } from '../workbook/repository.js';
+import { ErrorCodeSchema, type ApiError, type Assignment, type AvailabilityException, type Backup, type RecurringAvailability, type Role, type Session, type Volunteer } from '../../shared/domain.js';
+import type { AuditEntry, RevisionState, RevisionedRepository } from '../workbook/repository.js';
 
 export type ServiceSuccess<T> = { ok: true; data: T; revision?: number };
 export type ServiceFailure = { ok: false; error: ApiError };
@@ -77,14 +68,14 @@ export type ScheduleStalenessStore = {
 };
 
 export type SelfServiceRepositories = {
-  recurringAvailability?: RevisionedRepository<RecurringAvailabilityRecord>;
-  volunteers?: RevisionedRepository<Volunteer>;
-  exceptions?: RevisionedRepository<AvailabilityException>;
-  sessions?: RevisionedRepository<Session>;
-  assignments?: RevisionedRepository<Assignment>;
-  backups?: RevisionedRepository<Backup>;
-  notifications?: RevisionedRepository<NotificationStatusRecord>;
-  audits?: { append(entry: AuditEntry): void };
+  recurringAvailability?: RevisionedRepository<RecurringAvailabilityRecord> | undefined;
+  volunteers?: RevisionedRepository<Volunteer> | undefined;
+  exceptions?: RevisionedRepository<AvailabilityException> | undefined;
+  sessions?: RevisionedRepository<Session> | undefined;
+  assignments?: RevisionedRepository<Assignment> | undefined;
+  backups?: RevisionedRepository<Backup> | undefined;
+  notifications?: RevisionedRepository<NotificationStatusRecord> | undefined;
+  audits?: { append(entry: AuditEntry): void } | undefined;
 };
 
 export type AdministratorRecipients = readonly string[] | (() => readonly string[]);
@@ -111,11 +102,15 @@ export function success<T>(data: T, revision?: number): ServiceSuccess<T> {
 }
 
 export function repositoryFailure(error: unknown, fallback = 'Unable to save the change'): ServiceFailure {
-  if (error && typeof error === 'object' && 'code' in error) {
-    const code = (error as { code?: ApiError['code'] }).code;
-    if (code) return failure(code, error instanceof Error ? error.message : fallback);
+  if (error instanceof Error) {
+    if (error && 'code' in error) {
+      const codeValue = error.code;
+      const parsedCode = ErrorCodeSchema.safeParse(codeValue);
+      if (parsedCode.success) return failure(parsedCode.data, error.message);
+    }
+    return failure('INTERNAL_ERROR', error.message || fallback);
   }
-  return failure('INTERNAL_ERROR', error instanceof Error ? error.message : fallback);
+  return failure('INTERNAL_ERROR', fallback);
 }
 
 export function resolveRecipients(recipients: AdministratorRecipients | undefined): string[] {

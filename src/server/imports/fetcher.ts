@@ -26,13 +26,13 @@ function buildUrl(endpoint: string, resultId: string): string {
 }
 
 export class WhenIsGoodFetcher {
-  private readonly fetch: Fetcher;
+  private readonly request: Fetcher;
   private readonly endpoint: string;
   private readonly maxPayloadBytes: number;
   private readonly parserOptions: Omit<EmbeddedParserOptions, 'resultId'>;
 
   constructor(options: WhenIsGoodFetcherOptions & { parserOptions?: Omit<EmbeddedParserOptions, 'resultId'> }) {
-    this.fetch = options.fetch;
+    this.request = options.fetch;
     this.endpoint = options.endpoint;
     this.maxPayloadBytes = options.maxPayloadBytes ?? 2_000_000;
     this.parserOptions = options.parserOptions ?? {};
@@ -44,7 +44,7 @@ export class WhenIsGoodFetcher {
     const url = buildUrl(this.endpoint, normalizedResultId);
     let response;
     try {
-      response = await this.fetch(url);
+      response = await this.request(url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown network error';
       throw new WhenIsGoodFetchError(`WhenIsGood request failed: ${message}`);
@@ -60,6 +60,10 @@ export class WhenIsGoodFetcher {
       throw new WhenIsGoodFetchError(`WhenIsGood response could not be parsed: ${message}`);
     }
     return { resultId: normalizedResultId, url, html, parsed };
+  }
+
+  async fetch(resultId: string): Promise<WhenIsGoodFetchResult> {
+    return this.fetchResult(resultId);
   }
 }
 

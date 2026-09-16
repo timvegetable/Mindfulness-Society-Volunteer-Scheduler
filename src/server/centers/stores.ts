@@ -21,7 +21,10 @@ class SeededMemoryRepository<T extends { id: string }> extends MemoryRepository<
   constructor(initialRows: readonly T[] = []) {
     super();
     for (const row of initialRows) {
-      super.upsert(row, super.revision().number, 'seed', 'center-seed');
+      const expectedRevision = super.revision().number;
+      const revision = 'revision' in row && typeof row.revision === 'number' ? expectedRevision + 1 : undefined;
+      const seeded = revision === undefined ? row : { ...row, revision } as T;
+      super.upsert(seeded, expectedRevision, 'seed', 'center-seed');
     }
   }
 

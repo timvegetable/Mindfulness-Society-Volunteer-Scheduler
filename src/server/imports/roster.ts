@@ -78,6 +78,18 @@ export class AdministratorRosterService {
     return { volunteer: updated, revision: revision.number };
   }
 
+  updateLifecycle(actor: AdministratorActor, volunteerId: string, lifecycleStatus: LifecycleStatus, expectedRevision: number): RosterUpdateResult {
+    return this.setLifecycle(actor, volunteerId, lifecycleStatus, expectedRevision);
+  }
+
+  updateInterviewStatus(actor: AdministratorActor, volunteerId: string, interviewStatus: InterviewStatus, expectedRevision: number): RosterUpdateResult {
+    return this.setInterviewStatus(actor, volunteerId, interviewStatus, expectedRevision);
+  }
+
+  updateReadinessRank(actor: AdministratorActor, volunteerId: string, label: string | number | null, expectedRevision: number): RosterUpdateResult {
+    return this.setRank(actor, volunteerId, label, expectedRevision);
+  }
+
   createNewlyJoined(actor: AdministratorActor, input: CreateNewJoinerInput, expectedRevision: number): RosterUpdateResult {
     requireAdministrator(actor);
     const name = input.name.trim();

@@ -2,7 +2,6 @@ import type { RevisionedRepository } from '../workbook/repository.js';
 import { MemoryRepository } from '../workbook/repository.js';
 import {
   type AdministratorRecipients,
-  authorizeVolunteer,
   defaultIdGenerator,
   failure,
   type Caller,
@@ -16,10 +15,10 @@ import {
   resolveRecipients,
   success,
   systemClock,
-  type ServiceResult
+  type ServiceResult,
+  isAdministrator
 } from './types.js';
 import type { SelfServiceRepositories } from './types.js';
-import { isAdministrator } from './types.js';
 
 export type NotificationRequest = {
   kind: NotificationKind;
@@ -31,11 +30,11 @@ export type NotificationRequest = {
 };
 
 export type NotificationServiceDependencies = {
-  repository?: RevisionedRepository<NotificationStatusRecord>;
-  mailer?: Mailer;
-  administratorRecipients?: AdministratorRecipients;
-  clock?: Clock;
-  idGenerator?: IdGenerator;
+  repository?: RevisionedRepository<NotificationStatusRecord> | undefined;
+  mailer?: Mailer | undefined;
+  administratorRecipients?: AdministratorRecipients | undefined;
+  clock?: Clock | undefined;
+  idGenerator?: IdGenerator | undefined;
 };
 
 export type NotificationRetryResult = {
@@ -95,36 +94,40 @@ export class NotificationService {
     const current = this.repository.get(notificationId);
     if (!current) return failure('NOT_FOUND', 'Notification was not found');
     if (current.status === 'sent') return failure('CONFLICT', 'Notification has already been delivered');
-    const result = this.deliverPersisted(current);
+    const result = this.deliverPersisted(current, caller.id);
     if (!result.ok) return result;
     return success({ notification: result.data, delivered: result.data.status === 'sent' });
   }
 
-  private deliverPersisted(record: NotificationStatusRecord): ServiceResult<NotificationStatusRecord> {
+  retryFailedNotification(caller: Caller, notificationId: string): ServiceResult<NotificationRetryResult> {
+    return this.retry(caller, notificationId);
+  }
+
+  private deliverPersisted(record: NotificationStatusRecord, auditActorId = record.actorId): ServiceResult<NotificationStatusRecord> {
     const attempted: NotificationStatusRecord = {
       ...record,
       attempts: record.attempts + 1,
       updatedAt: this.clock.now()
     };
     if (attempted.recipients.length === 0) {
-      return this.persistFailure(attempted, 'No administrator recipients are configured');
+      return this.persistFailure(attempted, 'No administrator recipients are configured', auditActorId);
     }
-    if (!this.mailer) return this.persistFailure(attempted, 'Administrator mail delivery is unavailable');
+    if (!this.mailer) return this.persistFailure(attempted, 'Administrator mail delivery is unavailable', auditActorId);
 
     try {
       const message: NotificationMessage = { to: attempted.recipients, subject: attempted.subject, body: attempted.body };
       this.mailer.send(message);
       const sent: NotificationStatusRecord = { ...attempted, status: 'sent' };
-      return this.persist(sent, sent.actorId, 'notification-sent');
+      return this.persist(sent, auditActorId, 'notification-sent');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Administrator mail delivery failed';
-      return this.persistFailure(attempted, message);
+      return this.persistFailure(attempted, message, auditActorId);
     }
   }
 
-  private persistFailure(record: NotificationStatusRecord, message: string): ServiceResult<NotificationStatusRecord> {
+  private persistFailure(record: NotificationStatusRecord, message: string, auditActorId = record.actorId): ServiceResult<NotificationStatusRecord> {
     const failed: NotificationStatusRecord = { ...record, status: 'failed', lastError: message };
-    return this.persist(failed, failed.actorId, 'notification-failed');
+    return this.persist(failed, auditActorId, 'notification-failed');
   }
 
   private persist(record: NotificationStatusRecord, actorId: string, source: string): ServiceResult<NotificationStatusRecord> {

@@ -105,6 +105,7 @@ export type CandidateVolunteer = {
   volunteerId: string;
   name: string;
   readinessRank: z.infer<typeof RankSchema>;
+  rank: z.infer<typeof RankSchema>;
 };
 
 export type CandidateCoverage = {
@@ -124,7 +125,8 @@ export type CandidateCoverage = {
   volunteers: CandidateVolunteer[];
   /** Same values as volunteers, explicitly named for consumers displaying rank. */
   rankedVolunteers: CandidateVolunteer[];
-  label: 'candidate coverage';
+  label: 'Candidate coverage';
+  coverageType: 'advisory';
   advisory: true;
   nonPromissory: true;
   /** Alias that makes the non-promise boundary unambiguous in JSON. */

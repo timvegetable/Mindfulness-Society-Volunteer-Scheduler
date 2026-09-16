@@ -7,7 +7,7 @@
     "types": ["node", "google-apps-script"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
+    "exactOptionalPropertyTypes": false,
     "noEmit": true,
     "skipLibCheck": true
   },

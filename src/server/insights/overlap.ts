@@ -22,6 +22,9 @@ type LocalConfig = {
   includeEmpty: boolean;
 };
 
+function isOverlapInput(value: readonly Volunteer[] | OverlapInput): value is OverlapInput {
+  return !Array.isArray(value);
+}
 const WEEKDAYS: readonly Weekday[] = [1, 2, 3, 4, 5];
 
 function parseMinutes(value: string, label: string): number {
@@ -95,26 +98,25 @@ export function calculateOverlapCells(
   inputOrVolunteers: readonly Volunteer[] | OverlapInput,
   suppliedConfig?: Partial<InsightConfig>,
 ): OverlapCell[] {
-  const volunteers = Array.isArray(inputOrVolunteers) ? inputOrVolunteers : inputOrVolunteers.volunteers;
-  const config = normalizeConfig(Array.isArray(inputOrVolunteers) ? suppliedConfig : inputOrVolunteers.config);
+  const volunteers = isOverlapInput(inputOrVolunteers) ? inputOrVolunteers.volunteers : inputOrVolunteers;
+  const config = normalizeConfig(isOverlapInput(inputOrVolunteers) ? inputOrVolunteers.config : suppliedConfig);
   const uniqueVolunteers = new Map<string, Volunteer>();
   for (const volunteer of volunteers) {
     if (!uniqueVolunteers.has(volunteer.id)) uniqueVolunteers.set(volunteer.id, volunteer);
   }
-
+  const gridStart = parseMinutes(config.startTime, 'startTime');
+  const gridEnd = parseMinutes(config.endTime, 'endTime');
   const allCells: OverlapCell[] = [];
   for (const weekday of WEEKDAYS) {
     const localCells: OverlapCell[] = [];
-    const availability = new Map<string, ReturnType<typeof recurringWeekdayIntervals>>();
+    const availability = new Map<string, Interval[]>();
     for (const [volunteerId, volunteer] of uniqueVolunteers) {
       availability.set(volunteerId, recurringWeekdayIntervals(volunteer.recurringAvailability, weekday, config.timeZone));
     }
 
-    const gridStart = parseMinutes(config.startTime, 'startTime');
-    const gridEnd = parseMinutes(config.endTime, 'endTime');
     for (let slotStart = gridStart; slotStart < gridEnd; slotStart += config.incrementMinutes) {
+      const volunteerIds: string[] = [];
       const slotEnd = Math.min(slotStart + config.incrementMinutes, gridEnd);
-    const availability = new Map<string, Interval[]>();
       for (const [volunteerId, intervals] of availability) {
         const covered = intervals.some((interval) => {
           const intervalStart = parseMinutes(interval.start, 'availability start');

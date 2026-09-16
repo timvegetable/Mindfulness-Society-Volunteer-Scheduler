@@ -112,7 +112,7 @@ export type SheetCodec<T extends { id: string }> = {
 };
 
 export class SheetRepository<T extends { id: string }> implements RevisionedRepository<T> {
-  constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore) {}
+  constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore, private readonly auditWriter?: (entry: AuditEntry) => void) {}
 
   list(): T[] {
     const rowCount = this.sheet.getLastRow();
@@ -134,10 +134,16 @@ export class SheetRepository<T extends { id: string }> implements RevisionedRepo
   }
 
   replace(rows: readonly T[], expectedRevision: number, actorId: string, source: string): RevisionState {
-    return this.revisionStore.withExpected(expectedRevision, actorId, source, () => {
+    return this.revisionStore.withExpected(expectedRevision, actorId, source, (nextRevision) => {
+      const before = this.list();
       const encoded = rows.map((row) => this.headers.map((header) => this.codec.toRow(row)[header] ?? ''));
       if (encoded.length > 0) this.sheet.getRange(2, 1, encoded.length, this.headers.length).setValues(encoded);
-      return this.revisionStore.read();
+      if (this.sheet.getLastRow() > rows.length + 1) {
+        const staleRows = this.sheet.getRange(rows.length + 2, 1, this.sheet.getLastRow() - rows.length - 1, this.headers.length);
+        staleRows.clearContent?.();
+      }
+      this.auditWriter?.({ id: auditId(), entity: this.sheet.getName(), entityId: 'all', action: 'replace', source, actorId, timestamp: nextRevision.changedAt, before, after: [...rows] });
+      return nextRevision;
     });
   }
 
@@ -167,12 +173,13 @@ export class RevisionStore {
     return { ...this.backing.get() };
   }
 
-  withExpected<T>(expectedRevision: number, actorId: string, source: string, action: () => T): T {
+  withExpected<T>(expectedRevision: number, actorId: string, source: string, action: (nextRevision: RevisionState) => T): T {
     const execute = (): T => {
       const current = this.read();
       if (current.number !== expectedRevision) throw new RepositoryError('STALE_REVISION', `Expected revision ${expectedRevision}, current revision is ${current.number}`);
-      const result = action();
-      this.backing.set({ number: current.number + 1, changedAt: now(), changedBy: actorId, source });
+      const nextRevision: RevisionState = { number: current.number + 1, changedAt: now(), changedBy: actorId, source };
+      const result = action(nextRevision);
+      this.backing.set(nextRevision);
       return result;
     };
     return this.backing.lock ? withScriptLock(this.backing.lock, execute) : execute();

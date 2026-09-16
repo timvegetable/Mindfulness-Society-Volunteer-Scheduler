@@ -139,6 +139,7 @@ export type ImportRepository = {
   replaceCurrentAvailability(rows: readonly ImportedAvailabilityRecord[], actorId: string, source: string): number;
   mappings(): IdentityMapping[];
   saveMapping(mapping: IdentityMapping): void;
+  volunteers?(): Volunteer[];
 };
 
 export type FetchResponse = {

@@ -6,6 +6,7 @@ export type RangeLike = {
   setValue(value: unknown): void;
   getValue(): unknown;
   protect(): ProtectionLike;
+  clearContent?(): void;
 };
 
 export type ProtectionLike = {
@@ -35,7 +36,7 @@ export type InitializationResult = {
 
 function ensureHeader(sheet: SheetLike, definition: WorkbookTab): boolean {
   const width = definition.columns.length;
-  const existing = sheet.getLastColumn() >= width ? sheet.getRange(1, 1, 1, width).getValues()[0] : [];
+  const existing = sheet.getLastColumn() >= width ? (sheet.getRange(1, 1, 1, width).getValues()[0] ?? []) : [];
   const matches = definition.columns.every((column, index) => existing[index] === column);
   if (matches) return false;
   sheet.getRange(1, 1, 1, width).setValues([ [...definition.columns] ]);

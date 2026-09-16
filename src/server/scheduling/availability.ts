@@ -10,22 +10,37 @@ import {
   isAvailableForSession
 } from '../../shared/time.js';
 
-/**
- * Return the intervals a volunteer can actually work on a date.  Recurring
- * intervals are overlaid with only that volunteer's dated exceptions; the
- * shared time helper applies exception precedence and normalizes the result.
- */
 export function effectiveAvailabilityForDate(
   volunteer: Pick<Volunteer, 'id' | 'recurringAvailability'>,
   date: string,
   timeZone: string,
+  exceptions?: readonly AvailabilityException[]
+): Interval[];
+export function effectiveAvailabilityForDate(
+  date: string,
+  timeZone: string,
+  recurring: readonly RecurringAvailability[],
+  exceptions?: readonly AvailabilityException[]
+): Interval[];
+export function effectiveAvailabilityForDate(
+  volunteerOrDate: Pick<Volunteer, 'id' | 'recurringAvailability'> | string,
+  dateOrTimeZone: string,
+  timeZoneOrRecurring: string | readonly RecurringAvailability[],
   exceptions: readonly AvailabilityException[] = []
 ): Interval[] {
+  if (typeof volunteerOrDate === 'string') {
+    return effectiveIntervalsForDate(
+      volunteerOrDate,
+      dateOrTimeZone,
+      timeZoneOrRecurring as readonly RecurringAvailability[],
+      exceptions
+    );
+  }
   return effectiveIntervalsForDate(
-    date,
-    timeZone,
-    volunteer.recurringAvailability,
-    exceptions.filter((exception) => exception.volunteerId === volunteer.id)
+    dateOrTimeZone,
+    timeZoneOrRecurring as string,
+    volunteerOrDate.recurringAvailability,
+    exceptions.filter((exception) => exception.volunteerId === volunteerOrDate.id)
   );
 }
 

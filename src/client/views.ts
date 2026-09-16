@@ -14,6 +14,7 @@ export interface AvailabilityException {
   kind: 'unavailable' | 'available';
   start: string;
   end: string;
+  timeZone?: string;
   reason?: string;
 }
 
@@ -121,11 +122,14 @@ export interface CenterCandidate {
   weekday: number;
   start: string;
   end: string;
+  timeZone: string;
   requestedStaffCount: number;
   coverageCount?: number;
   volunteerNames?: string[];
   status?: string;
 }
+
+export type CenterCandidateInput = Pick<CenterCandidate, 'weekday' | 'start' | 'end' | 'timeZone' | 'requestedStaffCount'> & { id?: string };
 
 export interface CenterScheduleData {
   centerName?: string;
@@ -134,18 +138,18 @@ export interface CenterScheduleData {
 }
 
 export interface CenterScheduleActions {
-  onCandidateUpdate?: (candidate: Omit<CenterCandidate, 'id' | 'coverageCount' | 'volunteerNames' | 'status'>, expectedRevision: number | string | undefined) => void | Promise<void>;
+  onCandidateUpdate?: (candidate: CenterCandidateInput, expectedRevision: number | string | undefined) => void | Promise<void>;
   onCandidateConfirm?: (candidateId: string, expectedRevision: number | string | undefined) => void | Promise<void>;
 }
 
 const WEEKDAY_LABELS: Record<number, string> = {
-  0: 'Sunday',
   1: 'Monday',
   2: 'Tuesday',
   3: 'Wednesday',
   4: 'Thursday',
   5: 'Friday',
-  6: 'Saturday'
+  6: 'Saturday',
+  7: 'Sunday'
 };
 
 function createElement<K extends keyof HTMLElementTagNameMap>(documentRef: Document, tag: K, className?: string): HTMLElementTagNameMap[K] {
@@ -154,14 +158,13 @@ function createElement<K extends keyof HTMLElementTagNameMap>(documentRef: Docum
   return element;
 }
 
-function appendText<T extends Node>(parent: T, value: unknown): T {
-  parent.append(document.createTextNode(String(value ?? '')));
-  return parent;
+function appendText(parent: HTMLElement, value: unknown, documentRef: Document): void {
+  parent.append(documentRef.createTextNode(String(value ?? '')));
 }
 
 function labelledInput(documentRef: Document, labelText: string, type: string, value = ''): { wrapper: HTMLLabelElement; input: HTMLInputElement } {
   const wrapper = createElement(documentRef, 'label', 'field');
-  appendText(wrapper, labelText);
+  appendText(wrapper, labelText, documentRef);
   const input = createElement(documentRef, 'input');
   input.type = type;
   input.value = value;
@@ -171,7 +174,7 @@ function labelledInput(documentRef: Document, labelText: string, type: string, v
 
 function labelledSelect(documentRef: Document, labelText: string, options: Array<{ value: string; label: string }>, value?: string): { wrapper: HTMLLabelElement; select: HTMLSelectElement } {
   const wrapper = createElement(documentRef, 'label', 'field');
-  appendText(wrapper, labelText);
+  appendText(wrapper, labelText, documentRef);
   const select = createElement(documentRef, 'select');
   for (const optionValue of options) {
     const option = createElement(documentRef, 'option');
@@ -257,38 +260,42 @@ function assignmentText(assignment: VolunteerAssignment): string {
 
 function weekdayOptions(documentRef: Document, includeWeekend = true): HTMLSelectElement {
   const options = Object.entries(WEEKDAY_LABELS)
-    .filter(([value]) => includeWeekend || !['0', '6'].includes(value))
+    .filter(([value]) => includeWeekend || !['6', '7'].includes(value))
     .map(([value, label]) => ({ value, label }));
   return labelledSelect(documentRef, 'Weekday', options).select;
 }
 
-function intervalEditor(documentRef: Document, includeWeekend = true): { wrapper: HTMLDivElement; weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement } {
+function intervalEditor(documentRef: Document, includeWeekend = true): { wrapper: HTMLDivElement; weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement; timeZone: HTMLInputElement } {
   const wrapper = createElement(documentRef, 'div', 'interval-editor');
   const weekday = weekdayOptions(documentRef, includeWeekend);
   const weekdayLabel = createElement(documentRef, 'label', 'field');
-  appendText(weekdayLabel, 'Weekday');
+  appendText(weekdayLabel, 'Weekday', documentRef);
   weekdayLabel.append(weekday);
   wrapper.append(weekdayLabel);
   const start = labelledInput(documentRef, 'Start', 'time').input;
   const end = labelledInput(documentRef, 'End', 'time').input;
+  const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const timeZone = labelledInput(documentRef, 'Time zone', 'text', browserTimeZone).input;
+  timeZone.readOnly = true;
+  timeZone.required = true;
+  timeZone.maxLength = 100;
   start.required = true;
   end.required = true;
   start.step = '900';
   end.step = '900';
-  start.closest('label')?.classList.add('field');
-  end.closest('label')?.classList.add('field');
-  wrapper.append(start.closest('label') as HTMLLabelElement, end.closest('label') as HTMLLabelElement);
-  return { wrapper, weekday, start, end };
+  wrapper.append(start.closest('label') as HTMLLabelElement, end.closest('label') as HTMLLabelElement, timeZone.closest('label') as HTMLLabelElement);
+  return { wrapper, weekday, start, end, timeZone };
 }
 
-function parseInterval(editor: { weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement }): AvailabilityInterval {
+function parseInterval(editor: { weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement; timeZone: HTMLInputElement }): AvailabilityInterval {
   const weekday = Number(editor.weekday.value);
   const start = editor.start.value;
   const end = editor.end.value;
-  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6 || !start || !end || start >= end) {
+  const timeZone = editor.timeZone.value;
+  if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7 || !start || !end || !timeZone || start >= end) {
     throw new Error('Choose a weekday and an interval whose end is after its start.');
   }
-  return { weekday, start, end };
+  return { weekday, start, end, timeZone };
 }
 
 export function renderVolunteerDashboard(
@@ -388,6 +395,10 @@ export function renderVolunteerDashboard(
   date.required = true;
   const exceptionStart = labelledInput(documentRef, 'Start', 'time').input;
   const exceptionEnd = labelledInput(documentRef, 'End', 'time').input;
+  const exceptionTimeZone = labelledInput(documentRef, 'Time zone', 'text', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC').input;
+  exceptionTimeZone.readOnly = true;
+  exceptionTimeZone.required = true;
+  exceptionTimeZone.maxLength = 100;
   exceptionStart.required = true;
   exceptionEnd.required = true;
   const kind = labelledSelect(documentRef, 'Change', [
@@ -396,14 +407,14 @@ export function renderVolunteerDashboard(
   ]).select;
   const reason = labelledInput(documentRef, 'Reason (optional)', 'text').input;
   reason.maxLength = 240;
-  exceptionForm.append(date.closest('label') as HTMLLabelElement, kind.closest('label') as HTMLLabelElement, exceptionStart.closest('label') as HTMLLabelElement, exceptionEnd.closest('label') as HTMLLabelElement, reason.closest('label') as HTMLLabelElement);
+  exceptionForm.append(date.closest('label') as HTMLLabelElement, kind.closest('label') as HTMLLabelElement, exceptionStart.closest('label') as HTMLLabelElement, exceptionEnd.closest('label') as HTMLLabelElement, exceptionTimeZone.closest('label') as HTMLLabelElement, reason.closest('label') as HTMLLabelElement);
   const exceptionStatus = statusNode(documentRef);
   const exceptionSave = button(documentRef, 'Save dated change', 'submit', 'primary-button');
   exceptionForm.append(exceptionSave, exceptionStatus);
   exceptionForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    const exception: AvailabilityException = { date: date.value, kind: kind.value === 'available' ? 'available' : 'unavailable', start: exceptionStart.value, end: exceptionEnd.value, reason: reason.value.trim() || undefined };
-    if (!exception.date || !exception.start || !exception.end || exception.start >= exception.end) {
+    const exception: AvailabilityException = { date: date.value, kind: kind.value === 'available' ? 'available' : 'unavailable', start: exceptionStart.value, end: exceptionEnd.value, timeZone: exceptionTimeZone.value, reason: reason.value.trim() || undefined };
+    if (!exception.date || !exception.start || !exception.end || !exception.timeZone || exception.start >= exception.end) {
       announceFailure(exceptionStatus, new Error('Choose a date and an interval whose end is after its start.'));
       return;
     }
@@ -433,7 +444,7 @@ export function renderVolunteerDashboard(
       const cancelForm = createElement(documentRef, 'form', 'inline-form');
       const cancelReason = labelledInput(documentRef, 'Reason (optional)', 'text').input;
       cancelReason.maxLength = 240;
-      const cancel = button(documentRef, 'Cancel assignment');
+      const cancel = button(documentRef, 'Cancel assignment', 'submit');
       const cancelStatus = statusNode(documentRef);
       cancelForm.append(cancelReason.closest('label') as HTMLLabelElement, cancel, cancelStatus);
       cancelForm.addEventListener('submit', (event) => {
@@ -732,7 +743,7 @@ export function renderAdminInsights(
     const column = createElement(documentRef, 'div', 'heatmap-column');
     column.setAttribute('role', 'row');
     const label = createElement(documentRef, 'h4');
-    label.textContent = WEEKDAY_LABELS[weekday];
+    label.textContent = WEEKDAY_LABELS[weekday] ?? `Day ${weekday}`;
     column.append(label);
     const dayCells = cells.filter((cell) => cell.weekday === weekday);
     if (dayCells.length === 0) {
@@ -746,11 +757,23 @@ export function renderAdminInsights(
       cellButton.setAttribute('aria-label', insightCellLabel(cellData));
       cellButton.setAttribute('aria-pressed', 'false');
       cellButton.style.setProperty('--heat-level', String(cellData.count / maximum));
-      cellButton.addEventListener('click', () => {
-        for (const selected of grid.querySelectorAll<HTMLButtonElement>('.heatmap-cell[aria-pressed="true"]')) selected.setAttribute('aria-pressed', 'false');
+      const selectCell = (): void => {
+        grid.querySelectorAll<HTMLButtonElement>('.heatmap-cell[aria-pressed="true"]').forEach((selected) => selected.setAttribute('aria-pressed', 'false'));
         cellButton.setAttribute('aria-pressed', 'true');
         const names = showVolunteerDetails && cellData.volunteerNames?.length ? ` Volunteers: ${cellData.volunteerNames.join(', ')}.` : '';
         details.textContent = `${insightCellLabel(cellData)}.${names}`;
+      };
+      cellButton.addEventListener('click', selectCell);
+      cellButton.addEventListener('keydown', (event) => {
+        const key = event.key;
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(key)) return;
+        const buttons = Array.from(grid.querySelectorAll<HTMLButtonElement>('.heatmap-cell'));
+        const index = buttons.indexOf(cellButton);
+        if (index < 0) return;
+        const nextIndex = key === 'Home' ? 0 : key === 'End' ? buttons.length - 1 : key === 'ArrowLeft' || key === 'ArrowUp' ? Math.max(0, index - 1) : Math.min(buttons.length - 1, index + 1);
+        buttons[nextIndex]?.focus();
+        buttons[nextIndex]?.click();
+        event.preventDefault();
       });
       column.append(cellButton);
     }
@@ -783,16 +806,30 @@ export function renderCenterSchedule(
   count.step = '1';
   count.required = true;
   form.append(editor.wrapper, count.closest('label') as HTMLLabelElement);
+  let editingId: string | undefined;
   const submit = button(documentRef, 'Save candidate interval', 'submit', 'primary-button');
+  const cancelEdit = button(documentRef, 'Cancel editing');
+  cancelEdit.hidden = true;
   const status = statusNode(documentRef);
-  form.append(submit, status);
+  const resetEditor = (): void => {
+    editingId = undefined;
+    cancelEdit.hidden = true;
+    submit.textContent = 'Save candidate interval';
+    editor.start.value = '';
+    editor.end.value = '';
+    count.value = '';
+    status.textContent = '';
+  };
+  cancelEdit.addEventListener('click', resetEditor);
+  form.append(submit, cancelEdit, status);
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     try {
       const interval = parseInterval(editor);
       const requestedStaffCount = Number(count.value);
       if (!Number.isInteger(requestedStaffCount) || requestedStaffCount < 1 || requestedStaffCount > 2) throw new Error('Requested staffing must be one or two volunteers.');
-      const candidate = { ...interval, requestedStaffCount };
+      if (!interval.timeZone) throw new Error('A time zone is required.');
+      const candidate = editingId === undefined ? { weekday: interval.weekday, start: interval.start, end: interval.end, timeZone: interval.timeZone, requestedStaffCount } : { weekday: interval.weekday, start: interval.start, end: interval.end, timeZone: interval.timeZone, requestedStaffCount, id: editingId };
       handleAction(status, actions.onCandidateUpdate ? () => actions.onCandidateUpdate?.(candidate, data.revision) : undefined);
     } catch (error) {
       announceFailure(status, error);
@@ -832,16 +869,40 @@ export function renderCenterSchedule(
       requested.textContent = String(candidate.requestedStaffCount);
       const coverage = createElement(documentRef, 'td');
       coverage.textContent = candidate.coverageCount === undefined ? 'Not evaluated' : `${candidate.coverageCount} eligible volunteers`;
+      if (role === 'administrator' && candidate.volunteerNames?.length) {
+        coverage.append(documentRef.createTextNode(` — ${candidate.volunteerNames.join(', ')}`));
+      }
       const state = createElement(documentRef, 'td');
       state.textContent = candidate.status ?? (candidate.coverageCount !== undefined && candidate.coverageCount >= candidate.requestedStaffCount ? 'Candidate coverage' : 'Coverage shortfall');
       const actionCell = createElement(documentRef, 'td');
-      if (role === 'administrator' && candidate.id) {
+      const candidateId = candidate.id;
+      if (candidateId) {
+        const edit = button(documentRef, 'Edit candidate');
+        edit.addEventListener('click', () => {
+          editingId = candidateId;
+          editor.weekday.value = String(candidate.weekday);
+          editor.start.value = candidate.start;
+          editor.end.value = candidate.end;
+          editor.timeZone.value = candidate.timeZone;
+          count.value = String(candidate.requestedStaffCount);
+          submit.textContent = 'Save candidate changes';
+          cancelEdit.hidden = false;
+          status.textContent = `Editing ${candidateId}.`;
+          editor.start.focus();
+        });
+        actionCell.append(edit);
+      }
+      if (role === 'administrator' && candidateId) {
         const confirm = button(documentRef, 'Confirm for scheduling');
         const confirmStatus = statusNode(documentRef);
-        confirm.addEventListener('click', () => handleAction(confirmStatus, actions.onCandidateConfirm ? () => actions.onCandidateConfirm?.(candidate.id as string, data.revision) : undefined));
+        confirm.addEventListener('click', () => handleAction(confirmStatus, actions.onCandidateConfirm ? () => actions.onCandidateConfirm?.(candidateId, data.revision) : undefined));
         actionCell.append(confirm, confirmStatus);
-      } else {
-        actionCell.textContent = 'Administrator confirmation required';
+      } else if (!candidateId) {
+        actionCell.append(documentRef.createTextNode('Awaiting candidate identifier'));
+      } else if (role !== 'administrator') {
+        const note = documentRef.createElement('span');
+        note.textContent = 'Administrator confirmation required';
+        actionCell.append(note);
       }
       row.append(interval, requested, coverage, state, actionCell);
       tbody.append(row);

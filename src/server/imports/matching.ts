@@ -136,3 +136,9 @@ export class SourceMappingService {
     return mapping;
   }
 }
+
+export function matchParticipantIdentities(participants: readonly ParsedParticipant[], volunteers: readonly Volunteer[], mappings: readonly IdentityMapping[] = []): IdentityMatchResult {
+  return new IdentityMatcher(volunteers, mappings).match(participants);
+}
+
+export const matchIdentities = matchParticipantIdentities;

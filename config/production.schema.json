@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Volunteer scheduling private production configuration",
+  "description": "Private runtime settings. Keep this file outside the public bundle and repository.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "environment",
+    "timeZone",
+    "displayIncrementMinutes",
+    "operatingHours",
+    "administratorRecipients",
+    "oauthAudience",
+    "appsScriptUrl",
+    "sheetId",
+    "sheetOwnerEmail",
+    "writeEnabled"
+  ],
+  "properties": {
+    "environment": {
+      "type": "string",
+      "enum": ["development", "staging", "production"]
+    },
+    "timeZone": {
+      "type": "string",
+      "description": "IANA time-zone identifier used for recurring availability and sessions."
+    },
+    "displayIncrementMinutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Fixed display and insights increment in minutes."
+    },
+    "operatingHours": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" },
+        "end": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }
+      }
+    },
+    "administratorRecipients": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "email" }
+    },
+    "oauthAudience": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Google Identity Services OAuth audience/client ID."
+    },
+    "appsScriptUrl": {
+      "type": "string",
+      "format": "uri",
+      "description": "Deployed Apps Script /exec URL; never a secret."
+    },
+    "sheetId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Protected operational Sheet ID; private configuration only."
+    },
+    "sheetOwnerEmail": {
+      "type": "string",
+      "format": "email",
+      "description": "Administrator-owned account that owns the protected Sheet."
+    },
+    "writeEnabled": {
+      "type": "boolean",
+      "description": "Explicit write gate. Set false for migration, preview, and initial deployment."
+    }
+  }
+}

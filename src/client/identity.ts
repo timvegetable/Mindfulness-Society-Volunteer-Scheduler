@@ -28,7 +28,8 @@ const GIS_SCRIPT_ID = 'google-identity-services';
 const GIS_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
 
 function globalGoogle(): GoogleIdentityApi | undefined {
-  const candidate = (globalThis as { google?: unknown }).google;
+  const globalWithGoogle = globalThis as typeof globalThis & { google?: unknown };
+  const candidate = globalWithGoogle.google;
   if (typeof candidate !== 'object' || candidate === null) return undefined;
   return candidate as GoogleIdentityApi;
 }

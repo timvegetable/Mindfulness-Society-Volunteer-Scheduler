@@ -134,6 +134,55 @@ export function createJwtClaimVerifier(options: JwtClaimVerifierOptions): TokenV
     }
   };
 }
+ 
+export type GoogleTokenInfoFetcher = (token: string) => Promise<unknown> | unknown;
+
+const GoogleTokenInfoSchema = z.object({
+  aud: z.string().min(1),
+  sub: z.string().min(1),
+  email: z.string().email(),
+  verified_email: z.union([z.literal('true'), z.literal('false'), z.boolean()]).optional(),
+  exp: z.union([z.string(), z.number()]),
+  iat: z.union([z.string(), z.number()]).optional(),
+  iss: z.string().optional()
+}).passthrough();
+
+/**
+ * Verifies a Google ID token through Google's tokeninfo endpoint. The endpoint
+ * validates the JWT signature and returns the claims used for authorization;
+ * roles are still resolved only from the Users directory.
+ */
+export function createGoogleTokenInfoVerifier(options: Readonly<{ audience: string; fetcher?: GoogleTokenInfoFetcher }>): TokenVerifier {
+  if (!options.audience.trim()) throw new Error('A token audience is required.');
+  const fetcher = options.fetcher ?? ((token: string): unknown => {
+    const runtime = globalThis as unknown as { UrlFetchApp?: { fetch(url: string): { getResponseCode(): number; getContentText(): string } } };
+    const service = runtime.UrlFetchApp;
+    if (!service) throw new Error('UrlFetchApp is unavailable outside Apps Script');
+    const response = service.fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
+    if (response.getResponseCode() !== 200) throw new Error('Google credential verification failed.');
+    return JSON.parse(response.getContentText()) as unknown;
+  });
+  return {
+    async verify(token: string): Promise<VerifiedIdentityClaims> {
+      const parsed = GoogleTokenInfoSchema.safeParse(await fetcher(token));
+      if (!parsed.success || parsed.data.aud !== options.audience) throw new Error('Google credential audience is invalid.');
+      if (parsed.data.verified_email !== true && parsed.data.verified_email !== 'true') throw new Error('Google credential email is not verified.');
+      const exp = Number(parsed.data.exp);
+      const iat = parsed.data.iat === undefined ? undefined : Number(parsed.data.iat);
+      if (!Number.isFinite(exp) || (iat !== undefined && !Number.isFinite(iat))) throw new Error('Google credential timestamps are invalid.');
+      const claims: VerifiedIdentityClaims = {
+        iss: parsed.data.iss ?? 'https://accounts.google.com',
+        aud: parsed.data.aud,
+        sub: parsed.data.sub,
+        email: normalizeEmail(parsed.data.email),
+        email_verified: true,
+        exp,
+        ...(iat === undefined ? {} : { iat })
+      };
+      return claims;
+    }
+  };
+}
 
 export class MemoryTokenVerifier implements TokenVerifier {
   private readonly credentials = new Map<string, VerifiedIdentityClaims>();

@@ -17,9 +17,9 @@ export const API_OPERATIONS = {
 
 export type OperationName = (typeof API_OPERATIONS)[keyof typeof API_OPERATIONS];
 
-export const ALLOWED_OPERATIONS: ReadonlySet<string> = new Set(
-  Object.values(API_OPERATIONS)
-);
+export const ALLOWED_OPERATIONS: Readonly<Record<OperationName, true>> = Object.fromEntries(
+  Object.values(API_OPERATIONS).map((operation) => [operation, true])
+) as Readonly<Record<OperationName, true>>;
 
 export interface ApiClientConfig {
   appsScriptUrl?: string;
@@ -78,17 +78,17 @@ export class ApiClientError extends Error {
 }
 
 const DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024;
-const FORBIDDEN_PAYLOAD_KEYS = new Set([
-  'sheet',
-  'sheetname',
-  'range',
-  'a1range',
-  'spreadsheetid',
-  'gid',
-  'formula',
-  'query',
-  'sql'
-]);
+const FORBIDDEN_PAYLOAD_KEYS: Readonly<Record<string, true>> = {
+  sheet: true,
+  sheetname: true,
+  range: true,
+  a1range: true,
+  spreadsheetid: true,
+  gid: true,
+  formula: true,
+  query: true,
+  sql: true
+};
 
 function newIdempotencyKey(): string {
   const cryptoApi = globalThis.crypto;
@@ -111,7 +111,7 @@ function validatePayloadShape(value: unknown, depth = 0): asserts value is Recor
     throw new ApiClientError('invalid_payload', 'Request payload is nested too deeply.');
   }
   for (const [key, child] of Object.entries(value)) {
-    if (FORBIDDEN_PAYLOAD_KEYS.has(key.toLowerCase())) {
+    if (Object.hasOwn(FORBIDDEN_PAYLOAD_KEYS, key.toLowerCase())) {
       throw new ApiClientError('invalid_payload', `Payload field ${key} is not supported.`);
     }
     if (isRecord(child)) validatePayloadShape(child, depth + 1);
@@ -157,18 +157,50 @@ function responseData<T>(body: unknown, status: number): T {
   throw errorFromBody(body, status);
 }
 
+function parseIdentityData(value: unknown): IdentityData {
+  if (!isRecord(value) || typeof value.email !== 'string' || !value.email.trim()) {
+    throw new ApiClientError('invalid_response', 'The identity service returned an invalid profile.');
+  }
+  if (value.role !== 'volunteer' && value.role !== 'administrator' && value.role !== 'center-contact') {
+    throw new ApiClientError('unauthorized', 'This account is not authorized for scheduling.');
+  }
+  const profile: IdentityData = { email: value.email, role: value.role };
+  if (typeof value.name === 'string') profile.name = value.name;
+  if (typeof value.volunteerId === 'string') profile.volunteerId = value.volunteerId;
+  if (typeof value.centerId === 'string') profile.centerId = value.centerId;
+  return profile;
+}
+
 function ensureUrl(value: string | undefined): string {
   if (!value) return '';
   try {
-    const url = new URL(value, globalThis.location?.origin ?? 'https://localhost');
+    const url = new URL(value);
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) {
       throw new ApiClientError('invalid_configuration', 'The Apps Script URL must use HTTPS.');
+
     }
     return url.toString();
   } catch (error) {
     if (error instanceof ApiClientError) throw error;
     throw new ApiClientError('invalid_configuration', 'The Apps Script URL is invalid.');
   }
+}
+function exceptionRequest(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) throw new ApiClientError('invalid_payload', 'Exception payload must be an object.');
+  const date = value.date;
+  const kind = value.kind;
+  const interval = isRecord(value.interval) ? value.interval : {
+    start: value.start,
+    end: value.end,
+    timeZone: value.timeZone
+  };
+  if (typeof date !== 'string' || (kind !== 'available' && kind !== 'unavailable') || typeof interval.start !== 'string' || typeof interval.end !== 'string' || typeof interval.timeZone !== 'string') {
+    throw new ApiClientError('invalid_payload', 'Exception payload is incomplete.');
+  }
+  const payload: Record<string, unknown> = { date, kind, interval };
+  if (typeof value.id === 'string') payload.id = value.id;
+  if (typeof value.reason === 'string' && value.reason.trim()) payload.reason = value.reason.trim();
+  return payload;
 }
 
 /**
@@ -185,14 +217,14 @@ export class ApiClient {
     const normalized = typeof config === 'string' ? { appsScriptUrl: config } : config;
     this.appsScriptUrl = ensureUrl(normalized.appsScriptUrl);
     this.maxPayloadBytes = normalized.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
-    if (!Number.isSafeInteger(this.maxPayloadBytes) || this.maxPayloadBytes < 1024) {
-      throw new ApiClientError('invalid_configuration', 'The payload limit must be at least 1024 bytes.');
+    if (!Number.isSafeInteger(this.maxPayloadBytes) || this.maxPayloadBytes < 1) {
+      throw new ApiClientError('invalid_configuration', 'The payload limit must be a positive number.');
     }
     this.fetchImpl = normalized.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
-  async request<T>(operation: OperationName, payload: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<T> {
-    if (!ALLOWED_OPERATIONS.has(operation)) {
+  async request<T>(operation: OperationName, payload: unknown = {}, options: RequestOptions = {}): Promise<T> {
+    if (!Object.hasOwn(ALLOWED_OPERATIONS, operation)) {
       throw new ApiClientError('invalid_operation', 'That operation is not available.');
     }
     if (!this.appsScriptUrl) {
@@ -233,7 +265,7 @@ export class ApiClient {
   }
 
   me(credential: string): Promise<IdentityData> {
-    return this.request<IdentityData>(API_OPERATIONS.me, {}, { credential });
+    return this.request<unknown>(API_OPERATIONS.me, {}, { credential }).then(parseIdentityData);
   }
 
   volunteerDashboard(credential: string): Promise<unknown> {
@@ -241,7 +273,7 @@ export class ApiClient {
   }
 
   updateRecurringAvailability(
-    intervals: readonly Record<string, unknown>[],
+    intervals: readonly unknown[],
     expectedRevision: number | string,
     credential: string
   ): Promise<unknown> {
@@ -249,11 +281,11 @@ export class ApiClient {
   }
 
   createAvailabilityException(
-    exception: Record<string, unknown>,
+    exception: unknown,
     expectedRevision: number | string,
     credential: string
   ): Promise<unknown> {
-    return this.request(API_OPERATIONS.availabilityExceptionCreate, exception, { expectedRevision, credential });
+    return this.request(API_OPERATIONS.availabilityExceptionCreate, exceptionRequest(exception), { expectedRevision, credential });
   }
 
   cancelAssignment(
@@ -294,7 +326,7 @@ export class ApiClient {
   }
 
   updateCenterCandidate(
-    candidate: Record<string, unknown>,
+    candidate: unknown,
     expectedRevision: number | string,
     credential: string
   ): Promise<unknown> {

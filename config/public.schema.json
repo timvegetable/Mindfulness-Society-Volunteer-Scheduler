@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Volunteer scheduling public configuration",
+  "description": "Only non-secret browser settings may be published to GitHub Pages.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["appsScriptUrl", "oauthClientId"],
+  "properties": {
+    "appsScriptUrl": {
+      "type": "string",
+      "format": "uri",
+      "description": "Deployed Apps Script /exec URL."
+    },
+    "oauthClientId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Google OAuth client ID; not a client secret."
+    }
+  }
+}
