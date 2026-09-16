@@ -135,6 +135,13 @@ export function createJwtClaimVerifier(options: JwtClaimVerifierOptions): TokenV
   };
 }
  
+export type GoogleTokenInfoVerifierOptions = Readonly<{
+  audience: string;
+  fetcher?: GoogleTokenInfoFetcher;
+  clock?: Clock;
+  clockSkewSeconds?: number;
+}>;
+
 export type GoogleTokenInfoFetcher = (token: string) => Promise<unknown> | unknown;
 
 const GoogleTokenInfoSchema = z.object({
@@ -152,8 +159,11 @@ const GoogleTokenInfoSchema = z.object({
  * validates the JWT signature and returns the claims used for authorization;
  * roles are still resolved only from the Users directory.
  */
-export function createGoogleTokenInfoVerifier(options: Readonly<{ audience: string; fetcher?: GoogleTokenInfoFetcher }>): TokenVerifier {
+export function createGoogleTokenInfoVerifier(options: GoogleTokenInfoVerifierOptions): TokenVerifier {
   if (!options.audience.trim()) throw new Error('A token audience is required.');
+  const clock = options.clock ?? (() => Math.floor(Date.now() / 1000));
+  const skew = options.clockSkewSeconds ?? 60;
+  if (!Number.isFinite(skew) || skew < 0 || skew > 900) throw new Error('Google token clock skew is invalid.');
   const fetcher = options.fetcher ?? ((token: string): unknown => {
     const runtime = globalThis as unknown as { UrlFetchApp?: { fetch(url: string): { getResponseCode(): number; getContentText(): string } } };
     const service = runtime.UrlFetchApp;
@@ -166,10 +176,14 @@ export function createGoogleTokenInfoVerifier(options: Readonly<{ audience: stri
     async verify(token: string): Promise<VerifiedIdentityClaims> {
       const parsed = GoogleTokenInfoSchema.safeParse(await fetcher(token));
       if (!parsed.success || parsed.data.aud !== options.audience) throw new Error('Google credential audience is invalid.');
+      if (parsed.data.iss !== undefined && !issuerMatches(parsed.data.iss, undefined)) throw new Error('Google credential issuer is invalid.');
       if (parsed.data.verified_email !== true && parsed.data.verified_email !== 'true') throw new Error('Google credential email is not verified.');
       const exp = Number(parsed.data.exp);
       const iat = parsed.data.iat === undefined ? undefined : Number(parsed.data.iat);
       if (!Number.isFinite(exp) || (iat !== undefined && !Number.isFinite(iat))) throw new Error('Google credential timestamps are invalid.');
+      const now = clock();
+      if (exp <= now - skew) throw new Error('Google credential has expired.');
+      if (iat !== undefined && iat > now + skew) throw new Error('Google credential was issued in the future.');
       const claims: VerifiedIdentityClaims = {
         iss: parsed.data.iss ?? 'https://accounts.google.com',
         aud: parsed.data.aud,
