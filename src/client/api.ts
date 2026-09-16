@@ -31,7 +31,7 @@ export interface RequestEnvelope {
   operation: OperationName;
   payload: Record<string, unknown>;
   idempotencyKey: string;
-  expectedRevision?: number | string;
+  expectedRevision?: number;
   credential?: string;
 }
 
@@ -101,6 +101,14 @@ function newIdempotencyKey(): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeExpectedRevision(value: number | string): number {
+  const normalized = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+    throw new ApiClientError('invalid_revision', 'Expected revision must be a non-negative integer.');
+  }
+  return normalized;
 }
 
 function validatePayloadShape(value: unknown, depth = 0): asserts value is Record<string, unknown> {
@@ -239,7 +247,7 @@ export class ApiClient {
       payload,
       idempotencyKey: options.idempotencyKey ?? newIdempotencyKey()
     };
-    if (options.expectedRevision !== undefined) envelope.expectedRevision = options.expectedRevision;
+    if (options.expectedRevision !== undefined) envelope.expectedRevision = normalizeExpectedRevision(options.expectedRevision);
     if (options.credential !== undefined) envelope.credential = options.credential;
     const body = JSON.stringify(envelope);
     const bytes = new TextEncoder().encode(body).byteLength;
