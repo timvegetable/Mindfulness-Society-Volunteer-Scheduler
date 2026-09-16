@@ -2,6 +2,7 @@ import { createGoogleTokenInfoVerifier, MemoryUserDirectory, type UserDirectory 
 import { createAppsScriptAdapters, type AppsScriptAdapterOptions, type AppsScriptRequest, type JsonOutput } from './integration/adapters.js';
 import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
 import { projectIdentity } from './integration/projections.js';
+import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
 
 export type ServerOptions = IntegrationDispatcherOptions & Readonly<{ adapter?: AppsScriptAdapterOptions }>;
@@ -10,6 +11,8 @@ export type Server = Readonly<{
   dispatcher: IntegrationDispatcher;
   doGet(event: AppsScriptRequest): Promise<JsonOutput | string>;
   doPost(event: AppsScriptRequest): Promise<JsonOutput | string>;
+  initializeWorkbook(): unknown;
+  checkWorkbookSchema(): unknown;
 }>;
 
 function runtimeProperties(): { getProperty(name: string): string | null; setProperty(name: string, value: string): void } | undefined {
@@ -71,7 +74,13 @@ function runtimeTokenInfoAvailable(): boolean {
 export function createServer(options: ServerOptions): Server {
   const dispatcher = createIntegrationDispatcher(options);
   const adapters = createAppsScriptAdapters(dispatcher, options.adapter);
-  return { dispatcher, doGet: adapters.doGet, doPost: adapters.doPost };
+  return {
+    dispatcher,
+    doGet: adapters.doGet,
+    doPost: adapters.doPost,
+    initializeWorkbook: () => initializeActiveWorkbook(),
+    checkWorkbookSchema: () => checkActiveWorkbookSchema()
+  };
 }
 
 function defaultServer(): Server {
@@ -98,6 +107,14 @@ function server(): Server {
 export function configureServer(options: ServerOptions): Server {
   configuredServer = createServer(options);
   return configuredServer;
+}
+
+export function initializeWorkbook(): unknown {
+  return server().initializeWorkbook();
+}
+
+export function checkWorkbookSchema(): unknown {
+  return server().checkWorkbookSchema();
 }
 
 export async function doGet(event: AppsScriptRequest): Promise<JsonOutput | string> {

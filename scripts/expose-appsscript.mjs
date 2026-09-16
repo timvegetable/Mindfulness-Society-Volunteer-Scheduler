@@ -2,5 +2,11 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 const outputPath = new URL('../dist/apps-script/Code.js', import.meta.url);
 const source = await readFile(outputPath, 'utf8');
-const footer = '\nfunction doGet(event) { return VolunteerScheduling.doGet(event); }\nfunction doPost(event) { return VolunteerScheduling.doPost(event); }\n';
-if (!source.includes('function doGet(event) { return VolunteerScheduling.doGet(event); }')) await writeFile(outputPath, `${source}${footer}`);
+const trampolines = [
+  'function doGet(event) { return VolunteerScheduling.doGet(event); }',
+  'function doPost(event) { return VolunteerScheduling.doPost(event); }',
+  'function initializeWorkbook() { return VolunteerScheduling.initializeWorkbook(); }',
+  'function checkWorkbookSchema() { return VolunteerScheduling.checkWorkbookSchema(); }'
+];
+const missing = trampolines.filter((line) => !source.includes(line));
+if (missing.length > 0) await writeFile(outputPath, `${source}\n${missing.join('\n')}\n`);
