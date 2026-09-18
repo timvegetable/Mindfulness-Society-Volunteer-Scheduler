@@ -14,6 +14,16 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
+function parseList(value: unknown): string[] | undefined {
+  if (typeof value !== 'string') return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  const parsed = parseJson<unknown>(trimmed, undefined);
+  if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string');
+  return trimmed.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+
 export const centerCodec: SheetCodec<Center> = {
   fromRow(row) {
     return {
@@ -32,12 +42,12 @@ export const centerCodec: SheetCodec<Center> = {
 
 export const centerUserCodec: SheetCodec<CenterUser> = {
   fromRow(row) {
-    const roles = parseJson<CenterUser['roles']>(row.roles, []);
-    const centerIds = parseJson<CenterUser['centerIds']>(row.centerIds, undefined);
+    const roles = (parseList(row.roles) ?? []).filter((role): role is CenterUser['roles'][number] => role === 'volunteer' || role === 'administrator' || role === 'center-contact');
+    const centerIds = parseList(row.centerIds);
     const result: CenterUser = {
       id: String(row.id ?? ''),
       email: String(row.email ?? ''),
-      roles: Array.isArray(roles) ? [...roles] : [],
+      roles,
       active: row.active === true || row.active === 'true',
       revision: Number(row.revision ?? 0)
     };

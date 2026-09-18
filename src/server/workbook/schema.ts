@@ -1,4 +1,4 @@
-export const WORKBOOK_SCHEMA_VERSION = 1;
+export const WORKBOOK_SCHEMA_VERSION = 3;
 
 export type WorkbookTab = {
   name: string;
@@ -15,7 +15,9 @@ export const WORKBOOK_TABS: readonly WorkbookTab[] = [
   { name: 'Assignments', columns: ['id', 'sessionId', 'volunteerId', 'scheduleRevision', 'status', 'createdAt', 'cancelledAt', 'cancellationReason'], protectedColumns: ['id', 'scheduleRevision', 'createdAt'] },
   { name: 'Backups', columns: ['id', 'sessionId', 'volunteerId', 'scheduleRevision', 'position', 'status'], protectedColumns: ['id', 'scheduleRevision', 'position'] },
   { name: 'SchedulingRuns', columns: ['id', 'inputRevision', 'outputRevision', 'status', 'startedAt', 'completedAt', 'assignmentIds', 'backupIds', 'shortfalls', 'diagnostic'], protectedColumns: ['id', 'inputRevision', 'outputRevision', 'status', 'startedAt', 'completedAt'] },
-  { name: 'Imports', columns: ['id', 'source', 'contentHash', 'status', 'startedAt', 'completedAt', 'participantCount', 'unmatched', 'diagnostic'], protectedColumns: ['id', 'source', 'contentHash', 'startedAt', 'completedAt'] },
+  { name: 'Imports', columns: ['id', 'source', 'contentHash', 'status', 'startedAt', 'completedAt', 'actorId', 'resultId', 'participantCount', 'matchedCount', 'unmatched', 'stagedAvailability', 'diagnostic', 'promotedAt', 'promotedBy'], protectedColumns: ['id', 'source', 'contentHash', 'startedAt', 'completedAt', 'actorId', 'promotedAt', 'promotedBy'] },
+  { name: 'ImportMappings', columns: ['id', 'source', 'sourceParticipantId', 'sourceEmail', 'sourceName', 'volunteerId', 'createdAt', 'updatedAt', 'updatedBy'], protectedColumns: ['id', 'source', 'createdAt', 'updatedAt', 'updatedBy'] },
+  { name: 'ImportedAvailability', columns: ['id', 'volunteerId', 'sourceParticipantId', 'source', 'weekday', 'start', 'end', 'timeZone', 'importedAt', 'importRunId'], protectedColumns: ['id', 'volunteerId', 'sourceParticipantId', 'source', 'importedAt', 'importRunId'] },
   { name: 'Users', columns: ['id', 'email', 'roles', 'volunteerId', 'centerIds', 'active', 'revision'], protectedColumns: ['id', 'roles', 'volunteerId', 'centerIds', 'revision'] },
   { name: 'Settings', columns: ['key', 'value', 'updatedAt', 'updatedBy'], protectedColumns: ['key', 'updatedAt', 'updatedBy'] },
   { name: 'AuditLog', columns: ['id', 'entity', 'entityId', 'action', 'source', 'actorId', 'timestamp', 'before', 'after'], protectedColumns: ['id', 'timestamp'], appendOnly: true },

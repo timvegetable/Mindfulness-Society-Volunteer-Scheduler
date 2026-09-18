@@ -62,6 +62,7 @@ function runIdentifier(sequence: number): string {
 
 export type SchedulingStoreOptions = {
   inputRevision?: number;
+  currentRevision?: number;
   clock?: SchedulingClock;
   lock?: SchedulingLock;
 };
@@ -75,6 +76,7 @@ export class SchedulingStore {
   private readonly clock: SchedulingClock;
   private readonly lock: SchedulingLock;
   private inputRevisionValue: number | undefined;
+  private currentScheduleRevision: number;
   private currentScheduleValue: PublishedSchedule | undefined;
   private sequence = 0;
   private readonly runRows = new Map<string, SchedulingRun>();
@@ -84,6 +86,10 @@ export class SchedulingStore {
     this.clock = options.clock ?? defaultClock;
     this.lock = options.lock ?? noOpLock;
     this.inputRevisionValue = options.inputRevision;
+    this.currentScheduleRevision = options.currentRevision ?? 0;
+    if (!Number.isInteger(this.currentScheduleRevision) || this.currentScheduleRevision < 0) {
+      throw new SchedulingPublicationError('INVALID_REQUEST', 'Current revision must be a non-negative integer');
+    }
   }
 
   inputRevision(): number | undefined {
@@ -98,7 +104,7 @@ export class SchedulingStore {
   }
 
   currentRevision(): number {
-    return this.currentScheduleValue?.revision ?? 0;
+    return this.currentScheduleValue?.revision ?? this.currentScheduleRevision;
   }
 
   current(): PublishedSchedule | undefined {
@@ -213,6 +219,7 @@ export class SchedulingStore {
       shortfalls: staged.shortfalls.map((shortfall) => ({ ...shortfall }))
     };
     this.currentScheduleValue = published;
+    this.currentScheduleRevision = published.revision;
     this.runRows.set(runId, completedRun);
     this.stagedRows.delete(runId);
     return copyPublished(published);

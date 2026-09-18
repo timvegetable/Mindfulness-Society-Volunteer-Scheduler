@@ -21,6 +21,23 @@ export type WhenIsGoodFetchResult = {
 function buildUrl(endpoint: string, resultId: string): string {
   const encoded = encodeURIComponent(resultId);
   if (endpoint.includes('{resultId}')) return endpoint.replaceAll('{resultId}', encoded);
+  try {
+    const parsed = new URL(endpoint);
+    const segments = parsed.pathname.split('/');
+    const resultsIndex = segments.lastIndexOf('results');
+    if (resultsIndex === segments.length - 1) {
+      segments.push(encoded);
+      parsed.pathname = segments.join('/');
+      return parsed.toString();
+    }
+    if (resultsIndex === segments.length - 2) {
+      segments[resultsIndex + 1] = encoded;
+      parsed.pathname = segments.join('/');
+      return parsed.toString();
+    }
+  } catch {
+    // Fall through to the legacy query-parameter endpoint format.
+  }
   const separator = endpoint.includes('?') ? '&' : '?';
   return `${endpoint}${separator}result=${encoded}`;
 }

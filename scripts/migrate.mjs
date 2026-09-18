@@ -163,7 +163,55 @@ function countKnown(values, allowed) {
   return result;
 }
 
+function sourceRosterIdentity(row) {
+  const name = text(row.name || row.fullName) || [text(row['First Name']), text(row['Last Name'])].filter(Boolean).join(' ');
+  const email = text(row.email || row.Email);
+  return { name, email };
+}
+
 function rosterReport(rows) {
+  const sourceExport = rows.some((row) => isRecord(row) && ('First Name' in row || 'Last Name' in row) && 'Email' in row);
+  if (sourceExport) {
+    const invalidRowNumbers = [];
+    const validRows = [];
+    const seen = new Set();
+    let duplicateCount = 0;
+    let alternateEmailCount = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const identity = isRecord(row) ? sourceRosterIdentity(row) : { name: '', email: '' };
+      if (!identity.name && !identity.email) {
+        invalidRowNumbers.push(index + 2);
+        continue;
+      }
+      const emailParts = identity.email.split(/\s+or\s+/iu).map((value) => text(value)).filter(Boolean);
+      if (emailParts.length > 1) alternateEmailCount += 1;
+      const key = (emailParts[0] ?? identity.name).toLowerCase();
+      if (seen.has(key)) duplicateCount += 1;
+      seen.add(key);
+      validRows.push(row);
+    }
+    const missingCanonicalFieldCounts = {
+      id: validRows.length,
+      lifecycleStatus: validRows.filter((row) => !text(row.lifecycleStatus || row.status)).length,
+      interviewStatus: validRows.filter((row) => !text(row.interviewStatus)).length,
+      readinessRank: validRows.filter((row) => !text(row.readinessRank || row.rank || row.ranking)).length
+    };
+    return {
+      sourceSchema: 'google-form-roster-export',
+      inputRowCount: rows.length,
+      validRowCount: validRows.length,
+      invalidRowCount: invalidRowNumbers.length,
+      invalidRowNumbers,
+      identityCandidateCount: validRows.length,
+      duplicateIdentityCount: duplicateCount,
+      alternateEmailRowCount: alternateEmailCount,
+      missingCanonicalFieldCounts,
+      lifecycleCounts: countKnown([], new Set(['active', 'newly joined', 'inactive', 'graduated'])),
+      reconciliation: { matched: 0, unmatched: validRows.length, ambiguous: duplicateCount },
+      preview: { action: 'staged-review-only', productionRowsChanged: 0 }
+    };
+  }
   const validRows = [];
   const invalidRowNumbers = [];
   const seen = new Set();
@@ -191,6 +239,7 @@ function rosterReport(rows) {
     preview: { action: 'staged-review-only', productionRowsChanged: 0 }
   };
 }
+
 
 function rankingsReport(rows) {
   const validRows = [];
@@ -262,6 +311,47 @@ function whenIsGoodReport(rows, payload) {
 }
 
 function sessionsReport(rows) {
+  const sourceExport = rows.some((row) => isRecord(row) && ('Center' in row || 'Day & Time (ET)' in row || 'Freq' in row));
+  if (sourceExport) {
+    const candidateRowNumbers = [];
+    const unresolvedRowNumbers = [];
+    const missingRequiredStaffCountRowNumbers = [];
+    const missingStatusRowNumbers = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const center = isRecord(row) ? text(row.Center || row.centerId || row.center) : '';
+      const dayTime = isRecord(row) ? text(row['Day & Time (ET)'] || row.start) : '';
+      const dates = isRecord(row) ? text(row.Dates || row.date) : '';
+      const candidate = Boolean(center && dayTime && dates && !/^(?:no slot agreed|tbd|—|-)\s*$/iu.test(dayTime) && !/^(?:tbd|—|-)\s*$/iu.test(dates));
+      if (!candidate) {
+        unresolvedRowNumbers.push(index + 2);
+        continue;
+      }
+      candidateRowNumbers.push(index + 2);
+      missingRequiredStaffCountRowNumbers.push(index + 2);
+      missingStatusRowNumbers.push(index + 2);
+    }
+    const staffing = { '0': 0, '1': 0, '2': 0, invalid: candidateRowNumbers.length };
+    const kinds = { center: candidateRowNumbers.length, univ100: 0, other: unresolvedRowNumbers.length };
+    const statuses = { locked: 0, confirmed: 0, proposed: 0, other: rows.length };
+    return {
+      sourceSchema: 'center-session-export',
+      inputRowCount: rows.length,
+      validRowCount: candidateRowNumbers.length,
+      invalidRowCount: unresolvedRowNumbers.length,
+      invalidRowNumbers: unresolvedRowNumbers,
+      candidateRowNumbers,
+      unresolvedRowNumbers,
+      missingRequiredStaffCountRowNumbers,
+      missingStatusRowNumbers,
+      kindCounts: kinds,
+      statusCounts: statuses,
+      requiredStaffCounts: staffing,
+      proposedExcludedCount: 0,
+      reconciliation: { matched: 0, unmatched: rows.length, ambiguous: 0 },
+      preview: { action: 'locked-session-review-only', productionRowsChanged: 0 }
+    };
+  }
   const invalidRowNumbers = [];
   const validRows = [];
   const staffing = { '0': 0, '1': 0, '2': 0, invalid: 0 };

@@ -3,8 +3,8 @@ import { createAppsScriptAdapters, type AppsScriptAdapterOptions, type AppsScrip
 import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
 import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
+import { createProductionRuntime } from './runtime.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
-
 export type ServerOptions = IntegrationDispatcherOptions & Readonly<{ adapter?: AppsScriptAdapterOptions }>;
 
 export type Server = Readonly<{
@@ -20,6 +20,19 @@ function runtimeProperties(): { getProperty(name: string): string | null; setPro
   return runtime.PropertiesService?.getScriptProperties();
 }
 
+export function runtimeListField(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // Fall back to the workbook's comma-separated representation.
+  }
+  return trimmed.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
 function runtimeUserDirectory(): UserDirectory {
   const runtime = globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): { getSheetByName(name: string): { getLastRow(): number; getLastColumn(): number; getRange(row: number, column: number, rows: number, columns: number): { getValues(): unknown[][] } } | null } } };
   const spreadsheet = runtime.SpreadsheetApp?.getActiveSpreadsheet();
@@ -31,8 +44,8 @@ function runtimeUserDirectory(): UserDirectory {
   for (const row of values.slice(1)) {
     const record: Record<string, unknown> = {};
     headers.forEach((header, index) => { if (typeof header === 'string') record[header] = row[index]; });
-    const roles = typeof record.roles === 'string' ? record.roles.split(',').map((role) => role.trim()).filter(Boolean) : record.roles;
-    const centerIds = typeof record.centerIds === 'string' ? record.centerIds.split(',').map((center) => center.trim()).filter(Boolean) : record.centerIds;
+    const roles = runtimeListField(record.roles);
+    const centerIds = runtimeListField(record.centerIds);
     const parsed = UserSchema.safeParse({ ...record, roles, centerIds, active: record.active !== false && record.active !== 'false', revision: Number(record.revision ?? 0) });
     if (parsed.success) users.push(parsed.data);
   }
@@ -90,8 +103,11 @@ function defaultServer(): Server {
   if (!runtimeTokenInfoAvailable()) throw new Error('Google token verification is unavailable');
   const verifier = createGoogleTokenInfoVerifier({ audience });
   const revision = runtimeRevisionSource();
-  const writeLock = runtimeWriteLock();
-  const handlers = {
+  const writeEnabled = properties?.getProperty('WRITE_ENABLED') === 'true';
+  const writeLock = writeEnabled ? runtimeWriteLock() : undefined;
+  const spreadsheet = (globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof createProductionRuntime>[0] } }).SpreadsheetApp?.getActiveSpreadsheet();
+  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties) : undefined;
+  const handlers = production?.handlers ?? {
     [INTEGRATION_OPERATIONS.me]: ({ actor }: HandlerContext) => projectIdentity(actor)
   };
   return createServer({ verifier, users: runtimeUserDirectory(), revision, writeLock, handlers });

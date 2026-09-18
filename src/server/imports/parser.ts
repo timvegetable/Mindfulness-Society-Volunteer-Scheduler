@@ -244,6 +244,84 @@ function embeddedCandidates(html: string): string[] {
   return result;
 }
 
+function legacyAssignment(block: string, property: string): string | undefined {
+  const match = new RegExp(`\\.${property}\\s*=\\s*("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`).exec(block);
+  if (!match?.[1]) return undefined;
+  const literal = match[1];
+  if (literal.startsWith('"')) {
+    try {
+      return JSON.parse(literal) as string;
+    } catch {
+      return undefined;
+    }
+  }
+  return literal.slice(1, -1).replace(/\\(['\\])/g, '$1').replace(/\\n/g, '\n');
+}
+
+function legacySlotValues(block: string, property: string): string[] {
+  const value = legacyAssignment(block, property);
+  return value ? value.split(',').map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function legacySlotDuration(html: string): number {
+  const ids = [...html.matchAll(/<td\b(?=[^>]*\bclass\s*=\s*["'][^"']*\bslot\b[^"']*["'])(?=[^>]*\bid\s*=\s*["'](\d+)["'])[^>]*>/gi)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isSafeInteger(value))
+    .sort((left, right) => left - right);
+  let duration = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < ids.length; index += 1) {
+    const difference = (ids[index] ?? 0) - (ids[index - 1] ?? 0);
+    if (difference > 0) duration = Math.min(duration, difference);
+  }
+  return Number.isFinite(duration) && duration <= 24 * 60 * 60 * 1000 ? duration : 60 * 60 * 1000;
+}
+
+function legacySlotFromTimestamp(value: string, duration: number): ParsedAvailabilitySlot | undefined {
+  const timestamp = Number(value);
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0) return undefined;
+  // Legacy grid IDs are wall-clock labels encoded as UTC-like milliseconds.
+  // Read them with UTC accessors so the configured scheduling zone receives
+  // the displayed time instead of a shifted instant.
+  const startDate = new Date(timestamp);
+  const endDate = new Date(timestamp + duration);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return undefined;
+  if (startDate.getUTCFullYear() !== endDate.getUTCFullYear() || startDate.getUTCMonth() !== endDate.getUTCMonth() || startDate.getUTCDate() !== endDate.getUTCDate()) return undefined;
+  const date = `${startDate.getUTCFullYear().toString().padStart(4, '0')}-${(startDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${startDate.getUTCDate().toString().padStart(2, '0')}`;
+  const weekdayValue = startDate.getUTCDay();
+  const weekdayValueNormalized = weekdayValue === 0 ? 7 : weekdayValue;
+  const start = `${startDate.getUTCHours().toString().padStart(2, '0')}:${startDate.getUTCMinutes().toString().padStart(2, '0')}`;
+  const end = `${endDate.getUTCHours().toString().padStart(2, '0')}:${endDate.getUTCMinutes().toString().padStart(2, '0')}`;
+  return { date, weekday: weekdayValueNormalized as Weekday, start, end };
+}
+
+function parseLegacyWhenIsGoodData(html: string): ParsedParticipant[] {
+  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1] ?? '');
+  const sections = scripts.length > 0 ? scripts : [html];
+  const duration = legacySlotDuration(html);
+  const participants: ParsedParticipant[] = [];
+  const respondentPattern = /var\s+(r[A-Za-z0-9_$]+)\s*=\s*new Object\(\);([\s\S]*?)(?=\s*var\s+r[A-Za-z0-9_$]+\s*=\s*new Object\(\);|\s*disableSelection\s*\(|\s*$)/g;
+  for (const section of sections) {
+    for (const match of section.matchAll(respondentPattern)) {
+      const block = match[0] ?? '';
+      const name = legacyAssignment(block, 'name');
+      const sourceParticipantId = legacyAssignment(block, 'id');
+      if (!name || !sourceParticipantId) continue;
+      if (/\.included\s*=\s*false\b/.test(block)) continue;
+      const selected = [...new Set([
+        ...legacySlotValues(block, 'myCanDos'),
+        ...legacySlotValues(block, 'myCanDosGood')
+      ])];
+      const fallback = selected.length > 0 ? selected : legacySlotValues(block, 'myCanDosAll');
+      const availability = fallback
+        .map((value) => legacySlotFromTimestamp(value, duration))
+        .filter((slot): slot is ParsedAvailabilitySlot => slot !== undefined);
+      if (availability.length > 0) participants.push({ sourceParticipantId, name, availability });
+    }
+  }
+  return participants;
+}
+
+
 export function parseEmbeddedWhenIsGoodData(html: string, options: EmbeddedParserOptions = {}): ParsedWhenIsGood {
   if (!html.trim()) throw new WhenIsGoodParseError('WhenIsGood response is empty');
   const candidates = embeddedCandidates(html);
@@ -263,7 +341,13 @@ export function parseEmbeddedWhenIsGoodData(html: string, options: EmbeddedParse
       continue;
     }
   }
-  if (!participants) throw new WhenIsGoodParseError('Supported WhenIsGood embedded participant data was not found', 'No participant collection could be decoded');
+  if (!participants) {
+    const legacyParticipants = parseLegacyWhenIsGoodData(html);
+    if (legacyParticipants.length > 0) {
+      return { source: 'whenisgood', resultId: options.resultId, participants: legacyParticipants };
+    }
+    throw new WhenIsGoodParseError('Supported WhenIsGood embedded participant data was not found', 'No participant collection could be decoded');
+  }
   const topLevelTimeZone = payloadRecord ? firstText(payloadRecord, ['timeZone', 'timezone', 'tz']) : undefined;
   return { source: 'whenisgood', resultId: options.resultId, timeZone: topLevelTimeZone ?? options.defaultTimeZone, participants };
 }

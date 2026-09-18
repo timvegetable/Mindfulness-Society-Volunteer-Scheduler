@@ -156,6 +156,10 @@ export class SheetRepository<T extends { id: string }> implements RevisionedRepo
   }
 
   appendAudit(entry: AuditEntry): void {
+    if (this.auditWriter) {
+      this.auditWriter(entry);
+      return;
+    }
     this.sheet.appendRow([entry.id, entry.entity, entry.entityId, entry.action, entry.source, entry.actorId, entry.timestamp, JSON.stringify(entry.before ?? null), JSON.stringify(entry.after ?? null)]);
   }
 

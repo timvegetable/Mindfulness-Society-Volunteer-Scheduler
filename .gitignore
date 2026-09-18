@@ -6,3 +6,5 @@ dist/
 *.local
 .pi/
 .omp/
+ migration-output/
+ scrubbed_exports/
