@@ -128,9 +128,13 @@ export const sessionCodec: SheetCodec<Session> = {
     const centerId = optionalText(row.centerId);
     const title = optionalText(row.title);
     const sourceCandidateId = optionalText(row.sourceCandidateId);
+    const createdAt = optionalText(row.createdAt);
+    const updatedAt = optionalText(row.updatedAt);
     if (centerId !== undefined) result.centerId = centerId;
     if (title !== undefined) result.title = title;
     if (sourceCandidateId !== undefined) result.sourceCandidateId = sourceCandidateId;
+    if (createdAt !== undefined) result.createdAt = createdAt;
+    if (updatedAt !== undefined) result.updatedAt = updatedAt;
     return result;
   },
   toRow(value) {
@@ -147,8 +151,8 @@ export const sessionCodec: SheetCodec<Session> = {
       status: value.status,
       sourceCandidateId: value.sourceCandidateId ?? '',
       revision: value.revision,
-      createdAt: '',
-      updatedAt: ''
+      createdAt: value.createdAt ?? '',
+      updatedAt: value.updatedAt ?? ''
     };
   }
 };

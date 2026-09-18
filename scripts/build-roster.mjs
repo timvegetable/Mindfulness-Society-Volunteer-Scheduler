@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Builds canonical Volunteer rows from the Google-Form roster export.
 // Policy (administrator-confirmed): stable ID = lowercase email; default rank = 1
-// (primary); interviews pending so interviewStatus stays incomplete, which keeps
-// every row out of scheduling until an administrator flips it to complete.
+// (primary); interviewStatus = complete for the whole roster "for now" so the
+// season's scheduling preview can run — revise per volunteer as interviews land.
 // Lifecycle is active for all rows; administrators remove graduated people manually.
 // Output contains real contact data: NEVER commit migration-output/ (gitignored).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -81,7 +81,7 @@ rows.forEach((row, index) => {
     name,
     email,
     lifecycleStatus: 'active',
-    interviewStatus: 'incomplete',
+    interviewStatus: 'complete',
     readinessRank: 1,
     recurringAvailability: [],
     revision: 0,
@@ -93,6 +93,49 @@ rows.forEach((row, index) => {
 
 volunteers.sort((a, b) => (a.id < b.id ? -1 : 1));
 
+// Reviewed corrections live in an optional override file so fixes to the form
+// export are explicit and reviewable rather than edited into this script.
+const overrides = [];
+const OVERRIDES_PATH = `${ROOT}/scrubbed_exports/roster-overrides.csv`;
+try {
+  for (const [index, row] of parseCsv(await readFile(OVERRIDES_PATH, 'utf8')).entries()) {
+    const line = index + 2;
+    const email = collapse(row.email).toLowerCase();
+    const volunteer = volunteers.find((candidate) => candidate.id === email);
+    if (!volunteer) {
+      issues.push({ line, type: 'unusable-override', email, reason: 'no roster row has this email' });
+      continue;
+    }
+    const name = collapse(row.name);
+    const correctedEmail = collapse(row.correctedEmail).toLowerCase();
+    if (!name && !correctedEmail) {
+      issues.push({ line, type: 'unusable-override', email, reason: 'override has no name or correctedEmail' });
+      continue;
+    }
+    if (correctedEmail && volunteers.some((candidate) => candidate !== volunteer && candidate.id === correctedEmail)) {
+      issues.push({ line, type: 'unusable-override', email, reason: `correctedEmail ${correctedEmail} is already used by another roster row` });
+      continue;
+    }
+    const record = { email, name: name || undefined, correctedEmail: correctedEmail || undefined, note: collapse(row.note) || undefined };
+    if (name) volunteer.name = name;
+    if (correctedEmail) {
+      record.idFrom = volunteer.id;
+      volunteer.id = correctedEmail;
+      volunteer.email = correctedEmail;
+    }
+    record.idTo = volunteer.id;
+    overrides.push(record);
+  }
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+}
+volunteers.sort((a, b) => (a.id < b.id ? -1 : 1));
+
+const KNOWN_TLDS = new Set(['edu', 'com', 'org', 'net', 'gov', 'io']);
+const suspiciousDomains = volunteers
+  .filter((volunteer) => !KNOWN_TLDS.has(volunteer.email.split('.').at(-1)))
+  .map((volunteer) => ({ email: volunteer.email, name: volunteer.name, reason: 'address domain ends in an unusual top-level domain; the volunteer cannot sign in or be matched on it, so confirm the address' }));
+
 const report = {
   tool: 'build-roster',
   inputRows: rows.length,
@@ -100,13 +143,15 @@ const report = {
   policy: {
     stableId: 'lowercase-email',
     lifecycleStatus: 'active (administrators remove graduated volunteers manually each semester)',
-    interviewStatus: 'incomplete (interviews pending; excludes all rows from scheduling)',
+    interviewStatus: 'complete (temporary: administrators treat the roster as interview-complete for this season)',
     readinessRank: 1
   },
-  blockingIssues: issues.filter((i) => i.type !== 'duplicate-display-name'),
+  blockingIssues: issues.filter((i) => i.type !== 'duplicate-display-name' && i.type !== 'unusable-override'),
   warnings: issues.filter((i) => i.type === 'duplicate-display-name'),
-  schedulableNow: 0,
-  schedulableReason: 'interviewStatus=incomplete for all rows until administrators complete interviews'
+  overrides,
+  suspiciousDomains,
+  schedulableNow: volunteers.length,
+  schedulableReason: 'active + interviewStatus=complete + numeric rank; each volunteer still needs imported availability before any session can be staffed'
 };
 
 await mkdir(OUT_DIR, { recursive: true });
@@ -114,6 +159,14 @@ await writeFile(`${OUT_DIR}/volunteers.json`, `${JSON.stringify(volunteers, null
 await writeFile(`${OUT_DIR}/roster-report.json`, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 console.log(`volunteers=${volunteers.length} blocking=${report.blockingIssues.length} warnings=${report.warnings.length}`);
 for (const w of report.warnings) console.log(`warning: ${w.type} ${w.name} (${w.emails.join(' vs ')})`);
+for (const o of overrides) {
+  const changes = [
+    o.name ? `name -> "${o.name}"` : undefined,
+    o.correctedEmail ? `email ${o.idFrom} -> ${o.idTo}` : undefined
+  ].filter(Boolean).join(', ');
+  console.log(`override: ${o.email} ${changes}${o.note ? ` (${o.note})` : ''}`);
+}
+for (const s of suspiciousDomains) console.log(`check-email: ${s.email} — ${s.reason}`);
 if (report.blockingIssues.length > 0) {
   for (const b of report.blockingIssues) console.log(`blocking: ${JSON.stringify(b)}`);
   process.exitCode = 1;

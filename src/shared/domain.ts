@@ -53,7 +53,9 @@ export const SessionSchema = z.object({
   date: DateSchema, start: TimeSchema, end: TimeSchema, timeZone: TimeZoneSchema,
   requiredStaffCount: z.number().int().min(0).max(2),
   status: z.enum(['locked', 'proposed', 'confirmed', 'cancelled']),
-  revision: z.number().int().nonnegative(), sourceCandidateId: z.string().min(1).optional()
+  revision: z.number().int().nonnegative(), sourceCandidateId: z.string().min(1).optional(),
+  /** Row audit stamps for the Sessions tab; absent for rows built purely in memory. */
+  createdAt: IsoInstantSchema.optional(), updatedAt: IsoInstantSchema.optional()
 }).superRefine((value, ctx) => {
   if (value.start >= value.end) ctx.addIssue({ code: 'custom', path: ['end'], message: 'end must be after start' });
   if (value.kind === 'center' && !value.centerId) ctx.addIssue({ code: 'custom', path: ['centerId'], message: 'center sessions require centerId' });

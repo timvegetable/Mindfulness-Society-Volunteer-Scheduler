@@ -21,6 +21,30 @@ describe('production workbook codecs', () => {
     expect(sessionCodec.toRow(session)).toMatchObject({ timeZone: 'America/New_York', requiredStaffCount: 2 });
   });
 
+  it('preserves Sessions tab audit stamps and optional identifiers across a round-trip', () => {
+    const row = {
+      id: 'session-1', kind: 'center', centerId: 'center-1', title: 'Center session',
+      date: '2026-09-18', start: '09:00', end: '09:45', timeZone: 'America/New_York',
+      requiredStaffCount: 1, status: 'locked', sourceCandidateId: 'candidate-1', revision: 0,
+      createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z'
+    };
+    const session = sessionCodec.fromRow(row);
+    expect(session).toEqual({
+      id: 'session-1', kind: 'center', centerId: 'center-1', title: 'Center session',
+      date: '2026-09-18', start: '09:00', end: '09:45', timeZone: 'America/New_York',
+      requiredStaffCount: 1, status: 'locked', sourceCandidateId: 'candidate-1', revision: 0,
+      createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z'
+    });
+    expect(sessionCodec.fromRow(sessionCodec.toRow(session))).toEqual(session);
+
+    const blank = sessionCodec.fromRow({ ...sessionCodec.toRow(session), createdAt: '', updatedAt: '', sourceCandidateId: '', centerId: '', title: '' });
+    expect(blank.createdAt).toBeUndefined();
+    expect(blank.updatedAt).toBeUndefined();
+    expect('sourceCandidateId' in blank).toBe(false);
+    expect('centerId' in blank).toBe(false);
+    expect('title' in blank).toBe(false);
+  });
+
   it('persists staged import payloads as JSON workbook cells', () => {
     const run = importRunCodec.fromRow({
       id: 'import-1', source: 'whenisgood', contentHash: 'hash', status: 'staged',
