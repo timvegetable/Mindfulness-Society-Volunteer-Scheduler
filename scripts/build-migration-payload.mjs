@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const OUT_DIR = `${ROOT}/migration-output`;
 const BUNDLE_DIR = `${ROOT}/dist/apps-script`;
-const TABS = { volunteers: 'volunteers.json', centers: 'centers.json', sessions: 'sessions.json' };
+const TABS = { volunteers: 'volunteers.json', centers: 'centers.json', sessions: 'sessions.json', users: 'users.json' };
 
 async function readRows(file) {
   try {
@@ -53,4 +53,4 @@ try {
 } catch (error) {
   console.log(`wrote migration-output/MigrationPayload.gs (${source.length} bytes); bundle copy skipped: ${error.message}`);
 }
-console.log(`payload: ${payload.volunteers.length} volunteers, ${payload.centers.length} centers, ${payload.sessions.length} sessions`);
+console.log(`payload: ${payload.volunteers.length} volunteers, ${payload.centers.length} centers, ${payload.sessions.length} sessions, ${payload.users.length} users`);
