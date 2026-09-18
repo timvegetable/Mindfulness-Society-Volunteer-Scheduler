@@ -34,23 +34,55 @@ export function runtimeListField(value: unknown): unknown {
   return trimmed.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
-function runtimeUserDirectory(): UserDirectory {
-  const runtime = globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): { getSheetByName(name: string): { getLastRow(): number; getLastColumn(): number; getRange(row: number, column: number, rows: number, columns: number): { getValues(): unknown[][] } } | null } } };
-  const spreadsheet = runtime.SpreadsheetApp?.getActiveSpreadsheet();
-  const sheet = spreadsheet?.getSheetByName('Users');
-  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 2) return new MemoryUserDirectory();
+/** Sheet boundary for one Users row: blank optional cells mean "absent", not "". */
+export type UserSheetLike = {
+  getLastRow(): number;
+  getLastColumn(): number;
+  getRange(row: number, column: number, rows: number, columns: number): { getValues(): unknown[][] };
+};
+
+/**
+ * Reads the authorization table. A blank cell is treated as an absent value:
+ * `volunteerId: ''` would otherwise fail UserSchema and silently drop the row,
+ * which locks every user who has no linked volunteer record out of the app.
+ */
+export function usersFromSheet(sheet: UserSheetLike): User[] {
+  if (sheet.getLastRow() < 2 || sheet.getLastColumn() < 2) return [];
   const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
   const headers = values[0] ?? [];
   const users: User[] = [];
   for (const row of values.slice(1)) {
     const record: Record<string, unknown> = {};
     headers.forEach((header, index) => { if (typeof header === 'string') record[header] = row[index]; });
-    const roles = runtimeListField(record.roles);
+    const id = optionalField(record.id);
+    const email = optionalField(record.email);
+    if (id === undefined && email === undefined) continue;
+    const volunteerId = optionalField(record.volunteerId);
     const centerIds = runtimeListField(record.centerIds);
-    const parsed = UserSchema.safeParse({ ...record, roles, centerIds, active: record.active !== false && record.active !== 'false', revision: Number(record.revision ?? 0) });
+    const parsed = UserSchema.safeParse({
+      id,
+      email,
+      roles: runtimeListField(record.roles),
+      active: String(record.active ?? 'true').toLowerCase() !== 'false',
+      revision: Number(record.revision ?? 0),
+      ...(volunteerId === undefined ? {} : { volunteerId }),
+      ...(Array.isArray(centerIds) && centerIds.length > 0 ? { centerIds } : {})
+    });
     if (parsed.success) users.push(parsed.data);
+    else console.warn(`Users row for ${String(record.email ?? '(no email)')} was ignored: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || '(row)'} ${issue.message}`).join('; ')}`);
   }
-  return new MemoryUserDirectory(users);
+  return users;
+}
+
+function optionalField(value: unknown): string | undefined {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text.length > 0 ? text : undefined;
+}
+
+function runtimeUserDirectory(): UserDirectory {
+  const runtime = globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): { getSheetByName(name: string): UserSheetLike | null } } };
+  const sheet = runtime.SpreadsheetApp?.getActiveSpreadsheet()?.getSheetByName('Users');
+  return new MemoryUserDirectory(sheet ? usersFromSheet(sheet) : []);
 }
 
 function runtimeRevisionSource(): RevisionSource | undefined {
