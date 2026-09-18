@@ -38,7 +38,7 @@ export type ScriptProperties = {
   setProperty(name: string, value: string): void;
 };
 
-type RuntimeRepositories = {
+export type RuntimeRepositories = {
   volunteers: SheetRepository<Volunteer>;
   recurringAvailability: SheetRepository<RecurringAvailabilityRecord>;
   exceptions: SheetRepository<AvailabilityException>;
@@ -110,7 +110,7 @@ function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, 
   return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name)), audit);
 }
 
-function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties): RuntimeRepositories {
+export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties): RuntimeRepositories {
   const auditSheet = spreadsheet.getSheetByName('AuditLog');
   if (!auditSheet) throw new Error('Workbook tab AuditLog is missing; initialize the workbook before serving requests');
   const audit = auditWriter(auditSheet);

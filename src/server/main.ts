@@ -4,6 +4,7 @@ import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContex
 import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
 import { createProductionRuntime } from './runtime.js';
+import { applyMigrationPayload } from './workbook/loader.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
 export type ServerOptions = IntegrationDispatcherOptions & Readonly<{ adapter?: AppsScriptAdapterOptions }>;
 
@@ -131,6 +132,46 @@ export function initializeWorkbook(): unknown {
 
 export function checkWorkbookSchema(): unknown {
   return server().checkWorkbookSchema();
+}
+
+function activeSpreadsheet(): Parameters<typeof applyMigrationPayload>[0] | undefined {
+  const runtime = globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof applyMigrationPayload>[0] } };
+  return runtime.SpreadsheetApp?.getActiveSpreadsheet();
+}
+
+/**
+ * Validate the pasted MIGRATION_PAYLOAD without writing. Safe to run repeatedly:
+ * it initializes any missing tabs and reports exactly which rows would be
+ * rejected, so the payload can be fixed before anything touches the workbook.
+ */
+export function validateMigrationWorkbook(): unknown {
+  const properties = runtimeProperties();
+  const spreadsheet = activeSpreadsheet();
+  if (!properties || !spreadsheet) throw new Error('SpreadsheetApp and PropertiesService are required; run this from the bound Apps Script project');
+  return applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: false });
+}
+
+/**
+ * Write the reviewed migration payload into the workbook. Requires the
+ * WRITE_ENABLED script property to be "true"; refuses the whole load if any row
+ * fails validation, so the workbook is never left half-migrated.
+ */
+export function loadMigrationWorkbook(): unknown {
+  const properties = runtimeProperties();
+  const spreadsheet = activeSpreadsheet();
+  if (!properties || !spreadsheet) throw new Error('SpreadsheetApp and PropertiesService are required; run this from the bound Apps Script project');
+  if (properties.getProperty('WRITE_ENABLED') !== 'true') {
+    throw new Error('Refusing to write: set the WRITE_ENABLED script property to "true" first, then run loadMigrationWorkbook again');
+  }
+  return applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId: Session.getActiveUser?.().getEmail() || 'migration' });
+}
+
+function migrationPayload(): unknown {
+  const runtime = globalThis as unknown as { MIGRATION_PAYLOAD?: unknown };
+  if (runtime.MIGRATION_PAYLOAD === undefined) {
+    throw new Error('MIGRATION_PAYLOAD is not defined; add the generated MigrationPayload.gs file to this Apps Script project');
+  }
+  return runtime.MIGRATION_PAYLOAD;
 }
 
 export async function doGet(event: AppsScriptRequest): Promise<JsonOutput | string> {

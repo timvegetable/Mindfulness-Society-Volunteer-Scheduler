@@ -6,7 +6,9 @@ const trampolines = [
   'function doGet(event) { return VolunteerScheduling.doGet(event); }',
   'function doPost(event) { return VolunteerScheduling.doPost(event); }',
   'function initializeWorkbook() { return VolunteerScheduling.initializeWorkbook(); }',
-  'function checkWorkbookSchema() { return VolunteerScheduling.checkWorkbookSchema(); }'
+  'function checkWorkbookSchema() { return VolunteerScheduling.checkWorkbookSchema(); }',
+  'function validateMigrationWorkbook() { return VolunteerScheduling.validateMigrationWorkbook(); }',
+  'function loadMigrationWorkbook() { return VolunteerScheduling.loadMigrationWorkbook(); }'
 ];
 const missing = trampolines.filter((line) => !source.includes(line));
 if (missing.length > 0) await writeFile(outputPath, `${source}\n${missing.join('\n')}\n`);
