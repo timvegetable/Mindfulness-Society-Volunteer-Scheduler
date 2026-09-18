@@ -150,6 +150,16 @@ function errorFromBody(body: unknown, status?: number): ApiClientError {
   if (isRecord(body) && typeof body.message === 'string') {
     return new ApiClientError('request_failed', body.message, { status });
   }
+  // A 401/403 carrying anything other than our JSON envelope comes from Google's
+  // own web-app gate, not from the scheduling service: the deployment is not
+  // published with access set to "Anyone".
+  if (status === 401 || status === 403) {
+    return new ApiClientError(
+      'deployment_not_public',
+      'The Apps Script web app rejected the request before it reached the scheduler. Publish the deployment with access set to "Anyone".',
+      { status }
+    );
+  }
   return new ApiClientError(
     status && status >= 500 ? 'server_unavailable' : 'invalid_response',
     status && status >= 500 ? 'The scheduling service is temporarily unavailable.' : 'The scheduling service returned an invalid response.',

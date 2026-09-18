@@ -1,4 +1,4 @@
-import type { ApiClient, IdentityData } from './api';
+import { ApiClientError, type ApiClient, type IdentityData } from './api';
 
 export type UserRole = IdentityData['role'];
 export type IdentityCredentialCallback = (credential: string) => void | Promise<void>;
@@ -164,9 +164,15 @@ export class IdentityController {
       const profile = await this.api.me(credential);
       this.setState({ status: 'authenticated', credential, profile });
       await this.options.onCredential?.(credential);
-    } catch {
+    } catch (error) {
       this.credential = undefined;
-      this.setState({ status: 'signed-out', message: 'This Google account is not authorized for scheduling.' });
+      // Report why it failed: a blanket "not authorized" hid a deployment that
+      // rejected the request before it ever reached the scheduler.
+      const rejected = error instanceof ApiClientError && (error.code === 'unauthorized' || error.code === 'FORBIDDEN' || error.code === 'UNAUTHORIZED');
+      const message = !rejected && error instanceof Error && error.message
+        ? error.message
+        : 'This Google account is not authorized for scheduling.';
+      this.setState({ status: 'signed-out', message });
     }
   }
 
