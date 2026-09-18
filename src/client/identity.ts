@@ -4,8 +4,10 @@ export type UserRole = IdentityData['role'];
 export type IdentityCredentialCallback = (credential: string) => void | Promise<void>;
 
 export interface GoogleCredentialResponse {
-  credential: string;
+  credential?: string;
   select_by?: string;
+  /** Present when GIS refuses the request, e.g. an account that is not a test user. */
+  error?: string;
 }
 
 interface GoogleIdentityIdApi {
@@ -132,7 +134,20 @@ export class IdentityController {
       identityApi.initialize({
         client_id: this.options.oauthClientId,
         callback: (response) => {
-          void this.acceptCredential(response.credential);
+          const credential = typeof response?.credential === 'string' ? response.credential : '';
+          if (!credential.trim()) {
+            // GIS rejects the prompt without a credential for accounts the OAuth
+            // client does not allow (for example while its consent screen is still
+            // in Testing and the account is not a test user).
+            this.setState({
+              status: 'signed-out',
+              message: response?.error
+                ? `Google sign-in did not complete (${response.error}).`
+                : 'Google sign-in did not return a credential. If the OAuth client is still in Testing, add this account as a test user.'
+            });
+            return;
+          }
+          void this.acceptCredential(credential);
         }
       });
       if (this.options.buttonParent) {
@@ -153,9 +168,9 @@ export class IdentityController {
     }
   }
 
-  async acceptCredential(credential: string): Promise<void> {
-    if (!credential.trim()) {
-      this.setState({ status: 'unavailable', message: 'Google sign-in returned no credential.' });
+  async acceptCredential(credential: string | undefined): Promise<void> {
+    if (typeof credential !== 'string' || !credential.trim()) {
+      this.setState({ status: 'signed-out', message: 'Google sign-in did not return a credential.' });
       return;
     }
     this.credential = credential;
