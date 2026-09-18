@@ -126,12 +126,22 @@ export function configureServer(options: ServerOptions): Server {
   return configuredServer;
 }
 
+/**
+ * Editor entry points return a value to the caller, but the Apps Script editor
+ * discards it: only the execution log is visible, so every editor-invoked
+ * function also logs its result.
+ */
+function logResult(label: string, value: unknown): unknown {
+  console.log(`${label}: ${JSON.stringify(value, null, 2)}`);
+  return value;
+}
+
 export function initializeWorkbook(): unknown {
-  return server().initializeWorkbook();
+  return logResult('initializeWorkbook', server().initializeWorkbook());
 }
 
 export function checkWorkbookSchema(): unknown {
-  return server().checkWorkbookSchema();
+  return logResult('checkWorkbookSchema', server().checkWorkbookSchema());
 }
 
 function activeSpreadsheet(): Parameters<typeof applyMigrationPayload>[0] | undefined {
@@ -148,7 +158,7 @@ export function validateMigrationWorkbook(): unknown {
   const properties = runtimeProperties();
   const spreadsheet = activeSpreadsheet();
   if (!properties || !spreadsheet) throw new Error('SpreadsheetApp and PropertiesService are required; run this from the bound Apps Script project');
-  return applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: false });
+  return logResult('validateMigrationWorkbook', applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: false }));
 }
 
 /**
@@ -163,7 +173,7 @@ export function loadMigrationWorkbook(): unknown {
   if (properties.getProperty('WRITE_ENABLED') !== 'true') {
     throw new Error('Refusing to write: set the WRITE_ENABLED script property to "true" first, then run loadMigrationWorkbook again');
   }
-  return applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId: Session.getActiveUser?.().getEmail() || 'migration' });
+  return logResult('loadMigrationWorkbook', applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId: Session.getActiveUser?.().getEmail() || 'migration' }));
 }
 
 function migrationPayload(): unknown {
