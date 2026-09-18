@@ -4,6 +4,7 @@ dist/
 .env
 .env.*
 *.local
+*.local.json
 .pi/
 .omp/
  migration-output/
