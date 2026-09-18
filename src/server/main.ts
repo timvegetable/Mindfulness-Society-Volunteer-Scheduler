@@ -165,6 +165,10 @@ export function validateMigrationWorkbook(): unknown {
  * Write the reviewed migration payload into the workbook. Requires the
  * WRITE_ENABLED script property to be "true"; refuses the whole load if any row
  * fails validation, so the workbook is never left half-migrated.
+ *
+ * The audit actor comes from the optional MIGRATION_ACTOR script property rather
+ * than Session.getActiveUser(), which would require the script to request the
+ * userinfo.email scope that this deployment deliberately omits.
  */
 export function loadMigrationWorkbook(): unknown {
   const properties = runtimeProperties();
@@ -173,7 +177,8 @@ export function loadMigrationWorkbook(): unknown {
   if (properties.getProperty('WRITE_ENABLED') !== 'true') {
     throw new Error('Refusing to write: set the WRITE_ENABLED script property to "true" first, then run loadMigrationWorkbook again');
   }
-  return logResult('loadMigrationWorkbook', applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId: Session.getActiveUser?.().getEmail() || 'migration' }));
+  const actorId = properties.getProperty('MIGRATION_ACTOR')?.trim() || 'migration';
+  return logResult('loadMigrationWorkbook', applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId }));
 }
 
 function migrationPayload(): unknown {
