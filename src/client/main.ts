@@ -268,9 +268,14 @@ function configFrom(value: unknown): ClientConfig {
   return { appsScriptUrl, oauthClientId };
 }
 
+/**
+ * The config is fetched as a document-relative path, never as '/config.json': a
+ * GitHub Pages project site serves the app from /<repo>/, so a root-absolute
+ * request would 404 and leave the deployment looking unconfigured.
+ */
 export async function loadClientConfig(fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<ClientConfig> {
   try {
-    const response = await fetchImpl('/config.json', { method: 'GET', credentials: 'omit', headers: { Accept: 'application/json' } });
+    const response = await fetchImpl('config.json', { method: 'GET', credentials: 'omit', headers: { Accept: 'application/json' } });
     if (!response.ok) return DEFAULT_CLIENT_CONFIG;
     return configFrom(await response.json() as unknown);
   } catch {
