@@ -28,7 +28,7 @@ const volunteer: Volunteer = {
 
 function dataset(overrides: Partial<InsightDataset> = {}): InsightDataset {
   return {
-    sourceRevision: { assignmentRevision: 12, eligibilityRevision: 4, availabilityRevision: 7 },
+    sourceRevision: { assignmentRevision: 12, assignmentRowsRevision: 13, eligibilityRevision: 4, availabilityRevision: 7 },
     generatedAt: NOW,
     stale: false,
     staleReasons: [],
@@ -182,7 +182,7 @@ describe('cached insight repository', () => {
     const generated = first.regenerate({
       volunteers: [volunteer],
       assignments: [],
-      sourceRevision: { assignmentRevision: 0, eligibilityRevision: 3, availabilityRevision: 0 },
+      sourceRevision: { assignmentRevision: 0, assignmentRowsRevision: 0, eligibilityRevision: 3, availabilityRevision: 0 },
       config: CONFIG,
     });
 

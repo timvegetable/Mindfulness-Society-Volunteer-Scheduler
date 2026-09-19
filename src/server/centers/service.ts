@@ -167,10 +167,34 @@ function lockedOccurrenceForCandidate(candidate: CandidateSchedule, sessions: re
   return sessions.find((session) => session.status === 'locked' && candidateMatchesSession(candidate, session));
 }
 
-function assignmentBlocksVolunteer(volunteerId: string, session: Session, assignments: readonly Assignment[], sessions: readonly Session[]): boolean {
+/** Per-comparison indexes so a coverage check never rescans rows per volunteer. */
+type CoverageIndex = {
+  sessionsById: ReadonlyMap<string, Session>;
+  assignmentsByVolunteer: ReadonlyMap<string, readonly Assignment[]>;
+  exceptionsByVolunteer: ReadonlyMap<string, readonly AvailabilityException[]>;
+};
+
+function coverageIndex(assignments: readonly Assignment[], sessions: readonly Session[], exceptions: readonly AvailabilityException[]): CoverageIndex {
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const assignmentsByVolunteer = new Map<string, Assignment[]>();
   for (const assignment of assignments) {
-    if (assignment.volunteerId !== volunteerId || assignment.status !== 'assigned') continue;
-    const assignedSession = sessions.find((candidate) => candidate.id === assignment.sessionId);
+    const existing = assignmentsByVolunteer.get(assignment.volunteerId);
+    if (existing) existing.push(assignment);
+    else assignmentsByVolunteer.set(assignment.volunteerId, [assignment]);
+  }
+  const exceptionsByVolunteer = new Map<string, AvailabilityException[]>();
+  for (const exception of exceptions) {
+    const existing = exceptionsByVolunteer.get(exception.volunteerId);
+    if (existing) existing.push(exception);
+    else exceptionsByVolunteer.set(exception.volunteerId, [exception]);
+  }
+  return { sessionsById, assignmentsByVolunteer, exceptionsByVolunteer };
+}
+
+function assignmentBlocksVolunteer(volunteerId: string, session: Session, index: CoverageIndex): boolean {
+  for (const assignment of index.assignmentsByVolunteer.get(volunteerId) ?? []) {
+    if (assignment.status !== 'assigned') continue;
+    const assignedSession = index.sessionsById.get(assignment.sessionId);
     if (!assignedSession || assignedSession.status === 'cancelled' || assignedSession.id === session.id) continue;
     if (intervalsOverlap(
       { start: assignedSession.start, end: assignedSession.end, timeZone: assignedSession.timeZone },
@@ -233,10 +257,11 @@ export class CandidateCoverageService {
       const exceptions = rows(options.exceptions ?? this.data.exceptions);
       const assignments = rows(options.assignments ?? this.data.assignments);
       const sessions = rows(options.sessions ?? this.data.sessions);
+      const index = coverageIndex(assignments, sessions, exceptions);
       eligible = rows(this.data.volunteers).filter((volunteer) => {
         if (!isRankEligible(volunteer)) return false;
-        if (!isAvailableForSession(session, volunteer.recurringAvailability, exceptions.filter((item) => item.volunteerId === volunteer.id))) return false;
-        return !assignmentBlocksVolunteer(volunteer.id, session, assignments, sessions);
+        if (!isAvailableForSession(session, volunteer.recurringAvailability, index.exceptionsByVolunteer.get(volunteer.id) ?? [])) return false;
+        return !assignmentBlocksVolunteer(volunteer.id, session, index);
       }) as Volunteer[];
     } else {
       const interval = asCandidateInterval(checkedCandidate);

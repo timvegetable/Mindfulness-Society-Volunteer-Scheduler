@@ -10,7 +10,7 @@ import { SelfServiceService, type ServiceResult } from './self-service/index.js'
 import { createCenterWorkflow } from './centers/service.js';
 import type { CenterCaller } from './centers/models.js';
 import { centerCodec, centerUserCodec, candidateScheduleCodec } from './centers/codecs.js';
-import { InsightStore, projectInsights as projectInsightDataset } from './insights/index.js';
+import { CacheInsightRepository, InsightStore, projectInsights as projectInsightDataset, type InsightConfig, type InsightDataset, type InsightSnapshot, type InsightSourceRevision, type ScriptCache } from './insights/index.js';
 import { runScheduling, SchedulingStore } from './scheduling/index.js';
 import { validateCommittedSessionInputs } from './scheduling/inputs.js';
 import {
@@ -27,6 +27,7 @@ import {
 } from './workbook/codecs.js';
 import { RevisionStore, SheetRepository, type AuditEntry, type RevisionedRepository, type SheetCodec } from './workbook/repository.js';
 import type { SheetValueContext } from './workbook/sheet-values.js';
+import { hydratedVolunteers } from './workbook/hydration.js';
 import { tabDefinition, type WorkbookTab } from './workbook/schema.js';
 import type { SpreadsheetLike, SheetLike } from './workbook/initializer.js';
 import type { RecurringAvailabilityRecord } from './self-service/types.js';
@@ -206,22 +207,6 @@ class SheetImportRepository implements ImportRepository {
   volunteers(): Volunteer[] { return this.roster.list(); }
 }
 
-/**
- * Recurring availability lives in its own tab, so a volunteer only becomes
- * schedulable once the intervals are grouped onto the roster row. Group the
- * request's rows once instead of scanning the full list per volunteer.
- */
-function hydratedVolunteers(store: RuntimeRepositories): Volunteer[] {
-  const intervalsByVolunteer = new Map<string, RecurringAvailability[]>();
-  for (const row of store.recurringAvailability.list()) {
-    const interval: RecurringAvailability = { weekday: row.weekday, start: row.start, end: row.end, timeZone: row.timeZone };
-    const existing = intervalsByVolunteer.get(row.volunteerId);
-    if (existing) existing.push(interval);
-    else intervalsByVolunteer.set(row.volunteerId, [interval]);
-  }
-  return store.volunteers.list().map((volunteer) => ({ ...volunteer, recurringAvailability: intervalsByVolunteer.get(volunteer.id) ?? [] }));
-}
-
 function caller(actor: AuthenticatedPrincipal): CenterCaller {
   return { id: actor.user.id, active: actor.user.active, roles: actor.user.roles, centerIds: actor.user.centerIds };
 }
@@ -293,17 +278,29 @@ function scheduleProjection(repositories: RuntimeRepositories, rows: ScheduleRow
   const sessions = repositories.sessions.list();
   const volunteers = new Map(repositories.volunteers.list().map((volunteer) => [volunteer.id, volunteer]));
   const centers = new Map(repositories.centers.list().map((center) => [center.id, center]));
+  // Index the published rows once instead of scanning them per session.
+  const assignmentsBySession = new Map<string, ScheduleRows['assignments'][number][]>();
+  for (const assignment of rows.assignments) {
+    if (assignment.status !== 'assigned' || assignment.scheduleRevision !== rows.outputRevision) continue;
+    const existing = assignmentsBySession.get(assignment.sessionId);
+    if (existing) existing.push(assignment);
+    else assignmentsBySession.set(assignment.sessionId, [assignment]);
+  }
+  const backupsBySession = new Map<string, ScheduleRows['backups'][number][]>();
+  for (const backup of rows.backups) {
+    if (backup.status !== 'available' || backup.scheduleRevision !== rows.outputRevision) continue;
+    const existing = backupsBySession.get(backup.sessionId);
+    if (existing) existing.push(backup);
+    else backupsBySession.set(backup.sessionId, [backup]);
+  }
   return {
     sessions: sessions
       // A proposed class is not schedulable, so it is reported as an explicit
       // exclusion instead of as an unfilled committed occurrence.
       .filter((session) => session.status !== 'proposed')
       .map((session) => {
-        const sessionAssignments = rows.assignments
-          .filter((assignment) => assignment.sessionId === session.id && assignment.scheduleRevision === rows.outputRevision && assignment.status === 'assigned')
-          .map((assignment) => ({ ...assignment, volunteerName: volunteers.get(assignment.volunteerId)?.name }));
-        const sessionBackups = rows.backups
-          .filter((backup) => backup.sessionId === session.id && backup.scheduleRevision === rows.outputRevision && backup.status === 'available')
+        const sessionAssignments = (assignmentsBySession.get(session.id) ?? []).map((assignment) => ({ ...assignment, volunteerName: volunteers.get(assignment.volunteerId)?.name }));
+        const sessionBackups = (backupsBySession.get(session.id) ?? [])
           .sort((left, right) => left.position - right.position)
           .map((backup) => volunteers.get(backup.volunteerId)?.name ?? backup.volunteerId);
         return { ...session, displayName: sessionDisplayName(centers, session), assignments: sessionAssignments, backups: sessionBackups, shortfall: Math.max(0, session.requiredStaffCount - sessionAssignments.length) };
@@ -321,26 +318,19 @@ function scheduleProjection(repositories: RuntimeRepositories, rows: ScheduleRow
   };
 }
 
-function buildInsight(repositories: RuntimeRepositories, configuration: RuntimeConfiguration, globalRevision: number): Record<string, unknown> {
-  const store = new InsightStore();
-  const dataset = store.regenerate({
-    volunteers: hydratedVolunteers(repositories),
-    assignments: repositories.assignments.list(),
-    sourceRevision: {
-      assignmentRevision: repositories.assignments.revision().number,
-      eligibilityRevision: repositories.volunteers.revision().number,
-      availabilityRevision: repositories.recurringAvailability.revision().number
-    },
-    config: {
-      timeZone: configuration.timeZone,
-      incrementMinutes: configuration.incrementMinutes,
-      operatingHours: { ...configuration.operatingHours }
-    }
-  });
-  return { ...projectInsightDataset(dataset, true), revision: globalRevision };
+function insightSourceRevision(repositories: RuntimeRepositories): InsightSourceRevision {
+  const run = latestCompletedRun(repositories.schedulingRuns.list());
+  return {
+    // The completed run's output revision is what filters assignment rows, so a
+    // cancelled assignment row cannot hide a volunteer on its own.
+    assignmentRevision: run?.outputRevision ?? 0,
+    assignmentRowsRevision: repositories.assignments.revision().number,
+    eligibilityRevision: repositories.volunteers.revision().number,
+    availabilityRevision: repositories.recurringAvailability.revision().number
+  };
 }
 
-export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties): ProductionRuntime {
+export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache } = {}): ProductionRuntime {
   const configuration = runtimeConfiguration(properties);
   const store = repositories(spreadsheet, properties, { timeZone: configuration.timeZone });
   const administratorRecipients = listField(properties.getProperty('ADMINISTRATOR_RECIPIENTS'));
@@ -380,6 +370,22 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       runId: `scheduling-${inputRevision}-${Date.now()}`
     });
   };
+  // The derivation lives behind the script cache: a read serves the stored
+  // dataset when its four source revisions still match, marks it stale (rather
+  // than deriving) when they changed, and derives only when nothing is stored.
+  const insightConfig: InsightConfig = {
+    timeZone: configuration.timeZone,
+    incrementMinutes: configuration.incrementMinutes,
+    operatingHours: { ...configuration.operatingHours }
+  };
+  const insights = new InsightStore(options.scriptCache ? { repository: new CacheInsightRepository({ cache: options.scriptCache, config: insightConfig }) } : {});
+  const insightSnapshot = (): InsightSnapshot => ({
+    volunteers: hydratedVolunteers(store),
+    assignments: store.assignments.list(),
+    sourceRevision: insightSourceRevision(store),
+    config: insightConfig
+  });
+  const projectInsightRead = (dataset: InsightDataset): Record<string, unknown> => ({ ...projectInsightDataset(dataset, true), revision: globalRevision() });
   const handlers: OperationHandlers = {
     [INTEGRATION_OPERATIONS.me]: ({ actor }) => projectIdentity(actor),
     [INTEGRATION_OPERATIONS.volunteerDashboard]: ({ actor }) => {
@@ -469,8 +475,11 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
         ...(restaged ? { import: projectImport(restaged, restaged.run.resultId ?? '', globalRevision(), hydratedVolunteers(store)) } : {})
       };
     },
-    [INTEGRATION_OPERATIONS.adminInsights]: () => buildInsight(store, configuration, globalRevision()),
-    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => buildInsight(store, configuration, globalRevision()),
+    [INTEGRATION_OPERATIONS.adminInsights]: () => {
+      const current = insights.read(insightSourceRevision(store));
+      return projectInsightRead(current ?? insights.regenerate(insightSnapshot()));
+    },
+    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => projectInsightRead(insights.refresh(insightSnapshot())),
     [INTEGRATION_OPERATIONS.centerCandidate]: ({ actor }) => {
       const centerCaller = caller(actor);
       const candidates = centerWorkflow.schedule.list(centerCaller).map((candidate) => ({ ...candidate, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, candidate) }));

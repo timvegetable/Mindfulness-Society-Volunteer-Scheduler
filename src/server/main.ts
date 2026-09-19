@@ -1,4 +1,5 @@
 import { createGoogleTokenInfoVerifier, MemoryUserDirectory, type UserDirectory } from './integration/auth.js';
+import { createAppsScriptDigest, createCachingTokenVerifier, type AppsScriptDigestService } from './integration/claim-cache.js';
 import { createAppsScriptAdapters, type AppsScriptAdapterOptions, type AppsScriptRequest, type JsonOutput } from './integration/adapters.js';
 import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type OperationHandlers, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
 import { projectIdentity } from './integration/projections.js';
@@ -125,28 +126,46 @@ export function createServer(options: ServerOptions): Server {
   };
 }
 
+function runtimeAppsscriptServices(): { scriptCache?: { get(key: string): string | null; put(key: string, value: string, seconds: number): void }; utilities?: AppsScriptDigestService } {
+  const runtime = globalThis as unknown as {
+    CacheService?: { getScriptCache(): { get(key: string): string | null; put(key: string, value: string, seconds: number): void } };
+    Utilities?: AppsScriptDigestService;
+  };
+  const scriptCache = runtime.CacheService?.getScriptCache();
+  return { ...(scriptCache ? { scriptCache } : {}), ...(runtime.Utilities ? { utilities: runtime.Utilities } : {}) };
+}
+
 function defaultServer(): Server {
   const properties = runtimeProperties();
   const audience = properties?.getProperty('OAUTH_AUDIENCE');
   if (!audience?.trim()) throw new Error('OAUTH_AUDIENCE is not configured');
   if (!runtimeTokenInfoAvailable()) throw new Error('Google token verification is unavailable');
-  const verifier = createGoogleTokenInfoVerifier({ audience });
+  const { scriptCache, utilities } = runtimeAppsscriptServices();
+  const verifier = scriptCache && utilities
+    ? createCachingTokenVerifier({ verifier: createGoogleTokenInfoVerifier({ audience }), cache: scriptCache, digest: createAppsScriptDigest(utilities), audience })
+    : createGoogleTokenInfoVerifier({ audience });
   const revision = runtimeRevisionSource();
   const writeEnabled = properties?.getProperty('WRITE_ENABLED') === 'true';
   const writeLock = writeEnabled ? runtimeWriteLock() : undefined;
   const spreadsheet = (globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof createProductionRuntime>[0] } }).SpreadsheetApp?.getActiveSpreadsheet();
-  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties) : undefined;
+  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties, { scriptCache }) : undefined;
   const handlers: OperationHandlers = production?.handlers ?? {
     [INTEGRATION_OPERATIONS.me]: ({ actor }: HandlerContext) => projectIdentity(actor)
   };
-  return createServer({ verifier, users: runtimeUserDirectory(), revision, writeLock, handlers });
+  // `production.users` is the Users tab decoded once for this request, so
+  // authorization can never survive from an earlier request.
+  return createServer({ verifier, users: production ? new MemoryUserDirectory(production.users) : runtimeUserDirectory(), revision, writeLock, handlers });
 }
 
+/**
+ * Only an explicitly configured adapter is retained. The default server is
+ * rebuilt for every request so no cached rows, revisions, or authorizations can
+ * leak from one execution into the next.
+ */
 let configuredServer: Server | undefined;
 
 function server(): Server {
-  configuredServer ??= defaultServer();
-  return configuredServer;
+  return configuredServer ?? defaultServer();
 }
 
 export function configureServer(options: ServerOptions): Server {

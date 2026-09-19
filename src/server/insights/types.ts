@@ -1,9 +1,11 @@
 import type { Assignment, Volunteer, Weekday } from '../../shared/domain.js';
 
-/** The three revisions that define one consistent insight calculation. */
+/** The revisions that define one consistent insight calculation. */
 export type InsightSourceRevision = {
-  /** Revision of the schedule whose assignments were considered. */
+  /** Output revision of the completed schedule whose assignments were considered. */
   assignmentRevision: number;
+  /** Revision of the Assignments tab itself, which cancellation and promotion change. */
+  assignmentRowsRevision: number;
   /** Revision of volunteer lifecycle, interview, and rank data. */
   eligibilityRevision: number;
   /** Revision of recurring availability data. */

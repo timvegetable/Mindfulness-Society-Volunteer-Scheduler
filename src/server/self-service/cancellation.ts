@@ -2,6 +2,7 @@ import { Temporal } from '@js-temporal/polyfill';
 import { intervalsOverlap, isAvailableForSession } from '../../shared/time.js';
 import { isRankEligible, type Assignment, type AvailabilityException, type Backup, type Session, type Volunteer } from '../../shared/domain.js';
 import type { AuditEntry, RevisionedRepository } from '../workbook/repository.js';
+import { hydratedVolunteers } from '../workbook/hydration.js';
 import {
   appendAudit,
   authorizeVolunteer,
@@ -19,7 +20,7 @@ import {
   type ServiceResult,
   type TransactionRunner
 } from './types.js';
-import type { SelfServiceRepositories, NotificationStatusRecord } from './types.js';
+import type { RecurringAvailabilityRecord, SelfServiceRepositories, NotificationStatusRecord } from './types.js';
 import { NotificationService, type NotificationServiceDependencies } from './notifications.js';
 
 export type CancelAssignedOccurrenceRequest = {
@@ -55,6 +56,7 @@ export type CancellationServiceDependencies = {
   sessions?: RevisionedRepository<Session>;
   backups?: RevisionedRepository<Backup>;
   volunteers?: RevisionedRepository<Volunteer>;
+  recurringAvailability?: RevisionedRepository<RecurringAvailabilityRecord>;
   exceptions?: RevisionedRepository<AvailabilityException>;
   repositories?: SelfServiceRepositories;
   notificationService?: NotificationService;
@@ -96,6 +98,7 @@ export class BackupPromotionService {
   private readonly sessions: RevisionedRepository<Session> | undefined;
   private readonly backups: RevisionedRepository<Backup> | undefined;
   private readonly volunteers: RevisionedRepository<Volunteer> | undefined;
+  private readonly recurringAvailability: RevisionedRepository<RecurringAvailabilityRecord> | undefined;
   private readonly exceptions: RevisionedRepository<AvailabilityException> | undefined;
   private readonly repositories: SelfServiceRepositories;
   private readonly idGenerator: IdGenerator;
@@ -107,12 +110,14 @@ export class BackupPromotionService {
     this.sessions = dependencies.sessions ?? dependencies.repositories?.sessions;
     this.backups = dependencies.backups ?? dependencies.repositories?.backups;
     this.volunteers = dependencies.volunteers ?? dependencies.repositories?.volunteers;
+    this.recurringAvailability = dependencies.recurringAvailability ?? dependencies.repositories?.recurringAvailability;
     this.exceptions = dependencies.exceptions ?? dependencies.repositories?.exceptions;
     this.repositories = dependencies.repositories ?? {
       assignments: this.assignments,
       sessions: this.sessions,
       backups: this.backups,
       volunteers: this.volunteers,
+      recurringAvailability: this.recurringAvailability,
       exceptions: this.exceptions
     };
     this.idGenerator = dependencies.idGenerator ?? defaultIdGenerator;
@@ -129,15 +134,31 @@ export class BackupPromotionService {
       const allAssignments = this.assignments.list();
       const allBackups = this.backups.list().filter((backup) => backup.sessionId === sessionId);
       const assigned = allAssignments.filter((assignment) => assignment.sessionId === sessionId && assignment.status === 'assigned');
-      const volunteers = this.volunteers.list();
+      // Recurring availability lives in its own tab, so the roster row alone
+      // carries no intervals: hydrate once, then index everything the candidate
+      // loop needs instead of rescanning per candidate.
+      const volunteers = hydratedVolunteers({ volunteers: this.volunteers, recurringAvailability: this.recurringAvailability });
       const exceptions = this.exceptions.list();
+      const volunteersById = new Map(volunteers.map((volunteer) => [volunteer.id, volunteer]));
+      const exceptionsByVolunteer = new Map<string, AvailabilityException[]>();
+      for (const exception of exceptions) {
+        const existing = exceptionsByVolunteer.get(exception.volunteerId);
+        if (existing) existing.push(exception);
+        else exceptionsByVolunteer.set(exception.volunteerId, [exception]);
+      }
+      const assignmentsByVolunteer = new Map<string, Assignment[]>();
+      for (const assignment of allAssignments) {
+        const existing = assignmentsByVolunteer.get(assignment.volunteerId);
+        if (existing) existing.push(assignment);
+        else assignmentsByVolunteer.set(assignment.volunteerId, [assignment]);
+      }
       const occupied = new Set(assigned.map((assignment) => assignment.volunteerId));
       const candidates = allBackups.filter((backup) => backup.status === 'available').sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
       const skippedVolunteerIds: string[] = [];
       let selected: Backup | undefined;
       for (const candidate of candidates) {
-        const volunteer = volunteers.find((item) => item.id === candidate.volunteerId);
-        const eligible = assigned.length < session.requiredStaffCount && volunteer !== undefined && isRankEligible(volunteer) && isAvailableForSession(session, volunteer.recurringAvailability, exceptions.filter((exception) => exception.volunteerId === volunteer.id)) && !occupied.has(volunteer.id) && !this.hasOverlappingAssignment(volunteer.id, session, allAssignments);
+        const volunteer = volunteersById.get(candidate.volunteerId);
+        const eligible = assigned.length < session.requiredStaffCount && volunteer !== undefined && isRankEligible(volunteer) && isAvailableForSession(session, volunteer.recurringAvailability, exceptionsByVolunteer.get(volunteer.id) ?? []) && !occupied.has(volunteer.id) && !this.hasOverlappingAssignment(volunteer.id, session, assignmentsByVolunteer.get(volunteer.id) ?? []);
         if (eligible && !selected) {
           selected = candidate;
           occupied.add(candidate.volunteerId);

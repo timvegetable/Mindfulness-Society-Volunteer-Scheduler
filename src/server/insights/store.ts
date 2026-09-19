@@ -23,6 +23,7 @@ function cloneRevision(value: InsightSourceRevision): InsightSourceRevision {
 function changedRevisionFields(left: InsightSourceRevision, right: InsightSourceRevision): InsightRevisionChange[] {
   const changed: InsightRevisionChange[] = [];
   if (left.assignmentRevision !== right.assignmentRevision) changed.push('assignmentRevision');
+  if (left.assignmentRowsRevision !== right.assignmentRowsRevision) changed.push('assignmentRowsRevision');
   if (left.eligibilityRevision !== right.eligibilityRevision) changed.push('eligibilityRevision');
   if (left.availabilityRevision !== right.availabilityRevision) changed.push('availabilityRevision');
   return changed;
@@ -101,7 +102,7 @@ export class InsightStore {
     if (!dataset) return undefined;
     let reasons: InsightRevisionChange[];
     if (!change) {
-      reasons = ['assignmentRevision', 'eligibilityRevision', 'availabilityRevision'];
+      reasons = ['assignmentRevision', 'assignmentRowsRevision', 'eligibilityRevision', 'availabilityRevision'];
     } else if (typeof change === 'string') {
       reasons = [change];
     } else if (Array.isArray(change)) {

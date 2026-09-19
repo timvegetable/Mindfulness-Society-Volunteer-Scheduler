@@ -113,13 +113,25 @@ export type SheetCodec<T extends { id: string }> = {
 };
 
 export class SheetRepository<T extends { id: string }> implements RevisionedRepository<T> {
+  private snapshot: T[] | undefined;
+
   constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore, private readonly auditWriter?: (entry: AuditEntry) => void, private readonly context: SheetValueContext = {}) {}
 
+  /**
+   * Decodes the tab once per request: `get`, `upsert`, and every consumer of
+   * `list()` share this snapshot, and a successful write replaces it. Rows are
+   * never retained beyond the request that read them.
+   */
   list(): T[] {
-    const rowCount = this.sheet.getLastRow();
-    if (rowCount < 2) return [];
-    const values = this.sheet.getRange(2, 1, rowCount - 1, this.headers.length).getValues();
-    return values.map((row) => this.codec.fromRow(this.recordFromRow(row), this.context));
+    if (!this.snapshot) {
+      const rowCount = this.sheet.getLastRow();
+      if (rowCount < 2) this.snapshot = [];
+      else {
+        const values = this.sheet.getRange(2, 1, rowCount - 1, this.headers.length).getValues();
+        this.snapshot = values.map((row) => this.codec.fromRow(this.recordFromRow(row), this.context));
+      }
+    }
+    return [...this.snapshot];
   }
 
   get(id: string): T | undefined {
@@ -143,6 +155,9 @@ export class SheetRepository<T extends { id: string }> implements RevisionedRepo
         const staleRows = this.sheet.getRange(rows.length + 2, 1, this.sheet.getLastRow() - rows.length - 1, this.headers.length);
         staleRows.clearContent?.();
       }
+      // The request's snapshot follows the committed write so later reads in the
+      // same execution see exactly what was stored.
+      this.snapshot = rows.map((row) => ({ ...row }));
       this.auditWriter?.({ id: auditId(), entity: this.sheet.getName(), entityId: 'all', action: 'replace', source, actorId, timestamp: nextRevision.changedAt, before, after: [...rows] });
       return nextRevision;
     });
