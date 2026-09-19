@@ -274,7 +274,11 @@ export class ApiClient {
         credentials: 'omit'
       });
     } catch {
-      throw new ApiClientError('network_error', 'Unable to reach the scheduling service.', { retryable: true });
+      throw new ApiClientError(
+        'network_error',
+        'Unable to reach the scheduling service. If this persists, confirm the Apps Script deployment is published with "Who has access: Anyone" (an account-restricted deployment answers the browser with a sign-in page it cannot read).',
+        { retryable: true }
+      );
     }
     const text = await response.text();
     const parsed = parseJson(text);

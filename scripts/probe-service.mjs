@@ -70,6 +70,12 @@ if (response) {
     console.log(`NOT PUBLIC: Google rejected the request with ${response.status} ${contentType || 'text/html'} before Apps Script ran.`);
     console.log('Set the versioned web app deployment to "Who has access: Anyone" and use that deployment URL, not the @HEAD URL.');
     process.exitCode = 1;
+  } else if (/^\s*<!DOCTYPE html/i.test(text) || text.includes('ServiceLogin') || text.includes("window['ppConfig']")) {
+    // "Anyone with Google account" also lands here: the platform still demands a
+    // session, so it renders the sign-in page inline instead of running the app.
+    console.log(`NOT PUBLIC: Google served its sign-in page (${response.status} ${contentType}) instead of the scheduler's JSON.`);
+    console.log('"Anyone with Google account" is not sufficient: the deployment must be set to "Who has access: Anyone".');
+    process.exitCode = 1;
   } else {
     let parsed;
     try {
