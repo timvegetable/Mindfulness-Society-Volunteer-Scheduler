@@ -38,10 +38,11 @@ async function saveReport(path, report) {
 
 /**
  * Runs clasp and reports the outcome together with its output. clasp exits 0
- * after refusing a push (an unrecognized option, or a manifest change it will
- * not overwrite without --force), so the exit code alone is not success.
+ * after refusing work — an unrecognized option, a manifest change it will not
+ * overwrite without --force, or an invalid deployment id — so a step is only
+ * accepted when its output carries the confirmation clasp prints on success.
  */
-function runClasp(argv, cwd) {
+function runClasp(argv, cwd, confirmation) {
   return new Promise((resolve) => {
     const child = spawn('clasp', argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
@@ -49,11 +50,14 @@ function runClasp(argv, cwd) {
     child.stderr.on('data', (chunk) => { output += chunk.toString(); });
     child.on('error', (error) => resolve({ ok: false, output: error.message }));
     child.on('exit', (code, signal) => {
-      const refused = /\berror:/i.test(output) || /Skipping push\./i.test(output) || /not a valid/i.test(output);
-      resolve({ ok: code === 0 && !refused, output: output.trim(), signal: signal ?? null });
+      const refused = /\berror:/i.test(output) || /Skipping push\./i.test(output) || /\binvalid\b/i.test(output);
+      resolve({ ok: code === 0 && !refused && confirmation.test(output), output: output.trim(), signal: signal ?? null });
     });
   });
 }
+
+const PUSH_CONFIRMATION = /Pushed \d+ files?|already up to date/i;
+const DEPLOYMENT_CONFIRMATION = /Deployed .*@\d+/;
 
 /** The directory `clasp push` would upload, so a mismatch cannot silently deploy the wrong files. */
 async function configuredClaspRoot(repoRoot) {
@@ -138,12 +142,12 @@ try {
       // --force is required: clasp treats a changed appsscript.json as a
       // confirmation prompt and, with no terminal, answers it by skipping the
       // entire push while still exiting 0.
-      const push = await runClasp(['push', '--force'], repoRoot);
+      const push = await runClasp(['push', '--force'], repoRoot, PUSH_CONFIRMATION);
       report.checks.claspPushSucceeded = push.ok;
       report.claspPushOutput = push.output.slice(-300);
       if (!push.ok) report.issues.push(`clasp push was refused or failed, so the project still serves the previous code: ${push.output.slice(-200) || 'no output'}`);
       if (push.ok && deploymentId) {
-        const deployed = await runClasp(['create-deployment', '--deploymentId', deploymentId, '--description', `deploy ${new Date().toISOString()}`], repoRoot);
+        const deployed = await runClasp(['create-deployment', '--deploymentId', deploymentId, '--description', `deploy ${new Date().toISOString()}`], repoRoot, DEPLOYMENT_CONFIRMATION);
         report.checks.deploymentUpdated = deployed.ok;
         report.claspDeployOutput = deployed.output.slice(-300);
         if (!deployed.ok) report.issues.push(`clasp could not update the deployment, so the published URL still serves the previous version: ${deployed.output.slice(-200) || 'no output'}`);
