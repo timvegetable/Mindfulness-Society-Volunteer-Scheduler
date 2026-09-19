@@ -8,7 +8,8 @@ const trampolines = [
   'function initializeWorkbook() { return VolunteerScheduling.initializeWorkbook(); }',
   'function checkWorkbookSchema() { return VolunteerScheduling.checkWorkbookSchema(); }',
   'function validateMigrationWorkbook() { return VolunteerScheduling.validateMigrationWorkbook(); }',
-  'function loadMigrationWorkbook() { return VolunteerScheduling.loadMigrationWorkbook(); }'
+  'function loadMigrationWorkbook() { return VolunteerScheduling.loadMigrationWorkbook(); }',
+  'function describeSignIn() { return VolunteerScheduling.describeSignIn(); }'
 ];
 const missing = trampolines.filter((line) => !source.includes(line));
 if (missing.length > 0) await writeFile(outputPath, `${source}\n${missing.join('\n')}\n`);

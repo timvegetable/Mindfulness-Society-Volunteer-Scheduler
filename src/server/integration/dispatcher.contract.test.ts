@@ -19,6 +19,23 @@ function dispatcherWith(handler: (context: unknown, payload: unknown) => unknown
 
 const request = { operation: INTEGRATION_OPERATIONS.adminSchedule, payload: {}, idempotencyKey: 'contract-check-1', credential: 'valid-credential' };
 
+describe('rejection reporting', () => {
+  it('tells the caller why the account was rejected', () => {
+    const dispatcher = createIntegrationDispatcher({
+      verifier: new MemoryTokenVerifier({ 'valid-credential': claims }),
+      users: new MemoryUserDirectory([]),
+      handlers: { [INTEGRATION_OPERATIONS.adminSchedule]: () => ({ sessions: [] }) },
+      revision: { current: () => 0 },
+      writeLock: { tryAcquire: () => true, release: () => undefined }
+    });
+    const response = dispatcher.dispatch(request);
+    expect(response.ok).toBe(false);
+    expect(response).toMatchObject({
+      error: { code: 'UNAUTHORIZED', details: { reason: 'unknown-identity', detail: expect.stringContaining('no Users row') as unknown as string } }
+    });
+  });
+});
+
 describe('Apps Script synchronous operation contract', () => {
   it('answers with the handler value', () => {
     const response = dispatcherWith(() => ({ sessions: [] })).dispatch(request);

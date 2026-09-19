@@ -89,6 +89,16 @@ export interface IdentityControllerOptions extends IdentityLoaderOptions {
   onCredential?: IdentityCredentialCallback;
 }
 
+/** Surfaces the server's non-sensitive rejection reason, when it supplies one. */
+function rejectedReason(details: unknown): string | undefined {
+  if (typeof details !== 'object' || details === null) return undefined;
+  const record = details as Record<string, unknown>;
+  const reason = typeof record.reason === 'string' ? record.reason : undefined;
+  const detail = typeof record.detail === 'string' ? record.detail : undefined;
+  if (reason && detail) return `${reason}: ${detail}`;
+  return detail ?? reason;
+}
+
 export interface IdentityStateListener {
   (state: IdentityState): void;
 }
@@ -184,9 +194,10 @@ export class IdentityController {
       // Report why it failed: a blanket "not authorized" hid a deployment that
       // rejected the request before it ever reached the scheduler.
       const rejected = error instanceof ApiClientError && (error.code === 'unauthorized' || error.code === 'FORBIDDEN' || error.code === 'UNAUTHORIZED');
+      const reason = error instanceof ApiClientError ? rejectedReason(error.details) : undefined;
       const message = !rejected && error instanceof Error && error.message
         ? error.message
-        : 'This Google account is not authorized for scheduling.';
+        : `This Google account is not authorized for scheduling.${reason ? ` (${reason})` : ''}`;
       this.setState({ status: 'signed-out', message });
     }
   }

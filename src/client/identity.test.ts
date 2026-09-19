@@ -63,4 +63,16 @@ describe('Google sign-in handling', () => {
     await controller.acceptCredential('credential');
     expect(controller.getState()).toMatchObject({ status: 'signed-out', message: 'This Google account is not authorized for scheduling.' });
   });
+
+  it('shows the server reason so a misconfigured deployment is diagnosable', async () => {
+    const controller = new IdentityController(apiStub(async () => {
+      throw new ApiClientError('UNAUTHORIZED', 'Authentication is required.', {
+        details: { reason: 'invalid', detail: 'token verification failed: Google credential audience is invalid.' }
+      });
+    }));
+    await controller.acceptCredential('credential');
+    const state = controller.getState();
+    expect(state).toMatchObject({ status: 'signed-out' });
+    expect(state).toMatchObject({ message: expect.stringContaining('Google credential audience is invalid') as unknown as string });
+  });
 });

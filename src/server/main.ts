@@ -213,6 +213,31 @@ export function loadMigrationWorkbook(): unknown {
   return logResult('loadMigrationWorkbook', applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId }));
 }
 
+/**
+ * Editor-run diagnostic for sign-in problems. Returns and logs the resolved
+ * deployment configuration and the Users directory, so a failing sign-in can be
+ * split into "configuration" versus "this account" without server log access.
+ */
+export function describeSignIn(): unknown {
+  const properties = runtimeProperties();
+  const spreadsheet = activeSpreadsheet();
+  const sheet = spreadsheet?.getSheetByName('Users') ?? null;
+  const directory = sheet ? usersFromSheet(sheet) : [];
+  const report = {
+    audienceConfigured: Boolean(properties?.getProperty('OAUTH_AUDIENCE')?.trim()),
+    audience: properties?.getProperty('OAUTH_AUDIENCE') || '(missing)',
+    audienceMatchesPublicClient: properties?.getProperty('OAUTH_AUDIENCE')?.trim() === properties?.getProperty('PUBLIC_OAUTH_CLIENT_ID')?.trim(),
+    writeEnabled: properties?.getProperty('WRITE_ENABLED') === 'true',
+    timeZone: properties?.getProperty('TIME_ZONE') || '(default)',
+    whoIsGoodEndpointConfigured: Boolean(properties?.getProperty('WHENISGOOD_ENDPOINT')?.trim()),
+    spreadsheetAvailable: Boolean(spreadsheet),
+    usersSheetRows: sheet ? Math.max(0, sheet.getLastRow() - 1) : 0,
+    authorizedUsers: directory.map((user) => `${user.email} [${user.roles.join('+')}]${user.volunteerId ? ` -> ${user.volunteerId}` : ''}${user.centerIds?.length ? ` @${user.centerIds.join(',')}` : ''}${user.active ? '' : ' (INACTIVE)'}`),
+    hint: 'If the account you signed in with is not listed above, its Users row is missing, inactive, or unreadable.'
+  };
+  return logResult('describeSignIn', report);
+}
+
 function migrationPayload(): unknown {
   const runtime = globalThis as unknown as { MIGRATION_PAYLOAD?: unknown };
   if (runtime.MIGRATION_PAYLOAD === undefined) {

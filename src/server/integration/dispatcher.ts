@@ -246,7 +246,13 @@ function assertSynchronous(operation: IntegrationOperation, value: unknown): unk
 function mapUnknownError(error: unknown): IntegrationError {
   if (error instanceof IntegrationError) return error;
   if (error instanceof RepositoryError) return new IntegrationError(error.code, error.message, undefined, error.code === 'CONFLICT');
-  if (error instanceof AuthenticationError) return new IntegrationError('UNAUTHORIZED', 'Authentication is required.');
+  if (error instanceof AuthenticationError) {
+    // The caller is the account being rejected, so naming the reason is what lets
+    // an operator diagnose a misconfigured deployment without server log access.
+    const details: IntegrationErrorDetails = { reason: error.reason };
+    if (error.detail !== undefined) details.detail = error.detail;
+    return new IntegrationError('UNAUTHORIZED', 'Authentication is required.', details);
+  }
   if (error instanceof z.ZodError) return new IntegrationError('INVALID_REQUEST', 'Request validation failed.', { issues: error.issues });
   return new IntegrationError('INTERNAL_ERROR', 'The scheduling service could not complete the request.', undefined, true);
 }
