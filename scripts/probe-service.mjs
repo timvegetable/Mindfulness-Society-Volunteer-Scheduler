@@ -46,6 +46,9 @@ const args = (() => {
 
 const PROBE_CREDENTIAL = 'probe-not-a-real-credential';
 
+/** An operation added by the current change; the previous bundle does not know it. */
+const FRESHNESS_OPERATION = 'admin.schedule.preview';
+
 /**
  * Sends one unauthenticated, non-mutating request and returns the answered body.
  * Apps Script answers a POST through its echo endpoint, so the redirect is
@@ -72,7 +75,7 @@ async function postProbe(url, operation, idempotencyKey) {
  * (rejected before authentication) and credential-checked by the current one.
  */
 async function probeDeploymentBundle(url) {
-  const text = await postProbe(url, 'admin.schedule.preview', 'deployment-bundle-probe-0001');
+  const text = await postProbe(url, FRESHNESS_OPERATION, 'deployment-bundle-probe-0001');
   const error = JSON.parse(text)?.error;
   const code = typeof error?.code === 'string' ? error.code : undefined;
   const message = typeof error?.message === 'string' ? error.message : '';
@@ -169,10 +172,12 @@ if (response) {
 }
 if (response && !process.exitCode) {
   const bundle = await probeDeploymentBundle(url).catch(() => 'unknown');
+  const deploymentId = /\/macros\/s\/([^/]+)\/exec/.exec(url)?.[1];
   if (bundle === 'current') {
-    console.log('deployment bundle: current — admin.schedule.preview is known and the probe credential was rejected.');
+    console.log(`deployment bundle: current — ${FRESHNESS_OPERATION} is known and the probe credential was rejected.`);
   } else if (bundle === 'previous') {
-    console.log('deployment bundle: previous — admin.schedule.preview is unknown, so deploy the current dist/apps-script before verifying the new flows.');
+    console.log(`deployment bundle: previous — ${FRESHNESS_OPERATION} is unknown, so this deployment still serves the older version.`);
+    console.log(`Edit deployment ${deploymentId ?? '(id not in url)'} to the newest version (Deploy ▸ Manage deployments ▸ pencil ▸ Version: New version). Deploying a separate new deployment leaves this URL on the old version.`);
   } else {
     console.log('deployment bundle: could not be identified from an unauthenticated probe.');
   }
