@@ -107,7 +107,25 @@ function now(): string {
   return new Date().toISOString();
 }
 
-function repositoryRevision(properties: ScriptProperties, name: string): { get(): { number: number; changedAt: string; changedBy: string; source: string }; set(value: { number: number; changedAt: string; changedBy: string; source: string }): void } {
+/**
+ * Scheduling input tabs. Their tab revisions compose into a dedicated monotonic
+ * counter so a change to an unrelated tab (mappings, candidates, audit) never
+ * marks the published schedule stale, and a change to a scheduling input always
+ * does — even when that tab's own revision is not the highest in the workbook.
+ */
+const SCHEDULING_INPUT_REVISION_KEY = 'SCHEDULING_INPUT_REVISION';
+const SCHEDULING_INPUT_TABS: ReadonlySet<string> = new Set(['Volunteers', 'RecurringAvailability', 'AvailabilityExceptions', 'Sessions']);
+
+export function schedulingInputRevision(properties: ScriptProperties): number {
+  const value = Number(properties.getProperty(SCHEDULING_INPUT_REVISION_KEY) ?? '0');
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function advanceSchedulingInputRevision(properties: ScriptProperties): void {
+  properties.setProperty(SCHEDULING_INPUT_REVISION_KEY, String(schedulingInputRevision(properties) + 1));
+}
+
+function repositoryRevision(properties: ScriptProperties, name: string, onCommit?: () => void): { get(): { number: number; changedAt: string; changedBy: string; source: string }; set(value: { number: number; changedAt: string; changedBy: string; source: string }): void } {
   const key = `TAB_REVISION_${name}`;
   return {
     get() {
@@ -116,6 +134,7 @@ function repositoryRevision(properties: ScriptProperties, name: string): { get()
     },
     set(value) {
       properties.setProperty(key, String(value.number));
+      onCommit?.();
     }
   };
 }
@@ -137,7 +156,8 @@ function auditWriter(sheet: SheetLike): (entry: AuditEntry) => void {
 function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, properties: ScriptProperties, definition: WorkbookTab, codec: { fromRow(row: Record<string, unknown>, context?: SheetValueContext): T; toRow(value: T): Record<string, unknown> }, audit: (entry: AuditEntry) => void, context: SheetValueContext): SheetRepository<T> {
   const sheet = spreadsheet.getSheetByName(definition.name);
   if (!sheet) throw new Error(`Workbook tab ${definition.name} is missing; initialize the workbook before serving requests`);
-  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name)), audit, context);
+  const tracksSchedulingInput = SCHEDULING_INPUT_TABS.has(definition.name);
+  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name, tracksSchedulingInput ? () => advanceSchedulingInputRevision(properties) : undefined)), audit, context);
 }
 
 export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: runtimeConfiguration(properties).timeZone }): RuntimeRepositories {
@@ -245,39 +265,63 @@ function latestCompletedRun(runs: readonly SchedulingRun[]): SchedulingRun | und
   return [...runs].filter((run) => run.status === 'completed').sort((left, right) => (right.completedAt ?? right.startedAt).localeCompare(left.completedAt ?? left.startedAt))[0];
 }
 
-function schedulingSourceRevision(repositories: RuntimeRepositories): number {
-  return Math.max(
-    repositories.volunteers.revision().number,
-    repositories.recurringAvailability.revision().number,
-    repositories.exceptions.revision().number,
-    repositories.sessions.revision().number
-  );
+/** Wire label for a session: the workbook's center name, its title, then its center id. */
+function sessionDisplayName(centers: ReadonlyMap<string, Center>, session: Session): string {
+  return (session.centerId ? centers.get(session.centerId)?.name : undefined) ?? session.title ?? session.centerId ?? session.kind;
 }
 
-function scheduleProjection(repositories: RuntimeRepositories, globalRevision: number): Record<string, unknown> {
-  const runs = repositories.schedulingRuns.list();
-  const run = latestCompletedRun(runs);
-  const assignments = repositories.assignments.list();
-  const backups = repositories.backups.list();
+type ScheduleRows = {
+  assignments: readonly Assignment[];
+  backups: readonly Backup[];
+  outputRevision: number;
+};
+
+type ScheduleReadState = {
+  globalRevision: number;
+  schedulingInput: number;
+  run: SchedulingRun | undefined;
+  preview: boolean;
+};
+
+/**
+ * One projection shape for both the published schedule and a read-only preview:
+ * `revision` is always the global workbook revision used for concurrency
+ * control, `inputRevision` is the dedicated scheduling-input counter, and
+ * `scheduleRevision` is the output revision of the latest completed run.
+ */
+function scheduleProjection(repositories: RuntimeRepositories, rows: ScheduleRows, state: ScheduleReadState): Record<string, unknown> {
   const sessions = repositories.sessions.list();
-  const outputRevision = run?.outputRevision ?? 0;
-  const sourceRevision = schedulingSourceRevision(repositories);
+  const volunteers = new Map(repositories.volunteers.list().map((volunteer) => [volunteer.id, volunteer]));
+  const centers = new Map(repositories.centers.list().map((center) => [center.id, center]));
   return {
-    sessions: sessions.map((session) => {
-      const sessionAssignments = assignments.filter((assignment) => assignment.sessionId === session.id && assignment.scheduleRevision === outputRevision && assignment.status === 'assigned').map((assignment) => ({ ...assignment, volunteerName: repositories.volunteers.get(assignment.volunteerId)?.name }));
-      const sessionBackups = backups.filter((backup) => backup.sessionId === session.id && backup.scheduleRevision === outputRevision && backup.status === 'available').sort((left, right) => left.position - right.position).map((backup) => repositories.volunteers.get(backup.volunteerId)?.name ?? backup.volunteerId);
-      const shortfall = Math.max(0, session.requiredStaffCount - sessionAssignments.length);
-      return { ...session, assignments: sessionAssignments, backups: sessionBackups, shortfall };
-    }),
-    revision: globalRevision,
-    inputRevision: run?.inputRevision ?? sourceRevision,
-    stale: run ? run.inputRevision !== sourceRevision : false,
-    runStatus: run?.status ?? 'none',
-    diagnostic: run?.diagnostic
+    sessions: sessions
+      // A proposed class is not schedulable, so it is reported as an explicit
+      // exclusion instead of as an unfilled committed occurrence.
+      .filter((session) => session.status !== 'proposed')
+      .map((session) => {
+        const sessionAssignments = rows.assignments
+          .filter((assignment) => assignment.sessionId === session.id && assignment.scheduleRevision === rows.outputRevision && assignment.status === 'assigned')
+          .map((assignment) => ({ ...assignment, volunteerName: volunteers.get(assignment.volunteerId)?.name }));
+        const sessionBackups = rows.backups
+          .filter((backup) => backup.sessionId === session.id && backup.scheduleRevision === rows.outputRevision && backup.status === 'available')
+          .sort((left, right) => left.position - right.position)
+          .map((backup) => volunteers.get(backup.volunteerId)?.name ?? backup.volunteerId);
+        return { ...session, displayName: sessionDisplayName(centers, session), assignments: sessionAssignments, backups: sessionBackups, shortfall: Math.max(0, session.requiredStaffCount - sessionAssignments.length) };
+      }),
+    preview: state.preview,
+    revision: state.globalRevision,
+    inputRevision: state.schedulingInput,
+    scheduleRevision: state.run?.outputRevision ?? null,
+    stale: state.run ? state.run.inputRevision !== state.schedulingInput : false,
+    runStatus: state.run?.status ?? 'none',
+    diagnostic: state.run?.diagnostic,
+    excludedProposedSessions: sessions
+      .filter((session) => session.kind === 'univ100' && session.status === 'proposed')
+      .map((session) => ({ id: session.id, displayName: sessionDisplayName(centers, session), reason: 'proposed' }))
   };
 }
 
-function buildInsight(repositories: RuntimeRepositories, configuration: RuntimeConfiguration): Record<string, unknown> {
+function buildInsight(repositories: RuntimeRepositories, configuration: RuntimeConfiguration, globalRevision: number): Record<string, unknown> {
   const store = new InsightStore();
   const dataset = store.regenerate({
     volunteers: hydratedVolunteers(repositories),
@@ -293,7 +337,7 @@ function buildInsight(repositories: RuntimeRepositories, configuration: RuntimeC
       operatingHours: { ...configuration.operatingHours }
     }
   });
-  return { ...projectInsightDataset(dataset, true), revision: Math.max(repositories.volunteers.revision().number, repositories.recurringAvailability.revision().number, repositories.assignments.revision().number) };
+  return { ...projectInsightDataset(dataset, true), revision: globalRevision };
 }
 
 export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties): ProductionRuntime {
@@ -318,6 +362,24 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
   const urlFetch = (globalThis as unknown as { UrlFetchApp?: { fetch(url: string): { getResponseCode(): number; getContentText(): string } } }).UrlFetchApp;
   const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: () => response.getContentText() }; }, parserOptions: { defaultTimeZone: configuration.timeZone } }) : undefined;
   const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: hydratedVolunteers(store), exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
+  // Reads report the global workbook revision for concurrency control; schedule
+  // staleness is derived from the dedicated scheduling-input counter.
+  const globalRevision = (): number => {
+    const value = Number(properties.getProperty('DATA_REVISION') ?? '0');
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  };
+  const computeSchedule = (inputRevision: number, previous: SchedulingRun | undefined, actorId: string) => {
+    const schedulingStore = new SchedulingStore({ inputRevision, currentRevision: previous?.outputRevision ?? 0 });
+    return runScheduling(schedulingStore, {
+      inputRevision,
+      actorId,
+      volunteers: hydratedVolunteers(store),
+      sessions: validateCommittedSessionInputs(store.sessions.list()),
+      exceptions: store.exceptions.list(),
+      assignments: store.assignments.list(),
+      runId: `scheduling-${inputRevision}-${Date.now()}`
+    });
+  };
   const handlers: OperationHandlers = {
     [INTEGRATION_OPERATIONS.me]: ({ actor }) => projectIdentity(actor),
     [INTEGRATION_OPERATIONS.volunteerDashboard]: ({ actor }) => {
@@ -327,7 +389,15 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       if (!volunteer) throw new IntegrationError('NOT_FOUND', 'Volunteer record was not found');
       const hydrated = { ...volunteer, recurringAvailability: store.recurringAvailability.list().filter((row) => row.volunteerId === volunteerId).map(({ volunteerId: _id, id: _rowId, revision: _revision, source: _source, updatedAt: _updatedAt, ...interval }) => interval) };
       const projection = projectVolunteerDashboard({ volunteer: hydrated, exceptions: store.exceptions.list(), assignments: store.assignments.list(), sessions: store.sessions.list() });
-      return { ...projection, recurringAvailability: projection.volunteer.recurringAvailability, revision: Math.max(store.volunteers.revision().number, store.recurringAvailability.revision().number, store.exceptions.revision().number, store.assignments.revision().number) };
+      const completed = latestCompletedRun(store.schedulingRuns.list());
+      return {
+        ...projection,
+        recurringAvailability: projection.volunteer.recurringAvailability,
+        revision: globalRevision(),
+        inputRevision: schedulingInputRevision(properties),
+        scheduleRevision: completed?.outputRevision ?? null,
+        stale: completed ? completed.inputRevision !== schedulingInputRevision(properties) : false
+      };
     },
     [INTEGRATION_OPERATIONS.recurringAvailabilityUpdate]: ({ actor }, payload) => {
       const value = payload as { intervals: Array<{ weekday: 1 | 2 | 3 | 4 | 5 | 6 | 7; start: string; end: string; timeZone: string }> };
@@ -341,13 +411,26 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       const value = payload as { assignmentId: string; reason?: string };
       return serviceData(selfService.cancelAssignedOccurrence({ id: actor.user.id, volunteerId: actor.user.volunteerId, roles: actor.user.roles, active: actor.user.active }, { ...value, expectedRevision: store.assignments.revision().number, expectedExceptionRevision: store.exceptions.revision().number }));
     },
-    [INTEGRATION_OPERATIONS.adminSchedule]: () => scheduleProjection(store, Number(properties.getProperty('DATA_REVISION') ?? '0')),
-    [INTEGRATION_OPERATIONS.adminScheduleRerun]: ({ actor }) => {
-      const inputRevision = schedulingSourceRevision(store);
+    [INTEGRATION_OPERATIONS.adminSchedule]: () => {
+      const run = latestCompletedRun(store.schedulingRuns.list());
+      return scheduleProjection(store, { assignments: store.assignments.list(), backups: store.backups.list(), outputRevision: run?.outputRevision ?? 0 }, { globalRevision: globalRevision(), schedulingInput: schedulingInputRevision(properties), run, preview: false });
+    },
+    // Read-only: the deterministic scheduler runs in memory against this
+    // request's snapshot and writes no Sheet row, run record, audit entry, or revision.
+    [INTEGRATION_OPERATIONS.adminSchedulePreview]: () => {
+      const inputRevision = schedulingInputRevision(properties);
       const previous = latestCompletedRun(store.schedulingRuns.list());
-      const committedSessions = validateCommittedSessionInputs(store.sessions.list());
-      const schedulingStore = new SchedulingStore({ inputRevision, currentRevision: previous?.outputRevision ?? 0 });
-      const result = runScheduling(schedulingStore, { inputRevision, actorId: actor.user.id, volunteers: hydratedVolunteers(store), sessions: committedSessions, exceptions: store.exceptions.list(), assignments: store.assignments.list(), runId: `scheduling-${inputRevision}-${Date.now()}` });
+      const result = computeSchedule(inputRevision, previous, 'administrator-preview');
+      return scheduleProjection(
+        store,
+        { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision },
+        { globalRevision: globalRevision(), schedulingInput: inputRevision, run: previous, preview: true }
+      );
+    },
+    [INTEGRATION_OPERATIONS.adminScheduleRerun]: ({ actor }) => {
+      const inputRevision = schedulingInputRevision(properties);
+      const previous = latestCompletedRun(store.schedulingRuns.list());
+      const result = computeSchedule(inputRevision, previous, actor.user.id);
       const beforeAssignments = store.assignments.list();
       const beforeBackups = store.backups.list();
       try {
@@ -359,13 +442,13 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
         try { store.backups.replace(beforeBackups, store.backups.revision().number, actor.user.id, 'schedule-rollback'); } catch { /* preserve original error */ }
         throw error;
       }
-      return scheduleProjection(store, Number(properties.getProperty('DATA_REVISION') ?? '0'));
+      return scheduleProjection(store, { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision }, { globalRevision: globalRevision(), schedulingInput: inputRevision, run: result.run, preview: false });
     },
     [INTEGRATION_OPERATIONS.adminImportPreview]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
       const request = payload as { resultsCode: string }; // validated by the operation policy before dispatch
       const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, request.resultsCode);
-      return projectImport(staged, request.resultsCode, Number(properties.getProperty('DATA_REVISION') ?? '0'), hydratedVolunteers(store));
+      return projectImport(staged, request.resultsCode, globalRevision(), hydratedVolunteers(store));
     },
     [INTEGRATION_OPERATIONS.adminImportPromote]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
@@ -383,17 +466,17 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       const restaged = fetcher ? imports.restageUnresolved(adminActor, fetcher)[0] : undefined;
       return {
         mapping,
-        ...(restaged ? { import: projectImport(restaged, restaged.run.resultId ?? '', Number(properties.getProperty('DATA_REVISION') ?? '0'), hydratedVolunteers(store)) } : {})
+        ...(restaged ? { import: projectImport(restaged, restaged.run.resultId ?? '', globalRevision(), hydratedVolunteers(store)) } : {})
       };
     },
-    [INTEGRATION_OPERATIONS.adminInsights]: () => buildInsight(store, configuration),
-    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => buildInsight(store, configuration),
+    [INTEGRATION_OPERATIONS.adminInsights]: () => buildInsight(store, configuration, globalRevision()),
+    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => buildInsight(store, configuration, globalRevision()),
     [INTEGRATION_OPERATIONS.centerCandidate]: ({ actor }) => {
       const centerCaller = caller(actor);
       const candidates = centerWorkflow.schedule.list(centerCaller).map((candidate) => ({ ...candidate, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, candidate) }));
       const names = new Set(candidates.map((candidate) => candidate.centerId));
       const centerName = names.size === 1 ? store.centers.get([...names][0]!)?.name : undefined;
-      return { centerName, candidates, revision: store.candidates.revision().number };
+      return { centerName, candidates, revision: globalRevision() };
     },
     [INTEGRATION_OPERATIONS.centerCandidateUpdate]: ({ actor }, payload) => {
       const value = payload as { candidateId?: string; id?: string; centerId?: string; weekday?: number; start?: string; end?: string; timeZone?: string; requestedStaffCount?: number; intervals?: Array<{ weekday: number; start: string; end: string; timeZone: string }> };
@@ -409,12 +492,12 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
         ...(value.timeZone === undefined && interval === undefined ? {} : { timeZone: value.timeZone ?? interval?.timeZone ?? existing.timeZone }),
         ...(value.requestedStaffCount === undefined ? {} : { requestedStaffCount: value.requestedStaffCount })
       }, store.candidates.revision().number);
-      return { candidate: updated, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, updated), revision: store.candidates.revision().number };
+      return { candidate: updated, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, updated), revision: globalRevision() };
     },
     [INTEGRATION_OPERATIONS.adminCenterCandidateConfirm]: ({ actor }, payload) => {
       const candidateId = (payload as { candidateId: string }).candidateId;
       const result = centerWorkflow.confirmation.confirm(caller(actor), candidateId, { expectedRevision: store.candidates.revision().number });
-      return { ...result, revision: store.candidates.revision().number };
+      return { ...result, revision: globalRevision() };
     }
   };
   return { handlers, users: store.centerUsers.list() };

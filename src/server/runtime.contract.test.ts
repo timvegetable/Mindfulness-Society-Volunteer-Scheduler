@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationOperation } from './integration/dispatcher.js';
-import { createProductionRuntime, runtimeConfiguration } from './runtime.js';
+import { createProductionRuntime, repositories, runtimeConfiguration } from './runtime.js';
 import { InMemoryProperties, InMemorySpreadsheet } from './workbook/in-memory-sheet.js';
 
 const actor = {
@@ -136,6 +136,58 @@ describe('production Apps Script runtime', () => {
       if (previousFetch === undefined) delete (globalThis as { UrlFetchApp?: unknown }).UrlFetchApp;
       else runtimeGlobal.UrlFetchApp = previousFetch;
     }
+  });
+
+  it('separates the global revision from the scheduling-input revision', () => {
+    const spreadsheet = seededAvailabilitySpreadsheet();
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-07', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    const properties = new InMemoryProperties();
+    properties.setProperty('DATA_REVISION', '5');
+    properties.setProperty('SCHEDULING_INPUT_REVISION', '2');
+    const runtime = createProductionRuntime(spreadsheet, properties);
+    const context = (operation: IntegrationOperation, key: string): HandlerContext => ({ actor: actor as unknown as HandlerContext['actor'], operation, idempotencyKey: key, now: '2026-09-19T00:00:00.000Z' });
+    const schedule = () => runtime.handlers[INTEGRATION_OPERATIONS.adminSchedule]?.(context(INTEGRATION_OPERATIONS.adminSchedule, 'read'), {}) as { revision: number; inputRevision: number; scheduleRevision: number | null; stale: boolean };
+
+    const published = runtime.handlers[INTEGRATION_OPERATIONS.adminScheduleRerun]?.(context(INTEGRATION_OPERATIONS.adminScheduleRerun, 'publish'), {}) as { revision: number; inputRevision: number; scheduleRevision: number | null; stale: boolean };
+    expect(published).toMatchObject({ revision: 5, inputRevision: 2, stale: false });
+    expect(published.scheduleRevision).toBeTypeOf('number');
+
+    // A candidate change is not a scheduling input: the tab revision moves but
+    // neither the global revision nor the published schedule becomes stale.
+    const store = repositories(spreadsheet, properties, { timeZone: 'America/New_York' });
+    store.candidates.upsert({ id: 'candidate-1', centerId: 'center-1', weekday: 1, start: '10:00', end: '11:00', timeZone: 'America/New_York', requestedStaffCount: 1, status: 'candidate', createdBy: 'admin@example.test', revision: 0, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }, store.candidates.revision().number, 'admin@example.test', 'candidate-draft');
+    expect(schedule()).toMatchObject({ revision: 5, inputRevision: 2, stale: false });
+
+    // A session change is a scheduling input: the dedicated counter advances and
+    // the completed run no longer matches it.
+    store.sessions.upsert({ id: 'session-2', kind: 'univ100', title: 'UNIV100 class', date: '2026-09-08', start: '10:00', end: '11:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'confirmed', revision: 0 }, store.sessions.revision().number, 'admin@example.test', 'class-confirmation');
+    expect(schedule()).toMatchObject({ revision: 5, inputRevision: 3, stale: true });
+  });
+
+  it('keeps the scheduling preview free of side effects and identical to what publishing writes', () => {
+    const spreadsheet = seededAvailabilitySpreadsheet();
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-07', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-2', 'univ100', '', 'Proposed UNIV100 class', '2026-09-08', '10:00', '11:00', 'America/New_York', 1, 'proposed', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    const properties = new InMemoryProperties();
+    properties.setProperty('DATA_REVISION', '4');
+    const runtime = createProductionRuntime(spreadsheet, properties);
+    const context = (operation: IntegrationOperation, key: string): HandlerContext => ({ actor: actor as unknown as HandlerContext['actor'], operation, idempotencyKey: key, now: '2026-09-19T00:00:00.000Z' });
+
+    const preview = runtime.handlers[INTEGRATION_OPERATIONS.adminSchedulePreview]?.(context(INTEGRATION_OPERATIONS.adminSchedulePreview, 'preview'), {}) as { preview: boolean; sessions: unknown[]; excludedProposedSessions: unknown[]; revision: number; inputRevision: number };
+    expect(preview.preview).toBe(true);
+    expect(preview.revision).toBe(4);
+    expect(preview.inputRevision).toBe(0);
+    expect(preview.excludedProposedSessions).toEqual([{ id: 'session-2', displayName: 'Proposed UNIV100 class', reason: 'proposed' }]);
+    // Nothing was written: no assignments, no run, no revision movement.
+    expect(spreadsheet.getSheetByName('Assignments')?.values.length).toBe(1);
+    expect(spreadsheet.getSheetByName('SchedulingRuns')?.values.length).toBe(1);
+    expect(properties.getProperty('SCHEDULING_INPUT_REVISION')).toBeNull();
+    expect(properties.getProperty('DATA_REVISION')).toBe('4');
+
+    const published = runtime.handlers[INTEGRATION_OPERATIONS.adminScheduleRerun]?.(context(INTEGRATION_OPERATIONS.adminScheduleRerun, 'publish'), {}) as { preview: boolean; sessions: unknown[]; revision: number };
+    expect(published.preview).toBe(false);
+    expect(published.sessions).toEqual(preview.sessions);
+    expect(spreadsheet.getSheetByName('Assignments')?.values.length).toBe(2);
   });
 
   it('composes a handler for every allowlisted operation', () => {

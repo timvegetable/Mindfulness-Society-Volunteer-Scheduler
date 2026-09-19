@@ -5,6 +5,7 @@ export const API_OPERATIONS = {
   availabilityExceptionCreate: 'volunteer.availability.exception.create',
   assignmentCancel: 'volunteer.assignment.cancel',
   adminSchedule: 'admin.schedule.read',
+  adminSchedulePreview: 'admin.schedule.preview',
   adminScheduleRerun: 'admin.schedule.rerun',
   adminImportPreview: 'admin.import.whenIsGood.preview',
   adminImportPromote: 'admin.import.whenIsGood.promote',
@@ -322,6 +323,10 @@ export class ApiClient {
 
   schedule(credential: string): Promise<unknown> {
     return this.request(API_OPERATIONS.adminSchedule, {}, { credential });
+  }
+
+  previewSchedule(credential: string): Promise<unknown> {
+    return this.request(API_OPERATIONS.adminSchedulePreview, {}, { credential });
   }
 
   rerunSchedule(expectedRevision: number | string, credential: string): Promise<unknown> {

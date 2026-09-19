@@ -61,6 +61,7 @@ export interface ScheduleSession {
   start: string;
   end: string;
   center?: string;
+  displayName?: string;
   kind?: string;
   requiredStaffCount?: number;
   assignments?: ScheduleAssignment[];
@@ -69,17 +70,27 @@ export interface ScheduleSession {
   status?: string;
 }
 
+export interface ScheduleExcludedProposedSession {
+  id?: string;
+  displayName?: string;
+  reason?: string;
+}
+
 export interface AdminScheduleData {
   sessions: ScheduleSession[];
   revision?: number | string;
   inputRevision?: number | string;
+  scheduleRevision?: number | string;
+  preview?: boolean;
   stale?: boolean;
   runStatus?: string;
   diagnostic?: string;
+  excludedProposedSessions?: ScheduleExcludedProposedSession[];
 }
 
 export interface AdminScheduleActions {
-  onRerun?: (expectedRevision: number | string | undefined) => void | Promise<void>;
+  onPreview?: () => void | Promise<void>;
+  onPublish?: (expectedRevision: number | string | undefined) => void | Promise<void>;
 }
 
 export interface ImportRunData {
@@ -468,7 +479,8 @@ export function renderVolunteerDashboard(
 }
 
 function scheduleSessionText(session: ScheduleSession): string {
-  return `${session.date} ${session.start}–${session.end}${session.center ? ` — ${session.center}` : ''}`;
+  const label = session.displayName ?? session.center ?? (session.kind === 'univ100' ? 'UNIV100 class' : undefined);
+  return `${session.date} ${session.start}–${session.end}${label ? ` — ${label}` : ''}`;
 }
 
 export function renderAdminSchedule(
@@ -480,28 +492,57 @@ export function renderAdminSchedule(
   clear(container);
   container.append(heading(documentRef, 2, 'Schedule administration'));
   const toolbar = createElement(documentRef, 'div', 'toolbar');
-  const rerun = button(documentRef, data.stale ? 'Rerun scheduling' : 'Run scheduling', 'button', 'primary-button');
+  const preview = button(documentRef, data.preview ? 'Refresh preview' : 'Preview scheduling', 'button', 'primary-button');
+  const publish = button(documentRef, 'Publish approved preview', 'button', 'primary-button');
+  publish.disabled = data.preview !== true || data.revision === undefined;
   const status = statusNode(documentRef, data.runStatus ?? '');
-  rerun.addEventListener('click', () => handleAction(status, actions.onRerun ? () => actions.onRerun?.(data.inputRevision ?? data.revision) : undefined));
-  toolbar.append(rerun, status);
+  preview.addEventListener('click', () => handleAction(status, actions.onPreview ? () => actions.onPreview?.() : undefined));
+  publish.addEventListener('click', () => handleAction(status, actions.onPublish ? () => actions.onPublish?.(data.revision) : undefined));
+  toolbar.append(preview, publish, status);
   container.append(toolbar);
+  const scope = createElement(documentRef, 'p', 'muted');
+  scope.textContent = data.preview
+    ? 'Preview only: nothing has been written. Publishing recomputes the schedule against the same inputs and rejects the publish if anything changed.'
+    : 'Preview assignments, backups, and shortfalls before publishing; publishing is only available for a reviewed preview.';
+  container.append(scope);
   if (data.stale) {
     const alert = createElement(documentRef, 'p', 'alert warning');
-    alert.textContent = 'Schedule is stale because an input changed. Review and rerun deliberately.';
+    alert.setAttribute('role', 'status');
+    alert.textContent = 'Schedule is stale because a scheduling input changed. Preview the new result before publishing it.';
     container.append(alert);
   }
   const revision = revisionLabel(documentRef, data.revision);
   if (revision) container.append(revision);
   if (data.inputRevision !== undefined) {
     const inputRevision = createElement(documentRef, 'p', 'muted');
-    inputRevision.textContent = `Input revision: ${String(data.inputRevision)}`;
+    inputRevision.textContent = `Scheduling input revision: ${String(data.inputRevision)}`;
     container.append(inputRevision);
+  }
+  if (data.scheduleRevision !== undefined && data.scheduleRevision !== null) {
+    const scheduleRevision = createElement(documentRef, 'p', 'muted');
+    scheduleRevision.textContent = `Current schedule revision: ${String(data.scheduleRevision)}`;
+    container.append(scheduleRevision);
   }
   if (data.diagnostic) {
     const diagnostic = createElement(documentRef, 'p', 'alert error');
     diagnostic.setAttribute('role', 'alert');
     diagnostic.textContent = data.diagnostic;
     container.append(diagnostic);
+  }
+  if (data.excludedProposedSessions && data.excludedProposedSessions.length > 0) {
+    const excluded = createElement(documentRef, 'section', 'panel');
+    excluded.append(heading(documentRef, 3, 'Proposed sessions excluded from scheduling'));
+    const note = createElement(documentRef, 'p', 'muted');
+    note.textContent = 'These classes are not confirmed, so they are neither staffed nor counted as shortfalls.';
+    excluded.append(note);
+    const list = createElement(documentRef, 'ul');
+    for (const session of data.excludedProposedSessions) {
+      const item = createElement(documentRef, 'li');
+      item.textContent = `${session.displayName ?? session.id ?? 'Proposed session'} (${session.reason ?? 'proposed'})`;
+      list.append(item);
+    }
+    excluded.append(list);
+    container.append(excluded);
   }
   const table = createElement(documentRef, 'table', 'data-table');
   const caption = createElement(documentRef, 'caption');

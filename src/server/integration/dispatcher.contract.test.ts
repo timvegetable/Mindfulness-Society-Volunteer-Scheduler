@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryTokenVerifier, MemoryUserDirectory, type VerifiedIdentityClaims } from './auth.js';
-import { createIntegrationDispatcher, INTEGRATION_OPERATIONS } from './dispatcher.js';
+import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, MemoryRevisionSource, MemoryWriteLock } from './dispatcher.js';
 
 const claims: VerifiedIdentityClaims = {
   iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-1', email: 'admin@example.test', email_verified: true, exp: 4102444800
@@ -33,6 +33,39 @@ describe('rejection reporting', () => {
     expect(response).toMatchObject({
       error: { code: 'UNAUTHORIZED', details: { reason: 'unknown-identity', detail: expect.stringContaining('no Users row') as unknown as string } }
     });
+  });
+});
+
+describe('reviewed scheduling publication', () => {
+  it('publishes with the preview revision and rejects a superseded one', () => {
+    const revision = new MemoryRevisionSource(7);
+    let publications = 0;
+    const dispatcher = createIntegrationDispatcher({
+      verifier: new MemoryTokenVerifier({ 'valid-credential': claims }),
+      users: new MemoryUserDirectory([user as unknown as Parameters<typeof MemoryUserDirectory.prototype.set>[0]]),
+      handlers: {
+        [INTEGRATION_OPERATIONS.adminSchedulePreview]: () => ({ preview: true, revision: revision.current() }),
+        [INTEGRATION_OPERATIONS.adminScheduleRerun]: () => {
+          publications += 1;
+          return { preview: false, sessions: [] };
+        }
+      },
+      revision,
+      writeLock: new MemoryWriteLock()
+    });
+
+    const preview = dispatcher.dispatchReadOnly({ operation: INTEGRATION_OPERATIONS.adminSchedulePreview, payload: {}, idempotencyKey: 'preview-1', credential: 'valid-credential' });
+    expect(preview).toEqual({ ok: true, data: { preview: true, revision: 7 } });
+
+    const published = dispatcher.dispatch({ operation: INTEGRATION_OPERATIONS.adminScheduleRerun, payload: {}, idempotencyKey: 'publish-1', credential: 'valid-credential', expectedRevision: 7 });
+    expect(published.ok).toBe(true);
+    expect(publications).toBe(1);
+
+    // Any intervening mutation moves the global revision, so the reviewed
+    // preview can no longer be published.
+    const superseded = dispatcher.dispatch({ operation: INTEGRATION_OPERATIONS.adminScheduleRerun, payload: {}, idempotencyKey: 'publish-2', credential: 'valid-credential', expectedRevision: 7 });
+    expect(superseded).toMatchObject({ ok: false, error: { code: 'STALE_REVISION', details: { currentRevision: 8 } } });
+    expect(publications).toBe(1);
   });
 });
 

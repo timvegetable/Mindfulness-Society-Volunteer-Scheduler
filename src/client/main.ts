@@ -176,6 +176,7 @@ function parseSchedule(value: unknown): AdminScheduleData {
       end,
       assignments,
       ...(stringValue(item.center) ? { center: stringValue(item.center) } : {}),
+      ...(stringValue(item.displayName) ? { displayName: stringValue(item.displayName) } : {}),
       ...(stringValue(item.kind) ? { kind: stringValue(item.kind) } : {}),
       ...(numberValue(item.requiredStaffCount) !== undefined ? { requiredStaffCount: numberValue(item.requiredStaffCount) } : {}),
       ...(arrayValue(item.backups).every((entry) => typeof entry === 'string') ? { backups: arrayValue(item.backups) as string[] } : {}),
@@ -183,13 +184,24 @@ function parseSchedule(value: unknown): AdminScheduleData {
       ...(stringValue(item.status) ? { status: stringValue(item.status) } : {})
     }];
   });
+  const excludedProposedSessions = arrayValue(data.excludedProposedSessions).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    return [{
+      ...(stringValue(item.id) ? { id: stringValue(item.id) } : {}),
+      ...(stringValue(item.displayName) ? { displayName: stringValue(item.displayName) } : {}),
+      ...(stringValue(item.reason) ? { reason: stringValue(item.reason) } : {})
+    }];
+  });
   return {
     sessions,
     revision: parseRevision(data.revision),
     inputRevision: parseRevision(data.inputRevision),
+    scheduleRevision: parseRevision(data.scheduleRevision),
+    preview: data.preview === true,
     stale: data.stale === true,
     runStatus: stringValue(data.runStatus),
-    diagnostic: stringValue(data.diagnostic)
+    diagnostic: stringValue(data.diagnostic),
+    excludedProposedSessions
   };
 }
 
@@ -397,7 +409,10 @@ async function loadRoute(runtime: Runtime): Promise<void> {
     } else if (runtime.profile.role === 'administrator' && runtime.route === 'schedule') {
       const schedule = parseSchedule(await runtime.api.schedule(credential));
       renderAdminSchedule(runtime.app, schedule, {
-        onRerun: async (expectedRevision) => {
+        onPreview: async () => {
+          renderAdminSchedule(runtime.app, parseSchedule(await runtime.api.previewSchedule(credential)), {}, runtime.document);
+        },
+        onPublish: async (expectedRevision) => {
           if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
           await runtime.api.rerunSchedule(expectedRevision, credential);
           await loadRouteAfterAction(runtime);
