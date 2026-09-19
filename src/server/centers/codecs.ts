@@ -1,4 +1,5 @@
 import type { SheetCodec } from '../workbook/repository.js';
+import { cellBoolean, cellClock, cellDate, cellInstant, cellNumber, cellText } from '../workbook/sheet-values.js';
 import type { CandidateSchedule, Center, CenterUser } from './models.js';
 
 function json(value: unknown): string {
@@ -25,14 +26,14 @@ function parseList(value: unknown): string[] | undefined {
 
 
 export const centerCodec: SheetCodec<Center> = {
-  fromRow(row) {
+  fromRow(row, context) {
     return {
-      id: String(row.id ?? ''),
-      name: String(row.name ?? ''),
-      active: row.active === true || row.active === 'true',
-      revision: Number(row.revision ?? 0),
-      createdAt: String(row.createdAt ?? ''),
-      updatedAt: String(row.updatedAt ?? '')
+      id: cellText(row.id),
+      name: cellText(row.name),
+      active: cellBoolean(row.active),
+      revision: cellNumber(row.revision),
+      createdAt: cellInstant(row.createdAt, context),
+      updatedAt: cellInstant(row.updatedAt, context)
     };
   },
   toRow(center) {
@@ -41,15 +42,15 @@ export const centerCodec: SheetCodec<Center> = {
 };
 
 export const centerUserCodec: SheetCodec<CenterUser> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const roles = (parseList(row.roles) ?? []).filter((role): role is CenterUser['roles'][number] => role === 'volunteer' || role === 'administrator' || role === 'center-contact');
     const centerIds = parseList(row.centerIds);
     const result: CenterUser = {
-      id: String(row.id ?? ''),
-      email: String(row.email ?? ''),
+      id: cellText(row.id),
+      email: cellText(row.email),
       roles,
-      active: row.active === true || row.active === 'true',
-      revision: Number(row.revision ?? 0)
+      active: cellBoolean(row.active),
+      revision: cellNumber(row.revision)
     };
     if (typeof row.volunteerId === 'string' && row.volunteerId.length > 0) result.volunteerId = row.volunteerId;
     if (Array.isArray(centerIds)) result.centerIds = [...centerIds];
@@ -70,23 +71,23 @@ export const centerUserCodec: SheetCodec<CenterUser> = {
 };
 
 export const candidateScheduleCodec: SheetCodec<CandidateSchedule> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: CandidateSchedule = {
-      id: String(row.id ?? ''),
-      centerId: String(row.centerId ?? ''),
-      weekday: Number(row.weekday ?? 1) as 1 | 2 | 3 | 4 | 5,
-      start: String(row.start ?? ''),
-      end: String(row.end ?? ''),
-      timeZone: String(row.timeZone ?? ''),
-      requestedStaffCount: Number(row.requestedStaffCount ?? 0),
-      status: String(row.status ?? 'candidate') as CandidateSchedule['status'],
-      createdBy: String(row.createdBy ?? ''),
-      revision: Number(row.revision ?? 0),
-      createdAt: String(row.createdAt ?? ''),
-      updatedAt: String(row.updatedAt ?? '')
+      id: cellText(row.id),
+      centerId: cellText(row.centerId),
+      weekday: cellNumber(row.weekday, 1) as 1 | 2 | 3 | 4 | 5,
+      start: cellClock(row.start, context),
+      end: cellClock(row.end, context),
+      timeZone: cellText(row.timeZone),
+      requestedStaffCount: cellNumber(row.requestedStaffCount),
+      status: cellText(row.status) as CandidateSchedule['status'],
+      createdBy: cellText(row.createdBy),
+      revision: cellNumber(row.revision),
+      createdAt: cellInstant(row.createdAt, context),
+      updatedAt: cellInstant(row.updatedAt, context)
     };
     const occurrenceDates = parseJson<unknown>(row.occurrenceDates, undefined);
-    if (Array.isArray(occurrenceDates)) result.occurrenceDates = occurrenceDates.filter((date): date is string => typeof date === 'string');
+    if (Array.isArray(occurrenceDates)) result.occurrenceDates = occurrenceDates.map((date) => cellDate(date, context));
     return result;
   },
   toRow(candidate) {

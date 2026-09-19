@@ -25,7 +25,8 @@ import {
   sessionCodec,
   volunteerCodec
 } from './workbook/codecs.js';
-import { RevisionStore, SheetRepository, type AuditEntry, type RevisionedRepository } from './workbook/repository.js';
+import { RevisionStore, SheetRepository, type AuditEntry, type RevisionedRepository, type SheetCodec } from './workbook/repository.js';
+import type { SheetValueContext } from './workbook/sheet-values.js';
 import { tabDefinition, type WorkbookTab } from './workbook/schema.js';
 import type { SpreadsheetLike, SheetLike } from './workbook/initializer.js';
 import type { RecurringAvailabilityRecord } from './self-service/types.js';
@@ -37,6 +38,34 @@ export type ScriptProperties = {
   getProperty(name: string): string | null;
   setProperty(name: string, value: string): void;
 };
+
+/**
+ * Scheduling and insight policy resolved from Script Properties. The defaults
+ * mirror the deployed policy so a missing property cannot silently narrow the
+ * insight grid or halve the display increment; `describeSignIn` reports both the
+ * resolved values and whether each property was configured.
+ */
+export type RuntimeConfiguration = {
+  timeZone: string;
+  incrementMinutes: number;
+  operatingHours: { start: string; end: string };
+};
+
+export const DEFAULT_TIME_ZONE = 'America/New_York';
+export const DEFAULT_DISPLAY_INCREMENT_MINUTES = 30;
+export const DEFAULT_OPERATING_HOURS = { start: '09:00', end: '21:00' } as const;
+
+export function runtimeConfiguration(properties: ScriptProperties): RuntimeConfiguration {
+  const increment = Number(properties.getProperty('DISPLAY_INCREMENT_MINUTES') ?? '');
+  return {
+    timeZone: properties.getProperty('TIME_ZONE')?.trim() || DEFAULT_TIME_ZONE,
+    incrementMinutes: Number.isInteger(increment) && increment > 0 && increment <= 24 * 60 ? increment : DEFAULT_DISPLAY_INCREMENT_MINUTES,
+    operatingHours: {
+      start: properties.getProperty('OPERATING_HOURS_START')?.trim() || DEFAULT_OPERATING_HOURS.start,
+      end: properties.getProperty('OPERATING_HOURS_END')?.trim() || DEFAULT_OPERATING_HOURS.end
+    }
+  };
+}
 
 export type RuntimeRepositories = {
   volunteers: SheetRepository<Volunteer>;
@@ -104,30 +133,31 @@ function auditWriter(sheet: SheetLike): (entry: AuditEntry) => void {
   ]);
 }
 
-function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, properties: ScriptProperties, definition: WorkbookTab, codec: { fromRow(row: Record<string, unknown>): T; toRow(value: T): Record<string, unknown> }, audit: (entry: AuditEntry) => void): SheetRepository<T> {
+function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, properties: ScriptProperties, definition: WorkbookTab, codec: { fromRow(row: Record<string, unknown>, context?: SheetValueContext): T; toRow(value: T): Record<string, unknown> }, audit: (entry: AuditEntry) => void, context: SheetValueContext): SheetRepository<T> {
   const sheet = spreadsheet.getSheetByName(definition.name);
   if (!sheet) throw new Error(`Workbook tab ${definition.name} is missing; initialize the workbook before serving requests`);
-  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name)), audit);
+  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name)), audit, context);
 }
 
-export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties): RuntimeRepositories {
+export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: runtimeConfiguration(properties).timeZone }): RuntimeRepositories {
   const auditSheet = spreadsheet.getSheetByName('AuditLog');
   if (!auditSheet) throw new Error('Workbook tab AuditLog is missing; initialize the workbook before serving requests');
   const audit = auditWriter(auditSheet);
+  const make = <T extends { id: string }>(definition: WorkbookTab, codec: SheetCodec<T>): SheetRepository<T> => makeRepository(spreadsheet, properties, definition, codec, audit, context);
   return {
-    volunteers: makeRepository(spreadsheet, properties, tabDefinition('Volunteers'), volunteerCodec, audit),
-    recurringAvailability: makeRepository(spreadsheet, properties, tabDefinition('RecurringAvailability'), recurringAvailabilityCodec, audit),
-    exceptions: makeRepository(spreadsheet, properties, tabDefinition('AvailabilityExceptions'), availabilityExceptionCodec, audit),
-    sessions: makeRepository(spreadsheet, properties, tabDefinition('Sessions'), sessionCodec, audit),
-    assignments: makeRepository(spreadsheet, properties, tabDefinition('Assignments'), assignmentCodec, audit),
-    backups: makeRepository(spreadsheet, properties, tabDefinition('Backups'), backupCodec, audit),
-    schedulingRuns: makeRepository(spreadsheet, properties, tabDefinition('SchedulingRuns'), schedulingRunCodec, audit),
-    imports: makeRepository(spreadsheet, properties, tabDefinition('Imports'), importRunCodec, audit),
-    importedAvailability: makeRepository(spreadsheet, properties, tabDefinition('ImportedAvailability'), importedAvailabilityCodec, audit),
-    mappings: makeRepository(spreadsheet, properties, tabDefinition('ImportMappings'), identityMappingCodec, audit),
-    centers: makeRepository(spreadsheet, properties, tabDefinition('Centers'), centerCodec, audit),
-    centerUsers: makeRepository(spreadsheet, properties, tabDefinition('Users'), centerUserCodec, audit),
-    candidates: makeRepository(spreadsheet, properties, tabDefinition('CandidateSchedules'), candidateScheduleCodec, audit)
+    volunteers: make(tabDefinition('Volunteers'), volunteerCodec),
+    recurringAvailability: make(tabDefinition('RecurringAvailability'), recurringAvailabilityCodec),
+    exceptions: make(tabDefinition('AvailabilityExceptions'), availabilityExceptionCodec),
+    sessions: make(tabDefinition('Sessions'), sessionCodec),
+    assignments: make(tabDefinition('Assignments'), assignmentCodec),
+    backups: make(tabDefinition('Backups'), backupCodec),
+    schedulingRuns: make(tabDefinition('SchedulingRuns'), schedulingRunCodec),
+    imports: make(tabDefinition('Imports'), importRunCodec),
+    importedAvailability: make(tabDefinition('ImportedAvailability'), importedAvailabilityCodec),
+    mappings: make(tabDefinition('ImportMappings'), identityMappingCodec),
+    centers: make(tabDefinition('Centers'), centerCodec),
+    centerUsers: make(tabDefinition('Users'), centerUserCodec),
+    candidates: make(tabDefinition('CandidateSchedules'), candidateScheduleCodec)
   };
 }
 
@@ -213,7 +243,7 @@ function scheduleProjection(repositories: RuntimeRepositories, globalRevision: n
   };
 }
 
-function buildInsight(repositories: RuntimeRepositories, timeZone: string, incrementMinutes: number): Record<string, unknown> {
+function buildInsight(repositories: RuntimeRepositories, configuration: RuntimeConfiguration): Record<string, unknown> {
   const store = new InsightStore();
   const dataset = store.regenerate({
     volunteers: repositories.volunteers.list().map((volunteer) => ({ ...volunteer, recurringAvailability: repositories.recurringAvailability.list().filter((row) => row.volunteerId === volunteer.id).map(({ volunteerId: _volunteerId, id: _id, revision: _revision, source: _source, updatedAt: _updatedAt, ...interval }) => interval) })),
@@ -223,15 +253,18 @@ function buildInsight(repositories: RuntimeRepositories, timeZone: string, incre
       eligibilityRevision: repositories.volunteers.revision().number,
       availabilityRevision: repositories.recurringAvailability.revision().number
     },
-    config: { timeZone, incrementMinutes }
+    config: {
+      timeZone: configuration.timeZone,
+      incrementMinutes: configuration.incrementMinutes,
+      operatingHours: { ...configuration.operatingHours }
+    }
   });
   return { ...projectInsightDataset(dataset, true), revision: Math.max(repositories.volunteers.revision().number, repositories.recurringAvailability.revision().number, repositories.assignments.revision().number) };
 }
 
 export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties): ProductionRuntime {
-  const store = repositories(spreadsheet, properties);
-  const timeZone = properties.getProperty('TIME_ZONE')?.trim() || 'America/New_York';
-  const incrementMinutes = Number(properties.getProperty('DISPLAY_INCREMENT_MINUTES') ?? '15');
+  const configuration = runtimeConfiguration(properties);
+  const store = repositories(spreadsheet, properties, { timeZone: configuration.timeZone });
   const administratorRecipients = listField(properties.getProperty('ADMINISTRATOR_RECIPIENTS'));
   const mailer = (globalThis as unknown as { GmailApp?: { sendEmail(to: string, subject: string, body: string): void } }).GmailApp;
   const selfService = new SelfServiceService({
@@ -243,13 +276,13 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     backups: store.backups,
     administratorRecipients,
     mailer: mailer ? { send: ({ to, subject, body }) => mailer.sendEmail(to.join(','), subject, body) } : undefined,
-    configuredTimeZone: timeZone
+    configuredTimeZone: configuration.timeZone
   });
   const importRepository = new SheetImportRepository(store.imports, store.importedAvailability, store.mappings, store.volunteers);
-  const imports = new StagedWhenIsGoodImportService(importRepository, { defaultTimeZone: timeZone });
+  const imports = new StagedWhenIsGoodImportService(importRepository, { defaultTimeZone: configuration.timeZone });
   const endpoint = properties.getProperty('WHENISGOOD_ENDPOINT')?.trim();
   const urlFetch = (globalThis as unknown as { UrlFetchApp?: { fetch(url: string): { getResponseCode(): number; getContentText(): string } } }).UrlFetchApp;
-  const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: () => response.getContentText() }; }, parserOptions: { defaultTimeZone: timeZone } }) : undefined;
+  const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: () => response.getContentText() }; }, parserOptions: { defaultTimeZone: configuration.timeZone } }) : undefined;
   const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: store.volunteers, exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
   const handlers: OperationHandlers = {
     [INTEGRATION_OPERATIONS.me]: ({ actor }) => projectIdentity(actor),
@@ -307,8 +340,8 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       if (!staged.preview.canPromote) throw new IntegrationError('CONFLICT', `Import cannot be promoted: ${staged.preview.blockers.join('; ')}`);
       return imports.promote({ id: actor.user.id, roles: actor.user.roles }, staged.run.id);
     },
-    [INTEGRATION_OPERATIONS.adminInsights]: () => buildInsight(store, timeZone, incrementMinutes),
-    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => buildInsight(store, timeZone, incrementMinutes),
+    [INTEGRATION_OPERATIONS.adminInsights]: () => buildInsight(store, configuration),
+    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => buildInsight(store, configuration),
     [INTEGRATION_OPERATIONS.centerCandidate]: ({ actor }) => {
       const centerCaller = caller(actor);
       const candidates = centerWorkflow.schedule.list(centerCaller).map((candidate) => ({ ...candidate, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, candidate) }));

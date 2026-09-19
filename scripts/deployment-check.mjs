@@ -160,6 +160,11 @@ try {
       report.checks.serverDistPresent = serverFiles.some((file) => file.relative === 'Code.js') && serverFiles.some((file) => file.relative === 'appsscript.json');
       report.serverFileCount = serverFiles.length;
       if (!report.checks.serverDistPresent) report.issues.push('Apps Script dist must contain Code.js and appsscript.json');
+      const migrationArtifacts = serverFiles.filter((file) => file.relative === 'MigrationPayload.gs');
+      report.checks.noMigrationPayload = migrationArtifacts.length === 0;
+      if (migrationArtifacts.length > 0) {
+        report.issues.push('Apps Script dist contains MigrationPayload.gs; it is a temporary migration-only file that must be deleted before an ordinary deployment');
+      }
     } catch {
       report.checks.serverDistPresent = false;
       report.issues.push('Apps Script dist path is missing or unreadable');

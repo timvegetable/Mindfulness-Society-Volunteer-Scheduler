@@ -2,6 +2,7 @@ import type { Assignment, AvailabilityException, Backup, Session, SchedulingRun,
 import type { RecurringAvailabilityRecord } from '../self-service/types.js';
 import type { IdentityMapping, ImportedAvailabilityRecord, ImportRun } from '../imports/types.js';
 import type { SheetCodec } from './repository.js';
+import { cellClock, cellDate, cellInstant, cellNumber, cellText, optionalCellInstant, optionalCellText } from './sheet-values.js';
 
 function json(value: unknown): string {
   return JSON.stringify(value ?? null);
@@ -16,35 +17,21 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
-function text(value: unknown): string {
-  return String(value ?? '');
-}
-
-function optionalText(value: unknown): string | undefined {
-  const result = text(value).trim();
-  return result.length > 0 ? result : undefined;
-}
-
-function number(value: unknown, fallback = 0): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 export const volunteerCodec: SheetCodec<Volunteer> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: Volunteer = {
-      id: text(row.id),
-      name: text(row.name),
-      email: text(row.email),
-      lifecycleStatus: text(row.lifecycleStatus) as Volunteer['lifecycleStatus'],
-      interviewStatus: text(row.interviewStatus) as Volunteer['interviewStatus'],
-      readinessRank: row.readinessRank === '' || row.readinessRank === null || row.readinessRank === undefined ? null : number(row.readinessRank) as Volunteer['readinessRank'],
+      id: cellText(row.id),
+      name: cellText(row.name),
+      email: cellText(row.email),
+      lifecycleStatus: cellText(row.lifecycleStatus) as Volunteer['lifecycleStatus'],
+      interviewStatus: cellText(row.interviewStatus) as Volunteer['interviewStatus'],
+      readinessRank: row.readinessRank === '' || row.readinessRank === null || row.readinessRank === undefined ? null : cellNumber(row.readinessRank) as Volunteer['readinessRank'],
       recurringAvailability: [],
-      revision: number(row.revision),
-      createdAt: text(row.createdAt),
-      updatedAt: text(row.updatedAt)
+      revision: cellNumber(row.revision),
+      createdAt: cellInstant(row.createdAt, context),
+      updatedAt: cellInstant(row.updatedAt, context)
     };
-    const source = optionalText(row.source);
+    const source = optionalCellText(row.source);
     if (source !== undefined) result.source = source;
     return result;
   },
@@ -65,17 +52,17 @@ export const volunteerCodec: SheetCodec<Volunteer> = {
 };
 
 export const recurringAvailabilityCodec: SheetCodec<RecurringAvailabilityRecord> = {
-  fromRow(row) {
+  fromRow(row, context) {
     return {
-      id: text(row.id),
-      volunteerId: text(row.volunteerId),
-      weekday: number(row.weekday) as RecurringAvailabilityRecord['weekday'],
-      start: text(row.start),
-      end: text(row.end),
-      timeZone: text(row.timeZone),
-      revision: number(row.revision),
-      source: optionalText(row.source),
-      updatedAt: optionalText(row.updatedAt)
+      id: cellText(row.id),
+      volunteerId: cellText(row.volunteerId),
+      weekday: cellNumber(row.weekday) as RecurringAvailabilityRecord['weekday'],
+      start: cellClock(row.start, context),
+      end: cellClock(row.end, context),
+      timeZone: cellText(row.timeZone),
+      revision: cellNumber(row.revision),
+      source: optionalCellText(row.source),
+      updatedAt: optionalCellInstant(row.updatedAt, context)
     };
   },
   toRow(value) {
@@ -84,16 +71,16 @@ export const recurringAvailabilityCodec: SheetCodec<RecurringAvailabilityRecord>
 };
 
 export const availabilityExceptionCodec: SheetCodec<AvailabilityException> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: AvailabilityException = {
-      id: text(row.id),
-      volunteerId: text(row.volunteerId),
-      date: text(row.date),
-      kind: text(row.kind) as AvailabilityException['kind'],
-      interval: { start: text(row.start), end: text(row.end), timeZone: text(row.timeZone) },
-      revision: number(row.revision)
+      id: cellText(row.id),
+      volunteerId: cellText(row.volunteerId),
+      date: cellDate(row.date, context),
+      kind: cellText(row.kind) as AvailabilityException['kind'],
+      interval: { start: cellClock(row.start, context), end: cellClock(row.end, context), timeZone: cellText(row.timeZone) },
+      revision: cellNumber(row.revision)
     };
-    const reason = optionalText(row.reason);
+    const reason = optionalCellText(row.reason);
     if (reason !== undefined) result.reason = reason;
     return result;
   },
@@ -113,23 +100,23 @@ export const availabilityExceptionCodec: SheetCodec<AvailabilityException> = {
 };
 
 export const sessionCodec: SheetCodec<Session> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: Session = {
-      id: text(row.id),
-      kind: text(row.kind) as Session['kind'],
-      date: text(row.date),
-      start: text(row.start),
-      end: text(row.end),
-      timeZone: text(row.timeZone),
-      requiredStaffCount: number(row.requiredStaffCount),
-      status: text(row.status) as Session['status'],
-      revision: number(row.revision)
+      id: cellText(row.id),
+      kind: cellText(row.kind) as Session['kind'],
+      date: cellDate(row.date, context),
+      start: cellClock(row.start, context),
+      end: cellClock(row.end, context),
+      timeZone: cellText(row.timeZone),
+      requiredStaffCount: cellNumber(row.requiredStaffCount),
+      status: cellText(row.status) as Session['status'],
+      revision: cellNumber(row.revision)
     };
-    const centerId = optionalText(row.centerId);
-    const title = optionalText(row.title);
-    const sourceCandidateId = optionalText(row.sourceCandidateId);
-    const createdAt = optionalText(row.createdAt);
-    const updatedAt = optionalText(row.updatedAt);
+    const centerId = optionalCellText(row.centerId);
+    const title = optionalCellText(row.title);
+    const sourceCandidateId = optionalCellText(row.sourceCandidateId);
+    const createdAt = optionalCellInstant(row.createdAt, context);
+    const updatedAt = optionalCellInstant(row.updatedAt, context);
     if (centerId !== undefined) result.centerId = centerId;
     if (title !== undefined) result.title = title;
     if (sourceCandidateId !== undefined) result.sourceCandidateId = sourceCandidateId;
@@ -158,17 +145,17 @@ export const sessionCodec: SheetCodec<Session> = {
 };
 
 export const assignmentCodec: SheetCodec<Assignment> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: Assignment = {
-      id: text(row.id),
-      sessionId: text(row.sessionId),
-      volunteerId: text(row.volunteerId),
-      scheduleRevision: number(row.scheduleRevision),
-      status: text(row.status) as Assignment['status'],
-      createdAt: text(row.createdAt)
+      id: cellText(row.id),
+      sessionId: cellText(row.sessionId),
+      volunteerId: cellText(row.volunteerId),
+      scheduleRevision: cellNumber(row.scheduleRevision),
+      status: cellText(row.status) as Assignment['status'],
+      createdAt: cellInstant(row.createdAt, context)
     };
-    const cancelledAt = optionalText(row.cancelledAt);
-    const cancellationReason = optionalText(row.cancellationReason);
+    const cancelledAt = optionalCellInstant(row.cancelledAt, context);
+    const cancellationReason = optionalCellText(row.cancellationReason);
     if (cancelledAt !== undefined) result.cancelledAt = cancelledAt;
     if (cancellationReason !== undefined) result.cancellationReason = cancellationReason;
     return result;
@@ -188,14 +175,14 @@ export const assignmentCodec: SheetCodec<Assignment> = {
 };
 
 export const backupCodec: SheetCodec<Backup> = {
-  fromRow(row) {
+  fromRow(row, context) {
     return {
-      id: text(row.id),
-      sessionId: text(row.sessionId),
-      volunteerId: text(row.volunteerId),
-      scheduleRevision: number(row.scheduleRevision),
-      position: number(row.position),
-      status: text(row.status) as Backup['status']
+      id: cellText(row.id),
+      sessionId: cellText(row.sessionId),
+      volunteerId: cellText(row.volunteerId),
+      scheduleRevision: cellNumber(row.scheduleRevision),
+      position: cellNumber(row.position),
+      status: cellText(row.status) as Backup['status']
     };
   },
   toRow(value) {
@@ -204,19 +191,19 @@ export const backupCodec: SheetCodec<Backup> = {
 };
 
 export const schedulingRunCodec: SheetCodec<SchedulingRun> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: SchedulingRun = {
-      id: text(row.id),
-      inputRevision: number(row.inputRevision),
-      outputRevision: row.outputRevision === '' || row.outputRevision === null || row.outputRevision === undefined ? null : number(row.outputRevision),
-      status: text(row.status) as SchedulingRun['status'],
-      startedAt: text(row.startedAt),
+      id: cellText(row.id),
+      inputRevision: cellNumber(row.inputRevision),
+      outputRevision: row.outputRevision === '' || row.outputRevision === null || row.outputRevision === undefined ? null : cellNumber(row.outputRevision),
+      status: cellText(row.status) as SchedulingRun['status'],
+      startedAt: cellInstant(row.startedAt, context),
       assignmentIds: parseJson<string[]>(row.assignmentIds, []),
       backupIds: parseJson<string[]>(row.backupIds, []),
       shortfalls: parseJson<SchedulingRun['shortfalls']>(row.shortfalls, [])
     };
-    const completedAt = optionalText(row.completedAt);
-    const diagnostic = optionalText(row.diagnostic);
+    const completedAt = optionalCellInstant(row.completedAt, context);
+    const diagnostic = optionalCellText(row.diagnostic);
     if (completedAt !== undefined) result.completedAt = completedAt;
     if (diagnostic !== undefined) result.diagnostic = diagnostic;
     return result;
@@ -238,18 +225,18 @@ export const schedulingRunCodec: SheetCodec<SchedulingRun> = {
 };
 
 export const importedAvailabilityCodec: SheetCodec<ImportedAvailabilityRecord> = {
-  fromRow(row) {
+  fromRow(row, context) {
     return {
-      id: text(row.id),
-      volunteerId: text(row.volunteerId),
-      sourceParticipantId: text(row.sourceParticipantId),
+      id: cellText(row.id),
+      volunteerId: cellText(row.volunteerId),
+      sourceParticipantId: cellText(row.sourceParticipantId),
       source: 'whenisgood',
-      weekday: number(row.weekday) as ImportedAvailabilityRecord['weekday'],
-      start: text(row.start),
-      end: text(row.end),
-      timeZone: text(row.timeZone),
-      importedAt: text(row.importedAt),
-      importRunId: text(row.importRunId)
+      weekday: cellNumber(row.weekday) as ImportedAvailabilityRecord['weekday'],
+      start: cellClock(row.start, context),
+      end: cellClock(row.end, context),
+      timeZone: cellText(row.timeZone),
+      importedAt: cellInstant(row.importedAt, context),
+      importRunId: cellText(row.importRunId)
     };
   },
   toRow(value) {
@@ -260,18 +247,18 @@ export const importedAvailabilityCodec: SheetCodec<ImportedAvailabilityRecord> =
 type StoredIdentityMapping = IdentityMapping & { id: string };
 
 export const identityMappingCodec: SheetCodec<StoredIdentityMapping> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: StoredIdentityMapping = {
-      id: text(row.id),
-      source: text(row.source) as IdentityMapping['source'],
-      volunteerId: text(row.volunteerId),
-      createdAt: text(row.createdAt),
-      updatedAt: text(row.updatedAt),
-      updatedBy: text(row.updatedBy)
+      id: cellText(row.id),
+      source: cellText(row.source) as IdentityMapping['source'],
+      volunteerId: cellText(row.volunteerId),
+      createdAt: cellInstant(row.createdAt, context),
+      updatedAt: cellInstant(row.updatedAt, context),
+      updatedBy: cellText(row.updatedBy)
     };
-    const sourceParticipantId = optionalText(row.sourceParticipantId);
-    const sourceEmail = optionalText(row.sourceEmail);
-    const sourceName = optionalText(row.sourceName);
+    const sourceParticipantId = optionalCellText(row.sourceParticipantId);
+    const sourceEmail = optionalCellText(row.sourceEmail);
+    const sourceName = optionalCellText(row.sourceName);
     if (sourceParticipantId !== undefined) result.sourceParticipantId = sourceParticipantId;
     if (sourceEmail !== undefined) result.sourceEmail = sourceEmail;
     if (sourceName !== undefined) result.sourceName = sourceName;
@@ -293,24 +280,24 @@ export const identityMappingCodec: SheetCodec<StoredIdentityMapping> = {
 };
 
 export const importRunCodec: SheetCodec<ImportRun> = {
-  fromRow(row) {
+  fromRow(row, context) {
     const result: ImportRun = {
-      id: text(row.id),
+      id: cellText(row.id),
       source: 'whenisgood',
-      contentHash: text(row.contentHash),
-      status: text(row.status) as ImportRun['status'],
-      startedAt: text(row.startedAt),
-      actorId: text(row.actorId),
-      participantCount: number(row.participantCount),
-      matchedCount: number(row.matchedCount),
+      contentHash: cellText(row.contentHash),
+      status: cellText(row.status) as ImportRun['status'],
+      startedAt: cellInstant(row.startedAt, context),
+      actorId: cellText(row.actorId),
+      participantCount: cellNumber(row.participantCount),
+      matchedCount: cellNumber(row.matchedCount),
       unmatched: parseJson<ImportRun['unmatched']>(row.unmatched, []),
       stagedAvailability: parseJson<ImportRun['stagedAvailability']>(row.stagedAvailability, [])
     };
-    const completedAt = optionalText(row.completedAt);
-    const resultId = optionalText(row.resultId);
+    const completedAt = optionalCellInstant(row.completedAt, context);
+    const resultId = optionalCellText(row.resultId);
     const diagnostic = parseJson<ImportRun['diagnostic']>(row.diagnostic, undefined);
-    const promotedAt = optionalText(row.promotedAt);
-    const promotedBy = optionalText(row.promotedBy);
+    const promotedAt = optionalCellInstant(row.promotedAt, context);
+    const promotedBy = optionalCellText(row.promotedBy);
     if (completedAt !== undefined) result.completedAt = completedAt;
     if (resultId !== undefined) result.resultId = resultId;
     if (diagnostic !== undefined) result.diagnostic = diagnostic;

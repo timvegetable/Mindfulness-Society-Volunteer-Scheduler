@@ -97,6 +97,11 @@ try {
       report.checks.serverManifestPresent = names;
       report.checks.serverBundlePresent = code;
       if (!names || !code) report.issues.push('Apps Script dist must contain Code.js and appsscript.json');
+      const migrationPayload = await stat(`${args['server-dist']}/MigrationPayload.gs`).then(() => true).catch(() => false);
+      report.checks.noMigrationPayload = !migrationPayload;
+      if (migrationPayload) {
+        report.issues.push('Apps Script dist contains MigrationPayload.gs; delete the migration payload after loading it and rebuild dist before an ordinary deployment');
+      }
     } else {
       report.issues.push('Apps Script dist path is not a directory');
     }

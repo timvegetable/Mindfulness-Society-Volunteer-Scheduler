@@ -7,5 +7,8 @@ dist/
 *.local.json
 .pi/
 .omp/
- migration-output/
- scrubbed_exports/
+# Private migration material: never commit these exports.
+migration-output/
+scrubbed_exports/
+# Generated at deploy time from the private configuration.
+public/config.json

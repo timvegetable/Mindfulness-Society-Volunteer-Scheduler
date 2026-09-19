@@ -1,5 +1,6 @@
 import type { ApiError, Revision } from '../../shared/domain.js';
 import type { SheetLike } from './initializer.js';
+import type { SheetValueContext } from './sheet-values.js';
 
 export type AuditEntry = {
   id: string; entity: string; entityId: string; action: string; source: string; actorId: string;
@@ -107,18 +108,18 @@ export class MemoryRepository<T extends { id: string }> implements RevisionedRep
 }
 
 export type SheetCodec<T extends { id: string }> = {
-  fromRow(row: Record<string, unknown>): T;
+  fromRow(row: Record<string, unknown>, context?: SheetValueContext): T;
   toRow(value: T): Record<string, unknown>;
 };
 
 export class SheetRepository<T extends { id: string }> implements RevisionedRepository<T> {
-  constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore, private readonly auditWriter?: (entry: AuditEntry) => void) {}
+  constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore, private readonly auditWriter?: (entry: AuditEntry) => void, private readonly context: SheetValueContext = {}) {}
 
   list(): T[] {
     const rowCount = this.sheet.getLastRow();
     if (rowCount < 2) return [];
     const values = this.sheet.getRange(2, 1, rowCount - 1, this.headers.length).getValues();
-    return values.map((row) => this.codec.fromRow(this.recordFromRow(row)));
+    return values.map((row) => this.codec.fromRow(this.recordFromRow(row), this.context));
   }
 
   get(id: string): T | undefined {

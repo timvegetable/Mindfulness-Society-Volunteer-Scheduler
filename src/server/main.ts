@@ -3,8 +3,9 @@ import { createAppsScriptAdapters, type AppsScriptAdapterOptions, type AppsScrip
 import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type OperationHandlers, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
 import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
-import { createProductionRuntime } from './runtime.js';
+import { createProductionRuntime, runtimeConfiguration } from './runtime.js';
 import { applyMigrationPayload } from './workbook/loader.js';
+import { cellBoolean, cellNumber, optionalCellText } from './workbook/sheet-values.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
 export type ServerOptions = IntegrationDispatcherOptions & Readonly<{ adapter?: AppsScriptAdapterOptions }>;
 
@@ -54,17 +55,17 @@ export function usersFromSheet(sheet: UserSheetLike): User[] {
   for (const row of values.slice(1)) {
     const record: Record<string, unknown> = {};
     headers.forEach((header, index) => { if (typeof header === 'string') record[header] = row[index]; });
-    const id = optionalField(record.id);
-    const email = optionalField(record.email);
+    const id = optionalCellText(record.id);
+    const email = optionalCellText(record.email);
     if (id === undefined && email === undefined) continue;
-    const volunteerId = optionalField(record.volunteerId);
+    const volunteerId = optionalCellText(record.volunteerId);
     const centerIds = runtimeListField(record.centerIds);
     const parsed = UserSchema.safeParse({
       id,
       email,
       roles: runtimeListField(record.roles),
-      active: String(record.active ?? 'true').toLowerCase() !== 'false',
-      revision: Number(record.revision ?? 0),
+      active: cellBoolean(record.active, true),
+      revision: cellNumber(record.revision),
       ...(volunteerId === undefined ? {} : { volunteerId }),
       ...(Array.isArray(centerIds) && centerIds.length > 0 ? { centerIds } : {})
     });
@@ -72,11 +73,6 @@ export function usersFromSheet(sheet: UserSheetLike): User[] {
     else console.warn(`Users row for ${String(record.email ?? '(no email)')} was ignored: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || '(row)'} ${issue.message}`).join('; ')}`);
   }
   return users;
-}
-
-function optionalField(value: unknown): string | undefined {
-  const text = typeof value === 'string' ? value.trim() : '';
-  return text.length > 0 ? text : undefined;
 }
 
 function runtimeUserDirectory(): UserDirectory {
@@ -223,12 +219,19 @@ export function describeSignIn(): unknown {
   const spreadsheet = activeSpreadsheet();
   const sheet = spreadsheet?.getSheetByName('Users') ?? null;
   const directory = sheet ? usersFromSheet(sheet) : [];
+  const configuration = properties ? runtimeConfiguration(properties) : undefined;
   const report = {
     audienceConfigured: Boolean(properties?.getProperty('OAUTH_AUDIENCE')?.trim()),
     audience: properties?.getProperty('OAUTH_AUDIENCE') || '(missing)',
     audienceMatchesPublicClient: properties?.getProperty('OAUTH_AUDIENCE')?.trim() === properties?.getProperty('PUBLIC_OAUTH_CLIENT_ID')?.trim(),
     writeEnabled: properties?.getProperty('WRITE_ENABLED') === 'true',
-    timeZone: properties?.getProperty('TIME_ZONE') || '(default)',
+    timeZone: configuration?.timeZone ?? '(default)',
+    timeZoneConfigured: Boolean(properties?.getProperty('TIME_ZONE')?.trim()),
+    displayIncrementMinutes: configuration?.incrementMinutes,
+    displayIncrementConfigured: Boolean(properties?.getProperty('DISPLAY_INCREMENT_MINUTES')?.trim()),
+    operatingHoursStart: configuration?.operatingHours.start,
+    operatingHoursEnd: configuration?.operatingHours.end,
+    operatingHoursConfigured: Boolean(properties?.getProperty('OPERATING_HOURS_START')?.trim() && properties?.getProperty('OPERATING_HOURS_END')?.trim()),
     whoIsGoodEndpointConfigured: Boolean(properties?.getProperty('WHENISGOOD_ENDPOINT')?.trim()),
     spreadsheetAvailable: Boolean(spreadsheet),
     usersSheetRows: sheet ? Math.max(0, sheet.getLastRow() - 1) : 0,

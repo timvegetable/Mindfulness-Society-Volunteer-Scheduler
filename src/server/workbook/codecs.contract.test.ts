@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runtimeListField } from '../main.js';
-import { importRunCodec, sessionCodec, volunteerCodec } from './codecs.js';
+import { candidateScheduleCodec } from '../centers/codecs.js';
+import { availabilityExceptionCodec, importRunCodec, recurringAvailabilityCodec, sessionCodec, volunteerCodec } from './codecs.js';
 
 describe('production workbook codecs', () => {
   it('round-trips roster and session rows without losing optional fields', () => {
@@ -61,5 +62,51 @@ describe('production workbook codecs', () => {
   it('loads JSON and comma-separated role fields', () => {
     expect(runtimeListField('["administrator","center-contact"]')).toEqual(['administrator', 'center-contact']);
     expect(runtimeListField('administrator, center-contact')).toEqual(['administrator', 'center-contact']);
+  });
+
+  it('normalizes Sheet Date cells into canonical date, clock, and instant values', () => {
+    const context = { timeZone: 'America/New_York' };
+    const session = sessionCodec.fromRow({
+      id: 'session-dated', kind: 'center', centerId: 'center-1',
+      date: new Date('2026-09-04T04:00:00.000Z'),
+      start: new Date('1899-12-30T14:32:00.000Z'),
+      end: new Date('1899-12-30T22:00:00.000Z'),
+      timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked', revision: 0,
+      createdAt: new Date('2026-09-04T15:30:00.000Z')
+    }, context);
+    expect([session.date, session.start, session.end]).toEqual(['2026-09-04', '09:32', '17:00']);
+    expect(session.createdAt).toBe('2026-09-04T15:30:00.000Z');
+
+    const recurring = recurringAvailabilityCodec.fromRow({
+      id: 'availability-1', volunteerId: 'vol-1', weekday: 5,
+      start: new Date('1899-12-30T14:32:00.000Z'), end: 0.5,
+      timeZone: 'America/New_York', revision: 2
+    }, context);
+    expect([recurring.start, recurring.end]).toEqual(['09:32', '12:00']);
+
+    const exception = availabilityExceptionCodec.fromRow({
+      id: 'exception-1', volunteerId: 'vol-1', date: new Date('2026-09-04T04:00:00.000Z'),
+      kind: 'unavailable', start: '09:32', end: '17:00', timeZone: 'America/New_York', revision: 1
+    }, context);
+    expect(exception.date).toBe('2026-09-04');
+
+    const candidate = candidateScheduleCodec.fromRow({
+      id: 'candidate-1', centerId: 'center-1', weekday: 5,
+      start: new Date('1899-12-30T14:00:00.000Z'), end: new Date('1899-12-30T22:30:00.000Z'),
+      timeZone: 'America/New_York', requestedStaffCount: 2, status: 'confirmed',
+      occurrenceDates: JSON.stringify(['2026-09-04']), createdBy: 'admin-1', revision: 3,
+      createdAt: new Date('2026-08-01T12:00:00.000Z'), updatedAt: new Date('2026-08-02T12:00:00.000Z')
+    }, context);
+    expect([candidate.start, candidate.end, candidate.createdAt, candidate.occurrenceDates]).toEqual([
+      '09:00', '17:30', '2026-08-01T12:00:00.000Z', ['2026-09-04']
+    ]);
+  });
+
+  it('leaves unrecognized Sheet text unchanged so validation rejects it', () => {
+    const session = sessionCodec.fromRow({
+      id: 'session-text', kind: 'center', date: '09/04/2026', start: '9:32 AM', end: '5:00 PM',
+      timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked', revision: 0
+    });
+    expect([session.date, session.start, session.end]).toEqual(['09/04/2026', '9:32 AM', '5:00 PM']);
   });
 });
