@@ -23,13 +23,19 @@ function runtimeProperties(): { getProperty(name: string): string | null; setPro
   return runtime.PropertiesService?.getScriptProperties();
 }
 
+/**
+ * Reads a Users-tab list cell, which the workbook stores as JSON or as a
+ * comma-separated string. Only string entries survive: a stray number or null
+ * would fail UserSchema and silently drop the whole row, locking that account
+ * out, so it is ignored here instead.
+ */
 export function runtimeListField(value: unknown): unknown {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
   if (!trimmed) return [];
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed)) return parsed.filter((item) => typeof item === 'string');
   } catch {
     // Fall back to the workbook's comma-separated representation.
   }

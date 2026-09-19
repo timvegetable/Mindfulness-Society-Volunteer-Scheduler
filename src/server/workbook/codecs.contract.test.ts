@@ -62,6 +62,9 @@ describe('production workbook codecs', () => {
   it('loads JSON and comma-separated role fields', () => {
     expect(runtimeListField('["administrator","center-contact"]')).toEqual(['administrator', 'center-contact']);
     expect(runtimeListField('administrator, center-contact')).toEqual(['administrator', 'center-contact']);
+    // A hand-edited cell with a stray entry must not drop the whole user row.
+    expect(runtimeListField('["volunteer", 42, null]')).toEqual(['volunteer']);
+    expect(runtimeListField('')).toEqual([]);
   });
 
   it('normalizes Sheet Date cells into canonical date, clock, and instant values', () => {
