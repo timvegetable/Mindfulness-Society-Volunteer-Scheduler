@@ -1,3 +1,5 @@
+export { CacheInsightRepository } from './cache-repository.js';
+export type { CacheInsightRepositoryOptions, ScriptCache } from './cache-repository.js';
 export { deriveLeftoverVolunteers } from './derivation.js';
 export type { LeftoverDerivationInput } from './derivation.js';
 export { calculateOverlapCells, DEFAULT_INSIGHT_CONFIG } from './overlap.js';
