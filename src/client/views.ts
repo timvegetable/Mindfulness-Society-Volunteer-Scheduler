@@ -1,3 +1,13 @@
+import {
+  actionFailureMessage,
+  candidateStateLabel,
+  formatDate,
+  formatInstant,
+  formatRange,
+  futureAssignments,
+  sessionLabel
+} from './format';
+
 export type ViewRole = 'volunteer' | 'administrator' | 'center-contact';
 
 export interface AvailabilityInterval {
@@ -102,7 +112,7 @@ export interface ImportRunData {
   unmatchedCount?: number;
   diagnostics?: string[];
   preview?: Array<{ name?: string; email?: string; status?: string; sourceParticipantId?: string }>;
-  availabilityPreview?: Array<{ volunteerId?: string; volunteerName?: string; intervals?: Array<{ weekday?: number; start?: string; end?: string }> }>;
+  availabilityPreview?: Array<{ volunteerId?: string; volunteerName?: string; intervals?: Array<{ weekday?: number; start: string; end: string }> }>;
   mappingOptions?: Array<{ volunteerId?: string; name?: string; email?: string; lifecycleStatus?: string }>;
   revision?: number | string;
   canPromote?: boolean;
@@ -231,7 +241,7 @@ function statusNode(documentRef: Document, message = ''): HTMLParagraphElement {
 }
 
 function announceFailure(status: HTMLElement, error: unknown): void {
-  status.textContent = error instanceof Error ? error.message : 'The action could not be completed.';
+  status.textContent = actionFailureMessage(error);
   status.classList.add('error-text');
 }
 
@@ -264,17 +274,17 @@ function revisionLabel(documentRef: Document, revision: number | string | undefi
 }
 
 function intervalText(interval: AvailabilityInterval): string {
-  return `${WEEKDAY_LABELS[interval.weekday] ?? `Day ${interval.weekday}`} ${interval.start}–${interval.end}`;
+  return `${WEEKDAY_LABELS[interval.weekday] ?? `Day ${interval.weekday}`} ${formatRange(interval.start, interval.end)}`;
 }
 
 function exceptionText(exception: AvailabilityException): string {
   const type = exception.kind === 'available' ? 'available' : 'unavailable';
-  return `${exception.date} ${exception.start}–${exception.end} (${type})`;
+  return `${formatDate(exception.date)} ${formatRange(exception.start, exception.end)} (${type})`;
 }
 
 function assignmentText(assignment: VolunteerAssignment): string {
   const place = assignment.center ? ` at ${assignment.center}` : '';
-  return `${assignment.date} ${assignment.start}–${assignment.end}${place}`;
+  return `${formatDate(assignment.date)} ${formatRange(assignment.start, assignment.end)}${place}`;
 }
 
 function weekdayOptions(documentRef: Document, includeWeekend = true): HTMLSelectElement {
@@ -444,13 +454,15 @@ export function renderVolunteerDashboard(
 
   const assignmentSection = createElement(documentRef, 'section', 'panel');
   assignmentSection.append(heading(documentRef, 3, 'Future assignments'));
-  if (data.assignments.length === 0) {
+  // A cancelled occurrence is history, not a session the volunteer still owes.
+  const assignments = futureAssignments(data.assignments);
+  if (assignments.length === 0) {
     const empty = createElement(documentRef, 'p');
     empty.textContent = 'You have no future assignments.';
     assignmentSection.append(empty);
   } else {
     const list = createElement(documentRef, 'div', 'assignment-list');
-    for (const assignment of data.assignments) {
+    for (const assignment of assignments) {
       const item = createElement(documentRef, 'article', 'assignment-card');
       const title = createElement(documentRef, 'h4');
       title.textContent = assignmentText(assignment);
@@ -479,8 +491,8 @@ export function renderVolunteerDashboard(
 }
 
 function scheduleSessionText(session: ScheduleSession): string {
-  const label = session.displayName ?? session.center ?? (session.kind === 'univ100' ? 'UNIV100 class' : undefined);
-  return `${session.date} ${session.start}–${session.end}${label ? ` — ${label}` : ''}`;
+  const label = sessionLabel(session);
+  return `${formatDate(session.date)} ${formatRange(session.start, session.end)}${label ? ` — ${label}` : ''}`;
 }
 
 export function renderAdminSchedule(
@@ -736,7 +748,7 @@ export function renderAdminImport(
       const intervals = entry.intervals ?? [];
       intervalCell.textContent = intervals.length === 0
         ? 'None'
-        : intervals.map((interval) => `${WEEKDAY_LABELS[interval.weekday ?? 0] ?? `Day ${interval.weekday}`} ${interval.start}–${interval.end}`).join(', ');
+        : intervals.map((interval) => `${WEEKDAY_LABELS[interval.weekday ?? 0] ?? `Day ${interval.weekday}`} ${formatRange(interval.start, interval.end)}`).join(', ');
       entryRow.append(nameCell, intervalCell);
       tbody.append(entryRow);
     }
@@ -751,7 +763,7 @@ function cellStart(cell: InsightCell): number {
 }
 
 function insightCellLabel(cell: InsightCell): string {
-  return `${WEEKDAY_LABELS[cell.weekday] ?? `Day ${cell.weekday}`} ${cell.start}–${cell.end}, ${cell.count} volunteer${cell.count === 1 ? '' : 's'}`;
+  return `${WEEKDAY_LABELS[cell.weekday] ?? `Day ${cell.weekday}`} ${formatRange(cell.start, cell.end)}, ${cell.count} volunteer${cell.count === 1 ? '' : 's'}`;
 }
 
 export function renderAdminInsights(
@@ -782,7 +794,7 @@ export function renderAdminInsights(
   if (revision) container.append(revision);
   if (data.generatedAt) {
     const generated = createElement(documentRef, 'p', 'muted');
-    generated.textContent = `Generated ${data.generatedAt}`;
+    generated.textContent = `Generated ${formatInstant(data.generatedAt)}`;
     container.append(generated);
   }
 
@@ -823,7 +835,7 @@ export function renderAdminInsights(
       const row = createElement(documentRef, 'tr');
       const windowCell = createElement(documentRef, 'th');
       windowCell.scope = 'row';
-      windowCell.textContent = `${WEEKDAY_LABELS[cellData.weekday] ?? `Day ${cellData.weekday}`} ${cellData.start}–${cellData.end}`;
+      windowCell.textContent = `${WEEKDAY_LABELS[cellData.weekday] ?? `Day ${cellData.weekday}`} ${formatRange(cellData.start, cellData.end)}`;
       const countCell = createElement(documentRef, 'td');
       countCell.textContent = String(cellData.count);
       const namesCell = createElement(documentRef, 'td');
@@ -865,7 +877,7 @@ export function renderAdminInsights(
       column.append(empty);
     }
     for (const cellData of dayCells) {
-      const cellButton = button(documentRef, `${cellData.start}–${cellData.end}: ${cellData.count}`, 'button', 'heatmap-cell');
+      const cellButton = button(documentRef, `${formatRange(cellData.start, cellData.end)}: ${cellData.count}`, 'button', 'heatmap-cell');
       cellButton.setAttribute('role', 'gridcell');
       cellButton.setAttribute('aria-label', insightCellLabel(cellData));
       cellButton.setAttribute('aria-pressed', 'false');
@@ -977,7 +989,7 @@ export function renderCenterSchedule(
       const row = createElement(documentRef, 'tr');
       const interval = createElement(documentRef, 'th');
       interval.scope = 'row';
-      interval.textContent = `${WEEKDAY_LABELS[candidate.weekday] ?? `Day ${candidate.weekday}`} ${candidate.start}–${candidate.end}`;
+      interval.textContent = `${WEEKDAY_LABELS[candidate.weekday] ?? `Day ${candidate.weekday}`} ${formatRange(candidate.start, candidate.end)}`;
       const requested = createElement(documentRef, 'td');
       requested.textContent = String(candidate.requestedStaffCount);
       const coverage = createElement(documentRef, 'td');
@@ -986,7 +998,7 @@ export function renderCenterSchedule(
         coverage.append(documentRef.createTextNode(` — ${candidate.volunteerNames.join(', ')}`));
       }
       const state = createElement(documentRef, 'td');
-      state.textContent = candidate.status ?? (candidate.coverageCount !== undefined && candidate.coverageCount >= candidate.requestedStaffCount ? 'Candidate coverage' : 'Coverage shortfall');
+      state.textContent = candidateStateLabel(candidate.status) ?? (candidate.coverageCount !== undefined && candidate.coverageCount >= candidate.requestedStaffCount ? 'Candidate coverage' : 'Coverage shortfall');
       const actionCell = createElement(documentRef, 'td');
       const candidateId = candidate.id;
       if (candidateId) {

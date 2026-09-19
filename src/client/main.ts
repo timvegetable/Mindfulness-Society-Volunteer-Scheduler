@@ -1,6 +1,7 @@
 import '../styles.css';
 import { ApiClient, ApiClientError, type IdentityData } from './api';
 import { IdentityController, type IdentityState } from './identity';
+import { RouteLoader } from './route-loader';
 import {
   renderAdminImport,
   renderAdminInsights,
@@ -16,8 +17,7 @@ import {
   type CenterScheduleData,
   type InsightsData,
   type ImportRunData,
-  type VolunteerDashboardData,
-  type ViewRole
+  type VolunteerDashboardData
 } from './views';
 
 export interface ClientConfig {
@@ -38,16 +38,37 @@ const ROUTES = {
 
 type Route = (typeof ROUTES)[keyof typeof ROUTES][number];
 
+/** Everything a route paints, tagged so one loader can cache every route. */
+type RoutePayload =
+  | { route: 'dashboard'; dashboard: VolunteerDashboardData }
+  | { route: 'schedule'; schedule: AdminScheduleData }
+  | { route: 'import'; importRun: ImportRunData }
+  | { route: 'insights'; insights: InsightsData }
+  | { route: 'centers'; center: CenterScheduleData };
+
+/**
+ * Only routes whose load is a pure read are measured. The import section writes a
+ * staged run when it previews, so it is not a read-only load.
+ */
+const MEASURED_ROUTES: Record<Route, boolean> = {
+  dashboard: true,
+  schedule: true,
+  import: false,
+  insights: true,
+  centers: true
+};
+
 interface Runtime {
   document: Document;
   app: HTMLElement;
+  routeStatus: HTMLElement | null;
   identityHost: HTMLElement | null;
   config: ClientConfig;
   api: ApiClient;
   identity: IdentityController;
+  loader: RouteLoader<RoutePayload>;
   profile?: IdentityData;
   route: Route;
-  rendering: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -101,7 +122,7 @@ function parseException(value: unknown): AvailabilityException | undefined {
   return exception;
 }
 
-function parseDashboard(value: unknown): VolunteerDashboardData {
+export function parseDashboard(value: unknown): VolunteerDashboardData {
   const data = isRecord(value) ? value : {};
   const volunteer = isRecord(data.volunteer) ? data.volunteer : data;
   const recurringSource = data.recurringAvailability ?? volunteer.recurringAvailability;
@@ -138,12 +159,14 @@ function parseDashboard(value: unknown): VolunteerDashboardData {
     recurringAvailability,
     exceptions,
     assignments,
-    revision: parseRevision(volunteer.revision ?? data.revision),
+    // Mutations send this global revision and the server rejects a stale one, so a
+    // volunteer- or tab-scoped revision is never used as the concurrency token.
+    revision: parseRevision(data.revision),
     stale: data.stale === true
   };
 }
 
-function parseSchedule(value: unknown): AdminScheduleData {
+export function parseSchedule(value: unknown): AdminScheduleData {
   const data = isRecord(value) ? value : {};
   const sessions = arrayValue(data.sessions).flatMap((item) => {
     if (!isRecord(item)) return [];
@@ -205,7 +228,7 @@ function parseSchedule(value: unknown): AdminScheduleData {
   };
 }
 
-function parseImport(value: unknown): ImportRunData {
+export function parseImport(value: unknown): ImportRunData {
   const data = isRecord(value) ? value : {};
   const preview = arrayValue(data.preview).flatMap((item) => {
     if (!isRecord(item)) return [];
@@ -261,7 +284,7 @@ function parseImport(value: unknown): ImportRunData {
   };
 }
 
-function parseInsights(value: unknown): InsightsData {
+export function parseInsights(value: unknown): InsightsData {
   const data = isRecord(value) ? value : {};
   const cells = arrayValue(data.cells).flatMap((item) => {
     if (!isRecord(item)) return [];
@@ -281,7 +304,7 @@ function parseInsights(value: unknown): InsightsData {
   return { cells, revision: parseRevision(data.revision), stale: data.stale === true, generatedAt: stringValue(data.generatedAt) };
 }
 
-function parseCenter(value: unknown): CenterScheduleData {
+export function parseCenter(value: unknown): CenterScheduleData {
   const data = isRecord(value) ? value : {};
   const candidates = arrayValue(data.candidates).flatMap((item) => {
     if (!isRecord(item)) return [];
@@ -377,112 +400,183 @@ function renderError(runtime: Runtime, message: string): void {
   renderUnauthorized(runtime.app, message, runtime.document);
 }
 
-async function loadRoute(runtime: Runtime): Promise<void> {
-  if (!runtime.profile || runtime.rendering) return;
-  runtime.rendering = true;
-  renderNavigation(runtime);
+/**
+ * Announces progress or failure without ever naming an account, an identifier,
+ * or payload content.
+ */
+function setRouteStatus(runtime: Runtime, message: string): void {
+  if (runtime.routeStatus) runtime.routeStatus.textContent = message;
+}
+
+/**
+ * Runs one fresh route read. Only the route name reaches the measurement, so a
+ * performance entry can never carry a payload, account, or credential.
+ */
+async function requestRoute(runtime: Runtime, route: Route, credential: string): Promise<RoutePayload> {
+  const performanceApi = MEASURED_ROUTES[route] ? globalThis.performance : undefined;
+  const label = `route-load:${route}`;
+  const start = `${label}:start`;
+  performanceApi?.mark(start);
   try {
-    const credential = runtime.identity.getCredential();
-    if (!credential) {
-      renderError(runtime, 'Your sign-in session has ended. Please sign in again.');
-      return;
-    }
-    if (runtime.profile.role === 'volunteer') {
-      const dashboard = parseDashboard(await runtime.api.volunteerDashboard(credential));
-      renderVolunteerDashboard(runtime.app, dashboard, {
-        onRecurringUpdate: async (intervals, expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-          await runtime.api.updateRecurringAvailability(intervals, expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        },
-        onExceptionCreate: async (exception, expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-          await runtime.api.createAvailabilityException(exception, expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        },
-        onAssignmentCancel: async (assignmentId, reason, expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-          await runtime.api.cancelAssignment(assignmentId, reason, expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        }
-      }, runtime.document);
-    } else if (runtime.profile.role === 'administrator' && runtime.route === 'schedule') {
-      const schedule = parseSchedule(await runtime.api.schedule(credential));
-      renderAdminSchedule(runtime.app, schedule, {
-        onPreview: async () => {
-          renderAdminSchedule(runtime.app, parseSchedule(await runtime.api.previewSchedule(credential)), {}, runtime.document);
-        },
-        onPublish: async (expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-          await runtime.api.rerunSchedule(expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        }
-      }, runtime.document);
-    } else if (runtime.profile.role === 'administrator' && runtime.route === 'import') {
-      const renderImport = (importData: ImportRunData): void => {
-        const actions: AdminImportActions = {
-          onPreview: async (resultsCode) => renderImport(parseImport(await runtime.api.importPreview(resultsCode, credential))),
-          onPromote: async (resultsCode, expectedRevision) => {
-            if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
-            await runtime.api.importPromote(resultsCode, expectedRevision, credential);
-            await loadRouteAfterAction(runtime);
-          },
-          // The server saves the mapping and re-matches the staged import, so the
-          // refreshed preview normally arrives with the response. Fall back to a
-          // plain preview when there was nothing left to re-match.
-          onMap: async (source, volunteerId) => {
-            if (importData.revision === undefined) throw new Error('Preview the import before reconciling participants.');
-            const response = await runtime.api.importMappingUpsert({ ...source, volunteerId }, importData.revision, credential);
-            const refreshed = isRecord(response) ? response.import : undefined;
-            if (isRecord(refreshed)) {
-              renderImport(parseImport(refreshed));
-              return;
-            }
-            if (importData.resultsCode) {
-              renderImport(parseImport(await runtime.api.importPreview(importData.resultsCode, credential)));
-              return;
-            }
-            renderImport(importData);
-          }
-        };
-        renderAdminImport(runtime.app, importData, actions, importData.revision, runtime.document);
-      };
-      renderImport({});
-    } else if (runtime.profile.role === 'administrator' && runtime.route === 'insights') {
-      const insights = parseInsights(await runtime.api.insights(credential));
-      renderAdminInsights(runtime.app, insights, {
-        onRefresh: async (expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-          await runtime.api.refreshInsights(expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        }
-      }, true, runtime.document);
-    } else if ((runtime.profile.role === 'administrator' || runtime.profile.role === 'center-contact') && runtime.route === 'centers') {
-      const centerData = parseCenter(await runtime.api.centerCandidate(credential));
-      renderCenterSchedule(runtime.app, centerData, runtime.profile.role as ViewRole, {
-        onCandidateUpdate: async (candidate, expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-          await runtime.api.updateCenterCandidate(candidate, expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        },
-        onCandidateConfirm: runtime.profile.role === 'administrator' ? async (candidateId, expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-          await runtime.api.confirmCenterCandidate(candidateId, expectedRevision, credential);
-          await loadRouteAfterAction(runtime);
-        } : undefined
-      }, runtime.document);
-    }
-  } catch (error) {
-    const message = error instanceof ApiClientError && error.code === 'service_unavailable' ? 'The scheduling service is not configured for this deployment.' : 'We could not load this section. Please try again.';
-    renderError(runtime, message);
+    return await readRoute(runtime, route, credential);
   } finally {
-    runtime.rendering = false;
+    if (performanceApi) {
+      performanceApi.measure(label, start);
+      performanceApi.clearMarks(start);
+    }
   }
 }
 
-async function loadRouteAfterAction(runtime: Runtime): Promise<void> {
-  runtime.rendering = false;
-  await loadRoute(runtime);
+async function readRoute(runtime: Runtime, route: Route, credential: string): Promise<RoutePayload> {
+  if (route === 'dashboard') return { route, dashboard: parseDashboard(await runtime.api.volunteerDashboard(credential)) };
+  if (route === 'schedule') return { route, schedule: parseSchedule(await runtime.api.schedule(credential)) };
+  if (route === 'insights') return { route, insights: parseInsights(await runtime.api.insights(credential)) };
+  if (route === 'centers') return { route, center: parseCenter(await runtime.api.centerCandidate(credential)) };
+  // The import section is a form: nothing is read from the service until an
+  // administrator submits a results code, so this route has no fresh read.
+  return { route: 'import', importRun: {} };
+}
+
+function paintRoute(runtime: Runtime, payload: RoutePayload, credential: string): void {
+  const documentRef = runtime.document;
+  // A successful mutation makes the active route's snapshot obsolete, so the
+  // route is reloaded from a fresh read instead of the cached response.
+  const afterMutation = async (): Promise<void> => {
+    runtime.loader.invalidate(runtime.route);
+    await loadRoute(runtime);
+  };
+  if (payload.route === 'dashboard') {
+    renderVolunteerDashboard(runtime.app, payload.dashboard, {
+      onRecurringUpdate: async (intervals, expectedRevision) => {
+        if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+        await runtime.api.updateRecurringAvailability(intervals, expectedRevision, credential);
+        await afterMutation();
+      },
+      onExceptionCreate: async (exception, expectedRevision) => {
+        if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+        await runtime.api.createAvailabilityException(exception, expectedRevision, credential);
+        await afterMutation();
+      },
+      onAssignmentCancel: async (assignmentId, reason, expectedRevision) => {
+        if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+        await runtime.api.cancelAssignment(assignmentId, reason, expectedRevision, credential);
+        await afterMutation();
+      }
+    }, documentRef);
+    return;
+  }
+  if (payload.route === 'schedule') {
+    renderAdminSchedule(runtime.app, payload.schedule, {
+      onPreview: async () => {
+        renderAdminSchedule(runtime.app, parseSchedule(await runtime.api.previewSchedule(credential)), {}, documentRef);
+      },
+      onPublish: async (expectedRevision) => {
+        if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+        await runtime.api.rerunSchedule(expectedRevision, credential);
+        await afterMutation();
+      }
+    }, documentRef);
+    return;
+  }
+  if (payload.route === 'import') {
+    const renderImport = (importData: ImportRunData): void => {
+      const actions: AdminImportActions = {
+        onPreview: async (resultsCode) => renderImport(parseImport(await runtime.api.importPreview(resultsCode, credential))),
+        onPromote: async (resultsCode, expectedRevision) => {
+          if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
+          await runtime.api.importPromote(resultsCode, expectedRevision, credential);
+          await afterMutation();
+        },
+        // The server saves the mapping and re-matches the staged import, so the
+        // refreshed preview normally arrives with the response. Fall back to a
+        // plain preview when there was nothing left to re-match.
+        onMap: async (source, volunteerId) => {
+          if (importData.revision === undefined) throw new Error('Preview the import before reconciling participants.');
+          const response = await runtime.api.importMappingUpsert({ ...source, volunteerId }, importData.revision, credential);
+          const refreshed = isRecord(response) ? response.import : undefined;
+          if (isRecord(refreshed)) {
+            renderImport(parseImport(refreshed));
+            return;
+          }
+          if (importData.resultsCode) {
+            renderImport(parseImport(await runtime.api.importPreview(importData.resultsCode, credential)));
+            return;
+          }
+          renderImport(importData);
+        }
+      };
+      renderAdminImport(runtime.app, importData, actions, importData.revision, documentRef);
+    };
+    renderImport(payload.importRun);
+    return;
+  }
+  if (payload.route === 'insights') {
+    renderAdminInsights(runtime.app, payload.insights, {
+      onRefresh: async (expectedRevision) => {
+        if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+        await runtime.api.refreshInsights(expectedRevision, credential);
+        await afterMutation();
+      }
+    }, true, documentRef);
+    return;
+  }
+  const role = runtime.profile?.role;
+  if (role !== 'administrator' && role !== 'center-contact') return;
+  renderCenterSchedule(runtime.app, payload.center, role, {
+    onCandidateUpdate: async (candidate, expectedRevision) => {
+      if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+      await runtime.api.updateCenterCandidate(candidate, expectedRevision, credential);
+      await afterMutation();
+    },
+    onCandidateConfirm: role === 'administrator' ? async (candidateId, expectedRevision) => {
+      if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+      await runtime.api.confirmCenterCandidate(candidateId, expectedRevision, credential);
+      await afterMutation();
+    } : undefined
+  }, documentRef);
+}
+
+/**
+ * Paints the cached snapshot for the route immediately when one exists, then
+ * confirms it with a fresh read. A failed refresh keeps the displayed data; a
+ * failed first load uses the existing error surface instead.
+ */
+async function loadRoute(runtime: Runtime): Promise<void> {
+  const route = runtime.route;
+  renderNavigation(runtime);
+  if (!runtime.profile) return;
+  const credential = runtime.identity.getCredential();
+  if (!credential) {
+    renderError(runtime, 'Your sign-in session has ended. Please sign in again.');
+    return;
+  }
+  const cached = runtime.loader.cached(route);
+  let failure: unknown;
+  try {
+    if (cached) {
+      paintRoute(runtime, cached, credential);
+      setRouteStatus(runtime, 'Showing saved data while we check for updates…');
+    } else {
+      setRouteStatus(runtime, 'Loading…');
+    }
+    const result = await runtime.loader.load(route);
+    if (runtime.route !== route || result.status === 'discarded') return;
+    if (result.status === 'fresh') {
+      paintRoute(runtime, result.data, credential);
+      setRouteStatus(runtime, '');
+      return;
+    }
+    failure = result.error;
+  } catch (error) {
+    failure = error;
+  }
+  if (cached) {
+    setRouteStatus(runtime, 'We could not refresh this section. Showing the last loaded data.');
+    return;
+  }
+  renderError(runtime, failure instanceof ApiClientError && failure.code === 'service_unavailable'
+    ? 'The scheduling service is not configured for this deployment.'
+    : 'We could not load this section. Please try again.');
 }
 
 function chooseRoute(runtime: Runtime): void {
@@ -508,14 +602,26 @@ export async function boot(documentRef: Document = globalThis.document): Promise
     api = new ApiClient();
   }
   const identity = new IdentityController(api, { oauthClientId: config.oauthClientId, buttonParent: identityHost ?? undefined });
-  const runtime: Runtime = { document: documentRef, app, identityHost, config, api, identity, route: 'dashboard', rendering: false };
+  const loader = new RouteLoader<RoutePayload>({
+    read: (request) => {
+      const credential = runtime.identity.getCredential();
+      if (!credential) throw new Error('The sign-in session ended before this section could be read.');
+      return requestRoute(runtime, request.route as Route, credential);
+    }
+  });
+  const runtime: Runtime = { document: documentRef, app, routeStatus: documentRef.getElementById('route-status'), identityHost, config, api, identity, loader, route: 'dashboard' };
   identity.subscribe((state) => {
     if (identityHost) setIdentityText(identityHost, state, documentRef, () => identity.signOut());
     if (state.status === 'authenticated') {
       runtime.profile = state.profile;
+      // Snapshots are scoped to the authenticated email and role, so a different
+      // account, a different role, or a sign-out discards every one of them.
+      runtime.loader.setIdentity({ email: state.profile.email, role: state.profile.role });
       chooseRoute(runtime);
     } else if (state.status === 'signed-out' || state.status === 'unavailable') {
       runtime.profile = undefined;
+      runtime.loader.setIdentity(undefined);
+      setRouteStatus(runtime, '');
       renderNavigation(runtime);
       renderError(runtime, state.message ?? 'Sign in with an authorized Google account to continue.');
     }
