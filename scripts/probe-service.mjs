@@ -44,6 +44,43 @@ const args = (() => {
   }
 })();
 
+const PROBE_CREDENTIAL = 'probe-not-a-real-credential';
+
+/**
+ * Sends one unauthenticated, non-mutating request and returns the answered body.
+ * Apps Script answers a POST through its echo endpoint, so the redirect is
+ * followed here exactly as the browser does.
+ */
+async function postProbe(url, operation, idempotencyKey) {
+  const response = await fetch(url, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8', Accept: 'application/json' },
+    body: JSON.stringify({ operation, payload: {}, idempotencyKey, credential: PROBE_CREDENTIAL })
+  });
+  const location = response.headers.get('location') ?? '';
+  if (response.status >= 300 && response.status < 400 && location.includes('script.googleusercontent.com/macros/echo')) {
+    const echo = await fetch(location, { headers: { Origin: new URL(url).origin } });
+    return await echo.text();
+  }
+  return await response.text();
+}
+
+/**
+ * Identifies which bundle the pinned deployment serves, without a credential:
+ * an operation added by the current change is unknown to the previous bundle
+ * (rejected before authentication) and credential-checked by the current one.
+ */
+async function probeDeploymentBundle(url) {
+  const text = await postProbe(url, 'admin.schedule.preview', 'deployment-bundle-probe-0001');
+  const error = JSON.parse(text)?.error;
+  const code = typeof error?.code === 'string' ? error.code : undefined;
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (code === 'UNAUTHORIZED' || code === 'FORBIDDEN') return 'current';
+  if (code === 'INVALID_REQUEST' && message.includes('not available')) return 'previous';
+  return 'unknown';
+}
+
 let url = args.url;
 if (!url && args.config) {
   const config = await readJsonFile(args.config).catch((error) => {
@@ -128,5 +165,15 @@ if (response) {
         : `Unexpected envelope: ${text.slice(0, 200)}`);
       process.exitCode = code === 'UNAUTHORIZED' || code === 'FORBIDDEN' || code === 'ok' ? 0 : 1;
     }
+  }
+}
+if (response && !process.exitCode) {
+  const bundle = await probeDeploymentBundle(url).catch(() => 'unknown');
+  if (bundle === 'current') {
+    console.log('deployment bundle: current — admin.schedule.preview is known and the probe credential was rejected.');
+  } else if (bundle === 'previous') {
+    console.log('deployment bundle: previous — admin.schedule.preview is unknown, so deploy the current dist/apps-script before verifying the new flows.');
+  } else {
+    console.log('deployment bundle: could not be identified from an unauthenticated probe.');
   }
 }
