@@ -25,6 +25,8 @@ export type SheetLike = {
 export type SpreadsheetLike = {
   getSheetByName(name: string): SheetLike | null;
   insertSheet(name: string): SheetLike;
+  /** Zone the spreadsheet anchors date and time cells to; absent on stand-ins that do not model it. */
+  getSpreadsheetTimeZone?(): string;
 };
 
 export type InitializationResult = {

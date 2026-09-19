@@ -245,6 +245,7 @@ export function describeSignIn(): unknown {
   const sheet = spreadsheet?.getSheetByName('Users') ?? null;
   const directory = sheet ? usersFromSheet(sheet) : [];
   const configuration = properties ? runtimeConfiguration(properties) : undefined;
+  const workbookTimeZone = spreadsheet?.getSpreadsheetTimeZone?.().trim();
   const report = {
     audienceConfigured: Boolean(properties?.getProperty('OAUTH_AUDIENCE')?.trim()),
     audience: properties?.getProperty('OAUTH_AUDIENCE') || '(missing)',
@@ -252,6 +253,10 @@ export function describeSignIn(): unknown {
     writeEnabled: properties?.getProperty('WRITE_ENABLED') === 'true',
     timeZone: configuration?.timeZone ?? '(default)',
     timeZoneConfigured: Boolean(properties?.getProperty('TIME_ZONE')?.trim()),
+    // Date and time cells are decoded in the spreadsheet's zone; a mismatch with
+    // TIME_ZONE is worth seeing here because it is invisible in the workbook.
+    workbookTimeZone: workbookTimeZone || '(unavailable)',
+    workbookTimeZoneMatchesConfigured: Boolean(workbookTimeZone) && workbookTimeZone === (configuration?.timeZone ?? ''),
     displayIncrementMinutes: configuration?.incrementMinutes,
     displayIncrementConfigured: Boolean(properties?.getProperty('DISPLAY_INCREMENT_MINUTES')?.trim()),
     operatingHoursStart: configuration?.operatingHours.start,

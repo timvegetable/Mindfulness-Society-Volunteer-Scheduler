@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Temporal } from '@js-temporal/polyfill';
 import { runtimeListField } from '../main.js';
 import { candidateScheduleCodec } from '../centers/codecs.js';
 import { availabilityExceptionCodec, importRunCodec, recurringAvailabilityCodec, sessionCodec, volunteerCodec } from './codecs.js';
@@ -20,6 +21,23 @@ describe('production workbook codecs', () => {
     });
     expect(session).toMatchObject({ id: 'session-1', centerId: 'center-1', sourceCandidateId: 'candidate-1' });
     expect(sessionCodec.toRow(session)).toMatchObject({ timeZone: 'America/New_York', requiredStaffCount: 2 });
+  });
+
+  // Sheets anchors a time-only cell to 1899-12-30 in the spreadsheet's zone, and
+  // that date predates standard time, so decoding in a different zone shifts the
+  // clock by a local-mean-time offset: Detroit's -05:32:11 reads as 09:32 in New
+  // York. Decoding must therefore use the workbook zone.
+  it('decodes a time-only cell in the workbook zone it was anchored in', () => {
+    const detroit = (hour: number, minute: number) =>
+      new Date(Temporal.ZonedDateTime.from({ timeZone: 'America/Detroit', year: 1899, month: 12, day: 30, hour, minute }).epochMilliseconds);
+
+    const session = sessionCodec.fromRow(
+      { id: 'session-1', kind: 'center', centerId: 'center-1', title: 'Center session', date: '2026-09-04', start: detroit(9, 0), end: detroit(9, 45), timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked', revision: 0 },
+      { timeZone: 'America/Detroit' }
+    );
+    expect(session).toMatchObject({ date: '2026-09-04', start: '09:00', end: '09:45' });
+    // The same cell read in the configured zone is where the 32-minute drift came from.
+    expect(sessionCodec.fromRow({ ...sessionCodec.toRow(session), start: detroit(9, 0), end: detroit(9, 45) }, { timeZone: 'America/New_York' })).toMatchObject({ start: '09:32', end: '10:17' });
   });
 
   it('preserves Sessions tab audit stamps and optional identifiers across a round-trip', () => {

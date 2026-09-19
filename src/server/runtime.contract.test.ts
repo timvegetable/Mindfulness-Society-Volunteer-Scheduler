@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Temporal } from '@js-temporal/polyfill';
 import { INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationOperation } from './integration/dispatcher.js';
 import { createProductionRuntime, repositories, runtimeConfiguration } from './runtime.js';
 import { InMemoryProperties, InMemorySpreadsheet } from './workbook/in-memory-sheet.js';
@@ -136,6 +137,25 @@ describe('production Apps Script runtime', () => {
       if (previousFetch === undefined) delete (globalThis as { UrlFetchApp?: unknown }).UrlFetchApp;
       else runtimeGlobal.UrlFetchApp = previousFetch;
     }
+  });
+
+  // Sheets anchors a time-only cell to 1899-12-30 in the spreadsheet's own zone,
+  // and that date predates standard time, so decoding in the configured zone
+  // shifted every session by a local-mean-time offset (a Detroit workbook read
+  // as New York turned the 09:00 OPAL session into 09:32).
+  it('reads workbook clocks in the workbook time zone, not the configured zone', () => {
+    const spreadsheet = new InMemorySpreadsheet('America/Detroit');
+    const properties = new InMemoryProperties();
+    properties.setProperty('TIME_ZONE', 'America/New_York');
+    const detroit = (hour: number, minute: number) =>
+      new Date(Temporal.ZonedDateTime.from({ timeZone: 'America/Detroit', year: 1899, month: 12, day: 30, hour, minute }).epochMilliseconds);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session: OPAL Senior Center', '2026-09-04', detroit(9, 0), detroit(9, 45), 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+
+    const runtime = createProductionRuntime(spreadsheet, properties);
+    const context: HandlerContext = { actor: actor as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.adminSchedule, idempotencyKey: 'workbook-zone', now: '2026-09-19T00:00:00.000Z' };
+    const schedule = runtime.handlers[INTEGRATION_OPERATIONS.adminSchedule]?.(context, {}) as { sessions: Array<{ start: string; end: string }> };
+
+    expect(schedule.sessions).toEqual([expect.objectContaining({ start: '09:00', end: '09:45' })]);
   });
 
   it('separates the global revision from the scheduling-input revision', () => {

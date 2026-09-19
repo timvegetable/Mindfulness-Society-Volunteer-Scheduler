@@ -161,7 +161,21 @@ function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, 
   return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name, tracksSchedulingInput ? () => advanceSchedulingInputRevision(properties) : undefined)), audit, context);
 }
 
-export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: runtimeConfiguration(properties).timeZone }): RuntimeRepositories {
+/**
+ * Zone that a workbook's date and time cells are anchored to. Sheets stores a
+ * time-only cell as an instant on 1899-12-30 in the *spreadsheet's* zone, so
+ * decoding in any other zone shifts every clock by that day's offset difference
+ * — and because 1899 anchors land on pre-standard-time local mean time, the
+ * shift is not even a whole hour: a Detroit workbook read as New York reports
+ * 09:32 for a 09:00 session. The configured TIME_ZONE governs scheduling and
+ * display, never cell decoding.
+ */
+export function workbookTimeZone(spreadsheet: SpreadsheetLike, properties: ScriptProperties): string {
+  const zone = spreadsheet.getSpreadsheetTimeZone?.().trim();
+  return zone || runtimeConfiguration(properties).timeZone;
+}
+
+export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: workbookTimeZone(spreadsheet, properties) }): RuntimeRepositories {
   const auditSheet = spreadsheet.getSheetByName('AuditLog');
   if (!auditSheet) throw new Error('Workbook tab AuditLog is missing; initialize the workbook before serving requests');
   const audit = auditWriter(auditSheet);
@@ -332,7 +346,7 @@ function insightSourceRevision(repositories: RuntimeRepositories): InsightSource
 
 export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache } = {}): ProductionRuntime {
   const configuration = runtimeConfiguration(properties);
-  const store = repositories(spreadsheet, properties, { timeZone: configuration.timeZone });
+  const store = repositories(spreadsheet, properties);
   const administratorRecipients = listField(properties.getProperty('ADMINISTRATOR_RECIPIENTS'));
   const mailer = (globalThis as unknown as { GmailApp?: { sendEmail(to: string, subject: string, body: string): void } }).GmailApp;
   const selfService = new SelfServiceService({
