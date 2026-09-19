@@ -9,7 +9,7 @@
 
 ## 2. Secure Static-Site Integration
 
-- [ ] 2.1 Prove the GitHub Pages-to-Apps-Script request and redirect/CORS flow in a deployed browser spike before building feature screens
+- [x] 2.1 Prove the GitHub Pages-to-Apps-Script request and redirect/CORS flow in a deployed browser spike before building feature screens
 - [x] 2.2 Integrate Google Identity Services in the static client and exchange verified identity claims with the Apps Script endpoint
 - [x] 2.3 Implement server-side token audience validation and email-to-role authorization for volunteer, administrator, and center-contact roles
 - [x] 2.4 Implement the allowlisted API dispatcher with payload limits, schema validation, idempotency keys, consistent error envelopes, and no arbitrary Sheet access
