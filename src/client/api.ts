@@ -8,6 +8,7 @@ export const API_OPERATIONS = {
   adminScheduleRerun: 'admin.schedule.rerun',
   adminImportPreview: 'admin.import.whenIsGood.preview',
   adminImportPromote: 'admin.import.whenIsGood.promote',
+  adminImportMappingUpsert: 'admin.import.mapping.upsert',
   adminInsights: 'admin.insights.read',
   adminInsightsRefresh: 'admin.insights.refresh',
   centerCandidate: 'center.candidate.read',
@@ -333,6 +334,14 @@ export class ApiClient {
 
   importPromote(resultsCode: string, expectedRevision: number | string, credential: string): Promise<unknown> {
     return this.request(API_OPERATIONS.adminImportPromote, { resultsCode }, { expectedRevision, credential });
+  }
+
+  importMappingUpsert(
+    source: Readonly<{ sourceParticipantId?: string; sourceEmail?: string; sourceName?: string; volunteerId: string }>,
+    expectedRevision: number | string,
+    credential: string
+  ): Promise<unknown> {
+    return this.request(API_OPERATIONS.adminImportMappingUpsert, { ...source }, { expectedRevision, credential });
   }
 
   insights(credential: string): Promise<unknown> {

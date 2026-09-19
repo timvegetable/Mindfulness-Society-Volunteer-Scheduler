@@ -1,5 +1,6 @@
 import type { Volunteer } from '../../shared/domain.js';
 import type {
+  AuthoritativeAvailabilityRecord,
   Clock,
   IdentityMapping,
   ImportRepository,
@@ -10,6 +11,10 @@ import type {
 } from './types.js';
 
 function copyAvailability(rows: readonly ImportedAvailabilityRecord[]): ImportedAvailabilityRecord[] {
+  return rows.map((row) => ({ ...row }));
+}
+
+function copyAuthoritative(rows: readonly AuthoritativeAvailabilityRecord[]): AuthoritativeAvailabilityRecord[] {
   return rows.map((row) => ({ ...row }));
 }
 
@@ -24,7 +29,8 @@ function copyRun(run: ImportRun): ImportRun {
 export class MemoryImportRepository implements ImportRepository {
   private readonly runRows = new Map<string, ImportRun>();
   private readonly mappingRows: IdentityMapping[] = [];
-  private currentRows: ImportedAvailabilityRecord[] = [];
+  private authoritativeRows: AuthoritativeAvailabilityRecord[] = [];
+  private provenanceRows: ImportedAvailabilityRecord[] = [];
   private revisionNumber = 0;
   private rosterRows: Volunteer[];
 
@@ -52,18 +58,26 @@ export class MemoryImportRepository implements ImportRepository {
     this.runRows.set(run.id, copyRun(run));
   }
 
-  currentAvailability(): ImportedAvailabilityRecord[] {
-    return copyAvailability(this.currentRows);
+  currentAvailability(): AuthoritativeAvailabilityRecord[] {
+    return copyAuthoritative(this.authoritativeRows);
   }
 
-  currentRevision(): number {
+  provenance(): ImportedAvailabilityRecord[] {
+    return copyAvailability(this.provenanceRows);
+  }
+
+  availabilityRevision(): number {
     return this.revisionNumber;
   }
 
-  replaceCurrentAvailability(rows: readonly ImportedAvailabilityRecord[], _actorId: string, _source: string): number {
-    this.currentRows = copyAvailability(rows);
+  replaceAuthoritative(rows: readonly AuthoritativeAvailabilityRecord[], _actorId: string, _source: string): number {
+    this.authoritativeRows = copyAuthoritative(rows);
     this.revisionNumber += 1;
     return this.revisionNumber;
+  }
+
+  replaceProvenance(rows: readonly ImportedAvailabilityRecord[], _actorId: string, _source: string): void {
+    this.provenanceRows = copyAvailability(rows);
   }
 
   mappings(): IdentityMapping[] {

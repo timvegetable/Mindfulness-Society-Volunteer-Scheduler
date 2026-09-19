@@ -48,6 +48,96 @@ describe('production Apps Script runtime', () => {
     ]);
   });
 
+  // Recurring availability lives in its own tab; scheduling, insights, and
+  // coverage only see it once the request groups those rows onto the roster.
+  function seededAvailabilitySpreadsheet(): InMemorySpreadsheet {
+    const spreadsheet = new InMemorySpreadsheet();
+    spreadsheet.getSheetByName('Volunteers')?.appendRow(['vol-1', 'Example Volunteer', 'volunteer@example.test', 'active', 'complete', 1, 0, 'roster', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('RecurringAvailability')?.appendRow(['availability-1', 'vol-1', 1, '09:00', '20:00', 'America/New_York', 0, 'whenisgood', '2026-09-01T00:00:00.000Z']);
+    return spreadsheet;
+  }
+
+  it('schedules from the authoritative recurring availability tab', () => {
+    const spreadsheet = seededAvailabilitySpreadsheet();
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-07', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    const runtime = createProductionRuntime(spreadsheet, new InMemoryProperties());
+    const context: HandlerContext = { actor: actor as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.adminScheduleRerun, idempotencyKey: 'schedule-run', now: '2026-09-19T00:00:00.000Z' };
+    const schedule = runtime.handlers[INTEGRATION_OPERATIONS.adminScheduleRerun]?.(context, {}) as { sessions: Array<{ assignments: Array<{ volunteerId: string }>; shortfall: number }> };
+    expect(schedule.sessions.map((session) => session.assignments.map((assignment) => assignment.volunteerId))).toEqual([['vol-1']]);
+    expect(schedule.sessions[0]?.shortfall).toBe(0);
+  });
+
+  it('counts authoritative recurring availability in insights', () => {
+    const runtime = createProductionRuntime(seededAvailabilitySpreadsheet(), new InMemoryProperties());
+    const context: HandlerContext = { actor: actor as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.adminInsights, idempotencyKey: 'insight-read', now: '2026-09-19T00:00:00.000Z' };
+    const insights = runtime.handlers[INTEGRATION_OPERATIONS.adminInsights]?.(context, {}) as { cells: unknown[] };
+    expect(insights.cells).toEqual([
+      { weekday: 1, start: '09:00', end: '20:00', timeZone: 'America/New_York', count: 1, volunteerIds: ['vol-1'], volunteerNames: ['Example Volunteer'] }
+    ]);
+  });
+
+  // End-to-end import path: fetch → parse → match → promote both tabs, then the
+  // promoted intervals must be visible to insights and to a scheduling run.
+  it('promotes a fetched WhenIsGood result into scheduling and insight eligibility', () => {
+    const html = `
+      <table>
+        <td class="slot proposed" id="1789376400000"></td>
+        <td class="slot proposed" id="1789380000000"></td>
+      </table>
+      <script>
+        var respondents = new Array();
+        var r100 = new Object();
+        r100.id = "100";
+        r100.name = "Example Person";
+        r100.myCanDos = "1789376400000,1789380000000".split(",");
+        r100.included = true;
+        respondents["r100"] = r100;
+      </script>`;
+    const runtimeGlobal = globalThis as { UrlFetchApp?: unknown };
+    const previousFetch = runtimeGlobal.UrlFetchApp;
+    runtimeGlobal.UrlFetchApp = { fetch: () => ({ getResponseCode: () => 200, getContentText: () => html }) };
+    try {
+      const spreadsheet = new InMemorySpreadsheet();
+      spreadsheet.getSheetByName('Volunteers')?.appendRow(['vol-1', 'Example Person', 'person@example.test', 'active', 'complete', 1, 0, 'roster', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+      spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-14', '09:00', '10:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+      const properties = new InMemoryProperties();
+      properties.setProperty('WHENISGOOD_ENDPOINT', 'https://whenisgood.example.test/results');
+      properties.setProperty('TIME_ZONE', 'America/New_York');
+      const runtime = createProductionRuntime(spreadsheet, properties);
+      const context = (operation: IntegrationOperation): HandlerContext => ({ actor: actor as unknown as HandlerContext['actor'], operation, idempotencyKey: `step-${operation}`, now: '2026-09-19T00:00:00.000Z' });
+
+      const preview = runtime.handlers[INTEGRATION_OPERATIONS.adminImportPreview]?.(context(INTEGRATION_OPERATIONS.adminImportPreview), { resultsCode: 'legacy-result' }) as {
+        canPromote: boolean;
+        matchedCount: number;
+        availabilityPreview: Array<{ volunteerName: string; intervals: unknown[] }>;
+        mappingOptions: Array<{ volunteerId: string }>;
+      };
+      expect(preview).toMatchObject({ canPromote: true, matchedCount: 1 });
+      expect(preview.availabilityPreview).toEqual([{ volunteerId: 'vol-1', volunteerName: 'Example Person', intervals: [{ weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' }, { weekday: 1, start: '10:00', end: '11:00', timeZone: 'America/New_York' }] }]);
+      expect(preview.mappingOptions.map((option) => option.volunteerId)).toEqual(['vol-1']);
+
+      runtime.handlers[INTEGRATION_OPERATIONS.adminImportPromote]?.(context(INTEGRATION_OPERATIONS.adminImportPromote), { resultsCode: 'legacy-result' });
+      const authoritative = spreadsheet.getSheetByName('RecurringAvailability')?.values.slice(1);
+      expect(authoritative?.map((row) => [row[1], row[2], row[3], row[4], row[5]])).toEqual([
+        ['vol-1', 1, '09:00', '10:00', 'America/New_York'],
+        ['vol-1', 1, '10:00', '11:00', 'America/New_York']
+      ]);
+      expect(spreadsheet.getSheetByName('ImportedAvailability')?.values.length).toBe(3);
+
+      const insights = runtime.handlers[INTEGRATION_OPERATIONS.adminInsights]?.(context(INTEGRATION_OPERATIONS.adminInsights), {}) as { cells: unknown[] };
+      expect(insights.cells).toEqual([
+        { weekday: 1, start: '09:00', end: '11:00', timeZone: 'America/New_York', count: 1, volunteerIds: ['vol-1'], volunteerNames: ['Example Person'] }
+      ]);
+
+      const schedule = runtime.handlers[INTEGRATION_OPERATIONS.adminScheduleRerun]?.(context(INTEGRATION_OPERATIONS.adminScheduleRerun), {}) as { sessions: Array<{ assignments: Array<{ volunteerId: string }>; shortfall: number }> };
+      expect(schedule.sessions.map((session) => session.assignments.map((assignment) => assignment.volunteerId))).toEqual([['vol-1']]);
+      expect(schedule.sessions[0]?.shortfall).toBe(0);
+    } finally {
+      if (previousFetch === undefined) delete (globalThis as { UrlFetchApp?: unknown }).UrlFetchApp;
+      else runtimeGlobal.UrlFetchApp = previousFetch;
+    }
+  });
+
   it('composes a handler for every allowlisted operation', () => {
     const runtime = createProductionRuntime(new InMemorySpreadsheet(), new InMemoryProperties());
     for (const operation of Object.values(INTEGRATION_OPERATIONS)) expect(runtime.handlers[operation]).toBeTypeOf('function');

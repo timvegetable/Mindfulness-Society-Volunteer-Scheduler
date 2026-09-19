@@ -1,4 +1,4 @@
-import type { Assignment, AvailabilityException, Backup, Session, User, Volunteer } from '../shared/domain.js';
+import type { Assignment, AvailabilityException, Backup, RecurringAvailability, Session, User, Volunteer } from '../shared/domain.js';
 import { projectIdentity, projectVolunteerDashboard } from './integration/projections.js';
 import type { OperationHandlers } from './integration/dispatcher.js';
 import { INTEGRATION_OPERATIONS, IntegrationError } from './integration/dispatcher.js';
@@ -30,7 +30,8 @@ import type { SheetValueContext } from './workbook/sheet-values.js';
 import { tabDefinition, type WorkbookTab } from './workbook/schema.js';
 import type { SpreadsheetLike, SheetLike } from './workbook/initializer.js';
 import type { RecurringAvailabilityRecord } from './self-service/types.js';
-import type { ImportedAvailabilityRecord } from './imports/types.js';
+import type { AuthoritativeAvailabilityRecord, ImportedAvailabilityRecord } from './imports/types.js';
+import { SourceMappingService, type SourceMappingInput } from './imports/matching.js';
 import type { Center, CenterUser, CandidateSchedule } from './centers/models.js';
 import type { SchedulingRun } from '../shared/domain.js';
 
@@ -169,18 +170,36 @@ function mappingId(mapping: IdentityMapping): string {
 }
 
 class SheetImportRepository implements ImportRepository {
-  constructor(private readonly runs: SheetRepository<ImportRun>, private readonly current: SheetRepository<ImportedAvailabilityRecord>, private readonly mappingRows: SheetRepository<StoredIdentityMapping>, private readonly roster: SheetRepository<Volunteer>) {}
+  constructor(private readonly runs: SheetRepository<ImportRun>, private readonly provenanceRows: SheetRepository<ImportedAvailabilityRecord>, private readonly authoritativeRows: SheetRepository<RecurringAvailabilityRecord>, private readonly mappingRows: SheetRepository<StoredIdentityMapping>, private readonly roster: SheetRepository<Volunteer>) {}
 
   listRuns(): ImportRun[] { return this.runs.list(); }
   getRun(id: string): ImportRun | undefined { return this.runs.get(id); }
   findByContentHash(source: ImportRun['source'], contentHash: string): ImportRun | undefined { return this.runs.list().find((run) => run.source === source && run.contentHash === contentHash); }
   saveRun(run: ImportRun): void { this.runs.upsert(run, this.runs.revision().number, run.actorId, 'whenisgood-import-run'); }
-  currentAvailability(): ImportedAvailabilityRecord[] { return this.current.list(); }
-  currentRevision(): number { return this.current.revision().number; }
-  replaceCurrentAvailability(rows: readonly ImportedAvailabilityRecord[], actorId: string, source: string): number { return this.current.replace(rows, this.current.revision().number, actorId, source).number; }
+  currentAvailability(): AuthoritativeAvailabilityRecord[] { return this.authoritativeRows.list(); }
+  provenance(): ImportedAvailabilityRecord[] { return this.provenanceRows.list(); }
+  availabilityRevision(): number { return this.authoritativeRows.revision().number; }
+  replaceAuthoritative(rows: readonly AuthoritativeAvailabilityRecord[], actorId: string, source: string): number { return this.authoritativeRows.replace(rows, this.authoritativeRows.revision().number, actorId, source).number; }
+  replaceProvenance(rows: readonly ImportedAvailabilityRecord[], actorId: string, source: string): void { this.provenanceRows.replace(rows, this.provenanceRows.revision().number, actorId, source); }
   mappings(): IdentityMapping[] { return this.mappingRows.list().map(({ id: _id, ...mapping }) => mapping); }
   saveMapping(mapping: IdentityMapping): void { this.mappingRows.upsert({ ...mapping, id: mappingId(mapping) }, this.mappingRows.revision().number, mapping.updatedBy, 'whenisgood-identity-mapping'); }
   volunteers(): Volunteer[] { return this.roster.list(); }
+}
+
+/**
+ * Recurring availability lives in its own tab, so a volunteer only becomes
+ * schedulable once the intervals are grouped onto the roster row. Group the
+ * request's rows once instead of scanning the full list per volunteer.
+ */
+function hydratedVolunteers(store: RuntimeRepositories): Volunteer[] {
+  const intervalsByVolunteer = new Map<string, RecurringAvailability[]>();
+  for (const row of store.recurringAvailability.list()) {
+    const interval: RecurringAvailability = { weekday: row.weekday, start: row.start, end: row.end, timeZone: row.timeZone };
+    const existing = intervalsByVolunteer.get(row.volunteerId);
+    if (existing) existing.push(interval);
+    else intervalsByVolunteer.set(row.volunteerId, [interval]);
+  }
+  return store.volunteers.list().map((volunteer) => ({ ...volunteer, recurringAvailability: intervalsByVolunteer.get(volunteer.id) ?? [] }));
 }
 
 function caller(actor: AuthenticatedPrincipal): CenterCaller {
@@ -192,7 +211,18 @@ function serviceData<T>(result: ServiceResult<T>): T {
   return result.data;
 }
 
-function projectImport(result: { run: ImportRun; preview: { canPromote: boolean; blockers: string[] } }, resultId: string, revision: number): Record<string, unknown> {
+function projectImport(result: { run: ImportRun; preview: { canPromote: boolean; blockers: string[] } }, resultId: string, revision: number, roster: readonly Volunteer[]): Record<string, unknown> {
+  const namesById = new Map(roster.map((volunteer) => [volunteer.id, volunteer.name]));
+  const intervalsByVolunteer = new Map<string, Array<{ weekday: number; start: string; end: string; timeZone: string }>>();
+  for (const row of result.run.stagedAvailability) {
+    const interval = { weekday: row.weekday, start: row.start, end: row.end, timeZone: row.timeZone };
+    const existing = intervalsByVolunteer.get(row.volunteerId);
+    if (existing) existing.push(interval);
+    else intervalsByVolunteer.set(row.volunteerId, [interval]);
+  }
+  const availabilityPreview = [...intervalsByVolunteer.entries()]
+    .map(([volunteerId, intervals]) => ({ volunteerId, volunteerName: namesById.get(volunteerId) ?? volunteerId, intervals }))
+    .sort((left, right) => left.volunteerName.localeCompare(right.volunteerName) || left.volunteerId.localeCompare(right.volunteerId));
   return {
     status: result.run.status,
     resultsCode: resultId,
@@ -201,7 +231,11 @@ function projectImport(result: { run: ImportRun; preview: { canPromote: boolean;
     matchedCount: result.run.matchedCount,
     unmatchedCount: result.run.unmatched.length,
     diagnostics: [result.run.diagnostic?.message, ...result.preview.blockers].filter((item): item is string => Boolean(item)),
-    preview: result.run.unmatched.map((entry) => ({ name: entry.participant.name, email: entry.participant.email ?? '', status: entry.reason })),
+    preview: result.run.unmatched.map((entry) => ({ name: entry.participant.name, email: entry.participant.email ?? '', status: entry.reason, sourceParticipantId: entry.participant.sourceParticipantId })),
+    availabilityPreview,
+    mappingOptions: roster
+      .map((volunteer) => ({ volunteerId: volunteer.id, name: volunteer.name, email: volunteer.email, lifecycleStatus: volunteer.lifecycleStatus }))
+      .sort((left, right) => left.name.localeCompare(right.name) || left.volunteerId.localeCompare(right.volunteerId)),
     revision,
     canPromote: result.preview.canPromote
   };
@@ -246,7 +280,7 @@ function scheduleProjection(repositories: RuntimeRepositories, globalRevision: n
 function buildInsight(repositories: RuntimeRepositories, configuration: RuntimeConfiguration): Record<string, unknown> {
   const store = new InsightStore();
   const dataset = store.regenerate({
-    volunteers: repositories.volunteers.list().map((volunteer) => ({ ...volunteer, recurringAvailability: repositories.recurringAvailability.list().filter((row) => row.volunteerId === volunteer.id).map(({ volunteerId: _volunteerId, id: _id, revision: _revision, source: _source, updatedAt: _updatedAt, ...interval }) => interval) })),
+    volunteers: hydratedVolunteers(repositories),
     assignments: repositories.assignments.list(),
     sourceRevision: {
       assignmentRevision: repositories.assignments.revision().number,
@@ -278,12 +312,12 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     mailer: mailer ? { send: ({ to, subject, body }) => mailer.sendEmail(to.join(','), subject, body) } : undefined,
     configuredTimeZone: configuration.timeZone
   });
-  const importRepository = new SheetImportRepository(store.imports, store.importedAvailability, store.mappings, store.volunteers);
+  const importRepository = new SheetImportRepository(store.imports, store.importedAvailability, store.recurringAvailability, store.mappings, store.volunteers);
   const imports = new StagedWhenIsGoodImportService(importRepository, { defaultTimeZone: configuration.timeZone });
   const endpoint = properties.getProperty('WHENISGOOD_ENDPOINT')?.trim();
   const urlFetch = (globalThis as unknown as { UrlFetchApp?: { fetch(url: string): { getResponseCode(): number; getContentText(): string } } }).UrlFetchApp;
   const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: () => response.getContentText() }; }, parserOptions: { defaultTimeZone: configuration.timeZone } }) : undefined;
-  const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: store.volunteers, exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
+  const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: hydratedVolunteers(store), exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
   const handlers: OperationHandlers = {
     [INTEGRATION_OPERATIONS.me]: ({ actor }) => projectIdentity(actor),
     [INTEGRATION_OPERATIONS.volunteerDashboard]: ({ actor }) => {
@@ -313,7 +347,7 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       const previous = latestCompletedRun(store.schedulingRuns.list());
       const committedSessions = validateCommittedSessionInputs(store.sessions.list());
       const schedulingStore = new SchedulingStore({ inputRevision, currentRevision: previous?.outputRevision ?? 0 });
-      const result = runScheduling(schedulingStore, { inputRevision, actorId: actor.user.id, volunteers: store.volunteers.list(), sessions: committedSessions, exceptions: store.exceptions.list(), assignments: store.assignments.list(), runId: `scheduling-${inputRevision}-${Date.now()}` });
+      const result = runScheduling(schedulingStore, { inputRevision, actorId: actor.user.id, volunteers: hydratedVolunteers(store), sessions: committedSessions, exceptions: store.exceptions.list(), assignments: store.assignments.list(), runId: `scheduling-${inputRevision}-${Date.now()}` });
       const beforeAssignments = store.assignments.list();
       const beforeBackups = store.backups.list();
       try {
@@ -329,16 +363,28 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     },
     [INTEGRATION_OPERATIONS.adminImportPreview]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
-      const resultId = (payload as { resultsCode: string }).resultsCode;
-      const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, resultId);
-      return projectImport(staged, resultId, Number(properties.getProperty('DATA_REVISION') ?? '0'));
+      const request = payload as { resultsCode: string }; // validated by the operation policy before dispatch
+      const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, request.resultsCode);
+      return projectImport(staged, request.resultsCode, Number(properties.getProperty('DATA_REVISION') ?? '0'), hydratedVolunteers(store));
     },
     [INTEGRATION_OPERATIONS.adminImportPromote]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
-      const resultId = (payload as { resultsCode: string }).resultsCode;
-      const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, resultId);
+      const request = payload as { resultsCode: string }; // validated by the operation policy before dispatch
+      const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, request.resultsCode);
       if (!staged.preview.canPromote) throw new IntegrationError('CONFLICT', `Import cannot be promoted: ${staged.preview.blockers.join('; ')}`);
       return imports.promote({ id: actor.user.id, roles: actor.user.roles }, staged.run.id);
+    },
+    [INTEGRATION_OPERATIONS.adminImportMappingUpsert]: ({ actor }, payload) => {
+      const adminActor = { id: actor.user.id, roles: actor.user.roles };
+      const input = payload as SourceMappingInput; // validated by the operation policy before dispatch
+      const mapping = new SourceMappingService(importRepository, { now }).save(adminActor, input);
+      // Re-match whatever the new mapping can now resolve; the staged run keeps
+      // its id and availability rows are rebuilt rather than appended.
+      const restaged = fetcher ? imports.restageUnresolved(adminActor, fetcher)[0] : undefined;
+      return {
+        mapping,
+        ...(restaged ? { import: projectImport(restaged, restaged.run.resultId ?? '', Number(properties.getProperty('DATA_REVISION') ?? '0'), hydratedVolunteers(store)) } : {})
+      };
     },
     [INTEGRATION_OPERATIONS.adminInsights]: () => buildInsight(store, configuration),
     [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => buildInsight(store, configuration),

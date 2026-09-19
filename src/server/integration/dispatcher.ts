@@ -19,6 +19,7 @@ export const INTEGRATION_OPERATIONS = {
   adminScheduleRerun: 'admin.schedule.rerun',
   adminImportPreview: 'admin.import.whenIsGood.preview',
   adminImportPromote: 'admin.import.whenIsGood.promote',
+  adminImportMappingUpsert: 'admin.import.mapping.upsert',
   adminInsights: 'admin.insights.read',
   adminInsightsRefresh: 'admin.insights.refresh',
   centerCandidate: 'center.candidate.read',
@@ -73,6 +74,17 @@ const candidatePayload = z.object({
   }
 });
 
+const sourceMappingPayload = z.object({
+  sourceParticipantId: z.string().min(1).max(200).optional(),
+  sourceEmail: z.string().email().max(200).optional(),
+  sourceName: z.string().min(1).max(200).optional(),
+  volunteerId: id
+}).strict().superRefine((value, context) => {
+  if (!value.sourceParticipantId && !value.sourceEmail && !value.sourceName) {
+    context.addIssue({ code: 'custom', path: ['sourceParticipantId'], message: 'At least one source identity field is required' });
+  }
+});
+
 export const OPERATION_POLICIES: Readonly<Record<IntegrationOperation, OperationPolicy>> = {
   [INTEGRATION_OPERATIONS.me]: { roles: ['volunteer', 'administrator', 'center-contact'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
   [INTEGRATION_OPERATIONS.volunteerDashboard]: { roles: ['volunteer'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
@@ -83,6 +95,7 @@ export const OPERATION_POLICIES: Readonly<Record<IntegrationOperation, Operation
   [INTEGRATION_OPERATIONS.adminScheduleRerun]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: emptyPayload },
   [INTEGRATION_OPERATIONS.adminImportPreview]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: z.object({ resultsCode: importCode }).strict() },
   [INTEGRATION_OPERATIONS.adminImportPromote]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: z.object({ resultsCode: importCode }).strict() },
+  [INTEGRATION_OPERATIONS.adminImportMappingUpsert]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: sourceMappingPayload },
   [INTEGRATION_OPERATIONS.adminInsights]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
   [INTEGRATION_OPERATIONS.adminInsightsRefresh]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: emptyPayload },
   [INTEGRATION_OPERATIONS.centerCandidate]: { roles: ['administrator', 'center-contact'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },

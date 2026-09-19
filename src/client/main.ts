@@ -200,18 +200,52 @@ function parseImport(value: unknown): ImportRunData {
     return [{
       ...(stringValue(item.name) ? { name: stringValue(item.name) } : {}),
       ...(stringValue(item.email) ? { email: stringValue(item.email) } : {}),
-      ...(stringValue(item.status) ? { status: stringValue(item.status) } : {})
+      ...(stringValue(item.status) ? { status: stringValue(item.status) } : {}),
+      ...(stringValue(item.sourceParticipantId) ? { sourceParticipantId: stringValue(item.sourceParticipantId) } : {})
+    }];
+  });
+  const availabilityPreview = arrayValue(data.availabilityPreview).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const volunteerId = stringValue(item.volunteerId);
+    if (!volunteerId) return [];
+    const intervals = arrayValue(item.intervals).flatMap((interval) => {
+      if (!isRecord(interval)) return [];
+      const weekday = numberValue(interval.weekday);
+      const start = stringValue(interval.start);
+      const end = stringValue(interval.end);
+      if (weekday === undefined || !start || !end) return [];
+      return [{ weekday, start, end }];
+    });
+    return [{
+      volunteerId,
+      ...(stringValue(item.volunteerName) ? { volunteerName: stringValue(item.volunteerName) } : {}),
+      intervals
+    }];
+  });
+  const mappingOptions = arrayValue(data.mappingOptions).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const volunteerId = stringValue(item.volunteerId);
+    if (!volunteerId) return [];
+    return [{
+      volunteerId,
+      ...(stringValue(item.name) ? { name: stringValue(item.name) } : {}),
+      ...(stringValue(item.email) ? { email: stringValue(item.email) } : {}),
+      ...(stringValue(item.lifecycleStatus) ? { lifecycleStatus: stringValue(item.lifecycleStatus) } : {})
     }];
   });
   return {
     status: stringValue(data.status),
     resultsCode: stringValue(data.resultsCode),
+    ...(stringValue(data.runId) ? { runId: stringValue(data.runId) } : {}),
     participantCount: numberValue(data.participantCount),
     matchedCount: numberValue(data.matchedCount),
     unmatchedCount: numberValue(data.unmatchedCount),
     diagnostics: arrayValue(data.diagnostics).filter((item): item is string => typeof item === 'string'),
     preview,
-    revision: parseRevision(data.revision)
+    availabilityPreview,
+    mappingOptions,
+    revision: parseRevision(data.revision),
+    canPromote: data.canPromote === true
   };
 }
 
@@ -377,6 +411,23 @@ async function loadRoute(runtime: Runtime): Promise<void> {
             if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
             await runtime.api.importPromote(resultsCode, expectedRevision, credential);
             await loadRouteAfterAction(runtime);
+          },
+          // The server saves the mapping and re-matches the staged import, so the
+          // refreshed preview normally arrives with the response. Fall back to a
+          // plain preview when there was nothing left to re-match.
+          onMap: async (source, volunteerId) => {
+            if (importData.revision === undefined) throw new Error('Preview the import before reconciling participants.');
+            const response = await runtime.api.importMappingUpsert({ ...source, volunteerId }, importData.revision, credential);
+            const refreshed = isRecord(response) ? response.import : undefined;
+            if (isRecord(refreshed)) {
+              renderImport(parseImport(refreshed));
+              return;
+            }
+            if (importData.resultsCode) {
+              renderImport(parseImport(await runtime.api.importPreview(importData.resultsCode, credential)));
+              return;
+            }
+            renderImport(importData);
           }
         };
         renderAdminImport(runtime.app, importData, actions, importData.revision, runtime.document);

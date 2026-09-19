@@ -64,6 +64,25 @@ export type ImportedAvailabilityRecord = RecurringAvailability & {
   importRunId: string;
 };
 
+/**
+ * The interval identity used to compare a staged import with what scheduling
+ * actually consumes. Provenance rows and authoritative rows describe the same
+ * availability with different bookkeeping ids, so comparison ignores the id.
+ */
+export type AvailabilityIntervalRecord = RecurringAvailability & { volunteerId: string };
+
+/** One row of the authoritative RecurringAvailability tab. */
+export type AuthoritativeAvailabilityRecord = AvailabilityIntervalRecord & {
+  id: string;
+  revision: number;
+  source?: string;
+  updatedAt?: string;
+};
+
+export function availabilityIntervalKey(row: AvailabilityIntervalRecord): string {
+  return `${row.volunteerId}|${row.weekday}|${row.start}|${row.end}|${row.timeZone}`;
+}
+
 export type IdentityMatch = {
   participant: ParsedParticipant;
   volunteerId: string;
@@ -112,10 +131,10 @@ export type ImportRun = {
 
 export type ImportPreview = {
   run: ImportRun;
-  currentAvailability: ImportedAvailabilityRecord[];
-  added: ImportedAvailabilityRecord[];
-  removed: ImportedAvailabilityRecord[];
-  unchanged: ImportedAvailabilityRecord[];
+  currentAvailability: AuthoritativeAvailabilityRecord[];
+  added: AvailabilityIntervalRecord[];
+  removed: AvailabilityIntervalRecord[];
+  unchanged: AvailabilityIntervalRecord[];
   canPromote: boolean;
   blockers: string[];
 };
@@ -124,7 +143,7 @@ export type ImportPromotionResult = {
   runId: string;
   status: 'promoted' | 'already-promoted';
   idempotent: boolean;
-  currentAvailability: ImportedAvailabilityRecord[];
+  currentAvailability: AuthoritativeAvailabilityRecord[];
   revision: number;
   promotedAt: string;
 };
@@ -134,9 +153,14 @@ export type ImportRepository = {
   getRun(id: string): ImportRun | undefined;
   findByContentHash(source: ImportSource, contentHash: string): ImportRun | undefined;
   saveRun(run: ImportRun): void;
-  currentAvailability(): ImportedAvailabilityRecord[];
-  currentRevision(): number;
-  replaceCurrentAvailability(rows: readonly ImportedAvailabilityRecord[], actorId: string, source: string): number;
+  /** Authoritative recurring rows — the dataset scheduling, insights, self-service, and coverage consume. */
+  currentAvailability(): AuthoritativeAvailabilityRecord[];
+  /** Provenance rows: the last promoted import, kept for reconciliation and audit. */
+  provenance(): ImportedAvailabilityRecord[];
+  /** Revision of the authoritative RecurringAvailability tab. */
+  availabilityRevision(): number;
+  replaceAuthoritative(rows: readonly AuthoritativeAvailabilityRecord[], actorId: string, source: string): number;
+  replaceProvenance(rows: readonly ImportedAvailabilityRecord[], actorId: string, source: string): void;
   mappings(): IdentityMapping[];
   saveMapping(mapping: IdentityMapping): void;
   volunteers?(): Volunteer[];

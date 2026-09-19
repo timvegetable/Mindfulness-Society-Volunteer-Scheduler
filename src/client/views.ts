@@ -85,17 +85,25 @@ export interface AdminScheduleActions {
 export interface ImportRunData {
   status?: string;
   resultsCode?: string;
+  runId?: string;
   participantCount?: number;
   matchedCount?: number;
   unmatchedCount?: number;
   diagnostics?: string[];
-  preview?: Array<{ name?: string; email?: string; status?: string }>;
+  preview?: Array<{ name?: string; email?: string; status?: string; sourceParticipantId?: string }>;
+  availabilityPreview?: Array<{ volunteerId?: string; volunteerName?: string; intervals?: Array<{ weekday?: number; start?: string; end?: string }> }>;
+  mappingOptions?: Array<{ volunteerId?: string; name?: string; email?: string; lifecycleStatus?: string }>;
   revision?: number | string;
+  canPromote?: boolean;
 }
 
 export interface AdminImportActions {
   onPreview?: (resultsCode: string) => void | Promise<void>;
   onPromote?: (resultsCode: string, expectedRevision: number | string | undefined) => void | Promise<void>;
+  onMap?: (
+    source: Readonly<{ sourceParticipantId?: string; sourceEmail?: string; sourceName?: string }>,
+    volunteerId: string
+  ) => void | Promise<void>;
 }
 
 export interface InsightCell {
@@ -603,12 +611,14 @@ export function renderAdminImport(
     container.append(diagnostics);
   }
   if (data.preview && data.preview.length > 0) {
+    const mappingOptions = data.mappingOptions ?? [];
+    const canMap = mappingOptions.length > 0 && actions.onMap !== undefined;
     const table = createElement(documentRef, 'table', 'data-table');
     const caption = createElement(documentRef, 'caption');
-    caption.textContent = 'Import preview';
+    caption.textContent = 'Participants requiring reconciliation';
     table.append(caption);
     const row = createElement(documentRef, 'tr');
-    for (const label of ['Participant', 'Email', 'Match status']) {
+    for (const label of ['Participant', 'Email', 'Match status', ...(canMap ? ['Map to volunteer'] : [])]) {
       const cell = createElement(documentRef, 'th');
       cell.scope = 'col';
       cell.textContent = label;
@@ -625,7 +635,69 @@ export function renderAdminImport(
         cell.textContent = value;
         participantRow.append(cell);
       }
+      if (canMap) {
+        const cell = createElement(documentRef, 'td');
+        const select = createElement(documentRef, 'select');
+        select.setAttribute('aria-label', `Volunteer for ${participant.name ?? 'participant'}`);
+        const placeholder = createElement(documentRef, 'option');
+        placeholder.value = '';
+        placeholder.textContent = 'Select volunteer';
+        select.append(placeholder);
+        for (const option of mappingOptions) {
+          if (!option.volunteerId) continue;
+          const entry = createElement(documentRef, 'option');
+          entry.value = option.volunteerId;
+          entry.textContent = `${option.name ?? option.volunteerId}${option.email ? ` (${option.email})` : ''}${option.lifecycleStatus ? ` — ${option.lifecycleStatus}` : ''}`;
+          select.append(entry);
+        }
+        const map = button(documentRef, 'Map participant');
+        map.addEventListener('click', () => {
+          if (!select.value) {
+            announceFailure(status, new Error('Select a volunteer to map this participant.'));
+            return;
+          }
+          const source = {
+            ...(participant.sourceParticipantId ? { sourceParticipantId: participant.sourceParticipantId } : {}),
+            ...(participant.email ? { sourceEmail: participant.email } : {}),
+            ...(participant.name ? { sourceName: participant.name } : {})
+          };
+          handleAction(status, actions.onMap ? () => actions.onMap?.(source, select.value) : undefined);
+        });
+        cell.append(select, map);
+        participantRow.append(cell);
+      }
       tbody.append(participantRow);
+    }
+    table.append(tbody);
+    container.append(table);
+  }
+  if (data.availabilityPreview && data.availabilityPreview.length > 0) {
+    const table = createElement(documentRef, 'table', 'data-table');
+    const caption = createElement(documentRef, 'caption');
+    caption.textContent = 'Availability the promotion would make authoritative';
+    table.append(caption);
+    const headRow = createElement(documentRef, 'tr');
+    for (const label of ['Volunteer', 'Weekly intervals']) {
+      const cell = createElement(documentRef, 'th');
+      cell.scope = 'col';
+      cell.textContent = label;
+      headRow.append(cell);
+    }
+    const thead = createElement(documentRef, 'thead');
+    thead.append(headRow);
+    table.append(thead);
+    const tbody = createElement(documentRef, 'tbody');
+    for (const entry of data.availabilityPreview) {
+      const entryRow = createElement(documentRef, 'tr');
+      const nameCell = createElement(documentRef, 'td');
+      nameCell.textContent = entry.volunteerName ?? entry.volunteerId ?? 'Unknown volunteer';
+      const intervalCell = createElement(documentRef, 'td');
+      const intervals = entry.intervals ?? [];
+      intervalCell.textContent = intervals.length === 0
+        ? 'None'
+        : intervals.map((interval) => `${WEEKDAY_LABELS[interval.weekday ?? 0] ?? `Day ${interval.weekday}`} ${interval.start}–${interval.end}`).join(', ');
+      entryRow.append(nameCell, intervalCell);
+      tbody.append(entryRow);
     }
     table.append(tbody);
     container.append(table);

@@ -4,6 +4,8 @@ import { requireAdministrator } from './roster.js';
 import { IdentityMatcher } from './matching.js';
 import type {
   AdministratorActor,
+  AuthoritativeAvailabilityRecord,
+  AvailabilityIntervalRecord,
   Clock,
   ImportDiagnostic,
   ImportPreview,
@@ -14,6 +16,7 @@ import type {
   ParsedAvailabilitySlot,
   ParsedWhenIsGood
 } from './types.js';
+import { availabilityIntervalKey } from './types.js';
 import type { WhenIsGoodFetcher } from './fetcher.js';
 
 export type StagedImportOptions = {
@@ -48,6 +51,25 @@ function stableRowId(volunteerId: string, interval: RecurringAvailability): stri
 
 function intervalKey(interval: Pick<RecurringAvailability, 'weekday' | 'start' | 'end' | 'timeZone'>): string {
   return `${interval.weekday}|${interval.start}|${interval.end}|${interval.timeZone}`;
+}
+
+/**
+ * The staged import becomes the authoritative recurring row for the same
+ * interval: the stable import id keeps promotion idempotent, and the source and
+ * import timestamp document where the row came from.
+ */
+function toAuthoritativeRow(row: ImportedAvailabilityRecord, revision: number): AuthoritativeAvailabilityRecord {
+  return {
+    id: row.id,
+    volunteerId: row.volunteerId,
+    weekday: row.weekday,
+    start: row.start,
+    end: row.end,
+    timeZone: row.timeZone,
+    revision,
+    source: row.source,
+    updatedAt: row.importedAt
+  };
 }
 
 function parseWeekday(slot: ParsedAvailabilitySlot): Weekday | undefined {
@@ -107,13 +129,29 @@ function copyRun(run: ImportRun): ImportRun {
   return { ...run, unmatched: run.unmatched.map((entry) => ({ ...entry, candidateVolunteerIds: [...entry.candidateVolunteerIds], participant: { ...entry.participant, availability: entry.participant.availability.map((slot) => ({ ...slot })) } })), stagedAvailability: run.stagedAvailability.map((row) => ({ ...row })) };
 }
 
-function compareRows(current: readonly ImportedAvailabilityRecord[], staged: readonly ImportedAvailabilityRecord[]): Pick<ImportPreview, 'added' | 'removed' | 'unchanged'> {
-  const currentById = new Map(current.map((row) => [row.id, row]));
-  const stagedById = new Map(staged.map((row) => [row.id, row]));
-  const added = staged.filter((row) => !currentById.has(row.id));
-  const removed = current.filter((row) => !stagedById.has(row.id));
-  const unchanged = staged.filter((row) => currentById.has(row.id));
-  return { added: added.map((row) => ({ ...row })), removed: removed.map((row) => ({ ...row })), unchanged: unchanged.map((row) => ({ ...row })) };
+/**
+ * Compares the staged import with what scheduling currently consumes. Rows are
+ * keyed by interval identity rather than row id, so an interval that a volunteer
+ * re-entered through self-service is reported as unchanged instead of as an
+ * add/remove pair, and genuine drift shows up in `added`/`removed`.
+ */
+function compareRows(current: readonly AuthoritativeAvailabilityRecord[], staged: readonly ImportedAvailabilityRecord[]): Pick<ImportPreview, 'added' | 'removed' | 'unchanged'> {
+  const currentByKey = new Map(current.map((row) => [availabilityIntervalKey(row), row]));
+  const stagedByKey = new Map(staged.map((row) => [availabilityIntervalKey(row), row]));
+  const added: AvailabilityIntervalRecord[] = [];
+  const removed: AvailabilityIntervalRecord[] = [];
+  const unchanged: AvailabilityIntervalRecord[] = [];
+  for (const row of staged) {
+    const { id: _id, sourceParticipantId: _sourceParticipantId, source: _source, importedAt: _importedAt, importRunId: _importRunId, ...interval } = row;
+    if (currentByKey.has(availabilityIntervalKey(row))) unchanged.push({ ...interval });
+    else added.push({ ...interval });
+  }
+  for (const row of current) {
+    if (stagedByKey.has(availabilityIntervalKey(row))) continue;
+    const { id: _id, revision: _revision, source: _source, updatedAt: _updatedAt, ...interval } = row;
+    removed.push({ ...interval });
+  }
+  return { added, removed, unchanged };
 }
 
 function blockersFor(run: ImportRun): string[] {
@@ -157,9 +195,16 @@ export class StagedWhenIsGoodImportService {
     requireAdministrator(actor);
     const contentHashValue = hashContent(rawContent);
     const existing = this.repository.findByContentHash('whenisgood', contentHashValue);
-    if (existing) return { run: copyRun(existing), preview: this.previewFor(existing), idempotent: true };
-    const startedAt = this.clock.now();
-    const runId = `import-${contentHashValue}`;
+    // An unchanged, already settled import is idempotent: it was promoted, or it
+    // was fully reconciled. An unchanged run that still has unmatched
+    // participants is re-matched instead, because a mapping may have resolved
+    // them since — the same run id is overwritten, so availability never
+    // duplicates.
+    if (existing && (existing.status === 'promoted' || (existing.status === 'staged' && existing.unmatched.length === 0))) {
+      return { run: copyRun(existing), preview: this.previewFor(existing), idempotent: true };
+    }
+    const startedAt = existing?.startedAt ?? this.clock.now();
+    const runId = existing?.id ?? `import-${contentHashValue}`;
     try {
       if (parsed.participants.length > this.maxParticipants) throw new Error(`Import contains more than ${this.maxParticipants} participants`);
       const volunteers = this.rosterVolunteers();
@@ -187,6 +232,17 @@ export class StagedWhenIsGoodImportService {
     }
   }
 
+  /** Re-runs matching for every staged import that still has unmatched participants. */
+  restageUnresolved(actor: AdministratorActor, fetcher: WhenIsGoodFetcher): StageResult[] {
+    requireAdministrator(actor);
+    const results: StageResult[] = [];
+    for (const run of this.repository.listRuns()) {
+      if (run.status !== 'staged' || run.unmatched.length === 0 || !run.resultId) continue;
+      results.push(this.stageFromFetcher(actor, fetcher, run.resultId));
+    }
+    return results;
+  }
+
   preview(actor: AdministratorActor, runId: string): ImportPreview {
     requireAdministrator(actor);
     const run = this.repository.getRun(runId);
@@ -199,19 +255,41 @@ export class StagedWhenIsGoodImportService {
     const run = this.repository.getRun(runId);
     if (!run) throw new Error(`Import run ${runId} was not found`);
     if (run.status === 'promoted') {
-      return { runId: run.id, status: 'already-promoted', idempotent: true, currentAvailability: this.repository.currentAvailability(), revision: this.repository.currentRevision(), promotedAt: run.promotedAt ?? run.completedAt ?? this.clock.now() };
+      return { runId: run.id, status: 'already-promoted', idempotent: true, currentAvailability: this.repository.currentAvailability(), revision: this.repository.availabilityRevision(), promotedAt: run.promotedAt ?? run.completedAt ?? this.clock.now() };
     }
     const blockers = blockersFor(run);
     if (blockers.length > 0) throw new Error(`Import cannot be promoted: ${blockers.join('; ')}`);
     const promotedAt = this.clock.now();
     try {
-      const revision = this.repository.replaceCurrentAvailability(run.stagedAvailability, actor.id, 'whenisgood-import-promotion');
+      const revision = this.promoteAvailability(run, actor, promotedAt);
       const promoted: ImportRun = { ...run, status: 'promoted', promotedAt, promotedBy: actor.id, completedAt: promotedAt };
       this.repository.saveRun(promoted);
       return { runId: run.id, status: 'promoted', idempotent: false, currentAvailability: this.repository.currentAvailability(), revision, promotedAt };
     } catch (error) {
       const failed: ImportRun = { ...run, status: 'failed', completedAt: promotedAt, diagnostic: asDiagnostic(error, 'PROMOTION_FAILED') };
       this.repository.saveRun(failed);
+      throw error;
+    }
+  }
+
+  /**
+   * Writes the authoritative recurring rows and the provenance rows, restoring
+   * both previous sets if either write fails, so a partly promoted import can
+   * never become the availability that scheduling reads.
+   */
+  private promoteAvailability(run: ImportRun, actor: AdministratorActor, promotedAt: string): number {
+    const source = 'whenisgood-import-promotion';
+    const previousAuthoritative = this.repository.currentAvailability();
+    const previousProvenance = this.repository.provenance();
+    const provenance = run.stagedAvailability.map((row) => ({ ...row, importedAt: promotedAt }));
+    const revisionById = new Map(previousAuthoritative.map((row) => [row.id, row.revision]));
+    try {
+      const revision = this.repository.replaceAuthoritative(provenance.map((row) => toAuthoritativeRow(row, revisionById.get(row.id) ?? 0)), actor.id, source);
+      this.repository.replaceProvenance(provenance, actor.id, source);
+      return revision;
+    } catch (error) {
+      try { this.repository.replaceAuthoritative(previousAuthoritative, actor.id, `${source}-rollback`); } catch { /* keep the original failure */ }
+      try { this.repository.replaceProvenance(previousProvenance, actor.id, `${source}-rollback`); } catch { /* keep the original failure */ }
       throw error;
     }
   }
