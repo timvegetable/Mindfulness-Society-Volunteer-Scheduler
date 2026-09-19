@@ -571,7 +571,13 @@ export class CenterConfirmationService {
       });
     }
     const candidateAtDates: CandidateSchedule = { ...checkedCandidate, occurrenceDates: dates };
-    const existingLocked = currentSessions.find((session) => candidateMatchesSession(candidateAtDates, session) && session.status === 'locked');
+    const existingLocked = lockedOccurrenceForCandidate(candidateAtDates, currentSessions);
+    if (existingLocked) {
+      throw new CenterWorkflowError('CONFLICT', `A locked session already exists for this occurrence: ${existingLocked.id}`, {
+        candidateId,
+        existingSessionId: existingLocked.id
+      });
+    }
     const sessionRevision = this.sessions.revision().number;
     const occurrences: Session[] = dates.map((date, index) => ({
       id: `session-${checkedCandidate.id}-${date}`,
