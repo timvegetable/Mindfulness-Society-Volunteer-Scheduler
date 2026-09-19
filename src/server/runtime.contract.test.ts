@@ -60,7 +60,7 @@ describe('production Apps Script runtime', () => {
 
   it('schedules from the authoritative recurring availability tab', () => {
     const spreadsheet = seededAvailabilitySpreadsheet();
-    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-07', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-21', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
     const runtime = createProductionRuntime(spreadsheet, new InMemoryProperties());
     const context: HandlerContext = { actor: actor as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.adminScheduleRerun, idempotencyKey: 'schedule-run', now: '2026-09-19T00:00:00.000Z' };
     const schedule = runtime.handlers[INTEGRATION_OPERATIONS.adminScheduleRerun]?.(context, {}) as { sessions: Array<{ assignments: Array<{ volunteerId: string }>; shortfall: number }> };
@@ -100,7 +100,7 @@ describe('production Apps Script runtime', () => {
     try {
       const spreadsheet = new InMemorySpreadsheet();
       spreadsheet.getSheetByName('Volunteers')?.appendRow(['vol-1', 'Example Person', 'person@example.test', 'active', 'complete', 1, 0, 'roster', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
-      spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-14', '09:00', '10:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+      spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-21', '09:00', '10:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
       const properties = new InMemoryProperties();
       properties.setProperty('WHENISGOOD_ENDPOINT', 'https://whenisgood.example.test/results');
       properties.setProperty('TIME_ZONE', 'America/New_York');
@@ -149,7 +149,7 @@ describe('production Apps Script runtime', () => {
     properties.setProperty('TIME_ZONE', 'America/New_York');
     const detroit = (hour: number, minute: number) =>
       new Date(Temporal.ZonedDateTime.from({ timeZone: 'America/Detroit', year: 1899, month: 12, day: 30, hour, minute }).epochMilliseconds);
-    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session: OPAL Senior Center', '2026-09-04', detroit(9, 0), detroit(9, 45), 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session: OPAL Senior Center', '2026-09-21', detroit(9, 0), detroit(9, 45), 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
 
     const runtime = createProductionRuntime(spreadsheet, properties);
     const context: HandlerContext = { actor: actor as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.adminSchedule, idempotencyKey: 'workbook-zone', now: '2026-09-19T00:00:00.000Z' };
@@ -160,7 +160,7 @@ describe('production Apps Script runtime', () => {
 
   it('separates the global revision from the scheduling-input revision', () => {
     const spreadsheet = seededAvailabilitySpreadsheet();
-    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-07', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-21', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
     const properties = new InMemoryProperties();
     properties.setProperty('DATA_REVISION', '5');
     properties.setProperty('SCHEDULING_INPUT_REVISION', '2');
@@ -180,34 +180,59 @@ describe('production Apps Script runtime', () => {
 
     // A session change is a scheduling input: the dedicated counter advances and
     // the completed run no longer matches it.
-    store.sessions.upsert({ id: 'session-2', kind: 'univ100', title: 'UNIV100 class', date: '2026-09-08', start: '10:00', end: '11:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'confirmed', revision: 0 }, store.sessions.revision().number, 'admin@example.test', 'class-confirmation');
+    store.sessions.upsert({ id: 'session-2', kind: 'univ100', title: 'UNIV100 class', date: '2026-09-22', start: '10:00', end: '11:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'confirmed', revision: 0 }, store.sessions.revision().number, 'admin@example.test', 'class-confirmation');
     expect(schedule()).toMatchObject({ revision: 5, inputRevision: 3, stale: true });
   });
 
   it('keeps the scheduling preview free of side effects and identical to what publishing writes', () => {
     const spreadsheet = seededAvailabilitySpreadsheet();
-    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-1', 'center', 'center-1', 'Center session', '2026-09-07', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
-    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-2', 'univ100', '', 'Proposed UNIV100 class', '2026-09-08', '10:00', '11:00', 'America/New_York', 1, 'proposed', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-past', 'center', 'center-1', 'Past center session', '2026-09-18', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-cutoff', 'center', 'center-1', 'Exact-cutoff center session', '2026-09-19', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-future', 'center', 'center-1', 'Future center session', '2026-09-21', '10:00', '11:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-proposed', 'univ100', '', 'Proposed UNIV100 class', '2026-09-22', '10:00', '11:00', 'America/New_York', 1, 'proposed', '', 0, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
     const properties = new InMemoryProperties();
     properties.setProperty('DATA_REVISION', '4');
     const runtime = createProductionRuntime(spreadsheet, properties);
-    const context = (operation: IntegrationOperation, key: string): HandlerContext => ({ actor: actor as unknown as HandlerContext['actor'], operation, idempotencyKey: key, now: '2026-09-19T00:00:00.000Z' });
+    const context = (operation: IntegrationOperation, key: string): HandlerContext => ({ actor: actor as unknown as HandlerContext['actor'], operation, idempotencyKey: key, now: '2026-09-19T14:00:00.000Z' });
 
-    const preview = runtime.handlers[INTEGRATION_OPERATIONS.adminSchedulePreview]?.(context(INTEGRATION_OPERATIONS.adminSchedulePreview, 'preview'), {}) as { preview: boolean; sessions: unknown[]; excludedProposedSessions: unknown[]; revision: number; inputRevision: number };
+    const preview = runtime.handlers[INTEGRATION_OPERATIONS.adminSchedulePreview]?.(context(INTEGRATION_OPERATIONS.adminSchedulePreview, 'preview'), {}) as { preview: boolean; sessions: Array<{ id: string }>; excludedProposedSessions: unknown[]; revision: number; inputRevision: number; outputRevision: number; computedAt: string; summary: { assignmentCount: number; backupCount: number; shortfallCount: number } };
     expect(preview.preview).toBe(true);
     expect(preview.revision).toBe(4);
     expect(preview.inputRevision).toBe(0);
-    expect(preview.excludedProposedSessions).toEqual([{ id: 'session-2', displayName: 'Proposed UNIV100 class', reason: 'proposed' }]);
+    expect(preview.sessions.map((session) => session.id)).toEqual(['session-future']);
+    expect(preview.excludedProposedSessions).toEqual([{ id: 'session-proposed', displayName: 'Proposed UNIV100 class', reason: 'proposed' }]);
+    expect(preview.computedAt).toBe('2026-09-19T14:00:00.000Z');
+    expect(preview.outputRevision).toBe(1);
+    expect(preview.summary).toEqual({ assignmentCount: 1, backupCount: 0, shortfallCount: 0 });
     // Nothing was written: no assignments, no run, no revision movement.
     expect(spreadsheet.getSheetByName('Assignments')?.values.length).toBe(1);
     expect(spreadsheet.getSheetByName('SchedulingRuns')?.values.length).toBe(1);
     expect(properties.getProperty('SCHEDULING_INPUT_REVISION')).toBeNull();
     expect(properties.getProperty('DATA_REVISION')).toBe('4');
 
-    const published = runtime.handlers[INTEGRATION_OPERATIONS.adminScheduleRerun]?.(context(INTEGRATION_OPERATIONS.adminScheduleRerun, 'publish'), {}) as { preview: boolean; sessions: unknown[]; revision: number };
+    const published = runtime.handlers[INTEGRATION_OPERATIONS.adminScheduleRerun]?.(context(INTEGRATION_OPERATIONS.adminScheduleRerun, 'publish'), {}) as { preview: boolean; sessions: unknown[]; revision: number; outputRevision: number; computedAt: string; summary: { assignmentCount: number; backupCount: number; shortfallCount: number } };
     expect(published.preview).toBe(false);
     expect(published.sessions).toEqual(preview.sessions);
+    expect(published.outputRevision).toBe(preview.outputRevision);
+    expect(published.computedAt).toBe(preview.computedAt);
+    expect(published.summary).toEqual(preview.summary);
     expect(spreadsheet.getSheetByName('Assignments')?.values.length).toBe(2);
+  });
+
+  it('returns zero-valued preview counts and revision metadata explicitly', () => {
+    const runtime = createProductionRuntime(new InMemorySpreadsheet(), new InMemoryProperties());
+    const context: HandlerContext = { actor: actor as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.adminSchedulePreview, idempotencyKey: 'empty-preview', now: '2026-09-19T14:00:00.000Z' };
+
+    const preview = runtime.handlers[INTEGRATION_OPERATIONS.adminSchedulePreview]?.(context, {}) as Record<string, unknown>;
+
+    expect(preview).toMatchObject({
+      computedAt: '2026-09-19T14:00:00.000Z',
+      revision: 0,
+      inputRevision: 0,
+      scheduleRevision: null,
+      outputRevision: 1,
+      summary: { assignmentCount: 0, backupCount: 0, shortfallCount: 0 }
+    });
   });
 
   it('composes a handler for every allowlisted operation', () => {

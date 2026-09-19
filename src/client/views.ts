@@ -91,6 +91,16 @@ export interface AdminScheduleData {
   revision?: number | string;
   inputRevision?: number | string;
   scheduleRevision?: number | string;
+  /** Timestamp at which this preview/publication was computed. */
+  computedAt?: string;
+  /** Output revision represented by this preview/publication. */
+  outputRevision?: number | string;
+  /** Counts for the complete projected output, including zeroes. */
+  summary?: {
+    assignmentCount: number;
+    backupCount: number;
+    shortfallCount: number;
+  };
   preview?: boolean;
   stale?: boolean;
   runStatus?: string;
@@ -98,9 +108,16 @@ export interface AdminScheduleData {
   excludedProposedSessions?: ScheduleExcludedProposedSession[];
 }
 
+export interface ScheduleNotice {
+  kind: 'success' | 'error';
+  message: string;
+}
+
 export interface AdminScheduleActions {
   onPreview?: () => void | Promise<void>;
   onPublish?: (expectedRevision: number | string | undefined) => void | Promise<void>;
+  /** Persisted by the schedule controller and passed to every rerender. */
+  notice?: ScheduleNotice;
 }
 
 export interface ImportRunData {
@@ -495,6 +512,13 @@ function scheduleSessionText(session: ScheduleSession): string {
   return `${formatDate(session.date)} ${formatRange(session.start, session.end)}${label ? ` — ${label}` : ''}`;
 }
 
+/** Label used by the publish control, kept pure so its preview contract is testable. */
+export function schedulePublishLabel(data: Pick<AdminScheduleData, 'preview' | 'outputRevision'>): string {
+  if (data.preview && data.outputRevision !== undefined) return `Publish preview output revision ${String(data.outputRevision)}`;
+  if (data.preview) return 'Publish approved preview';
+  return 'Preview required before publishing';
+}
+
 export function renderAdminSchedule(
   container: HTMLElement,
   data: AdminScheduleData,
@@ -503,9 +527,15 @@ export function renderAdminSchedule(
 ): void {
   clear(container);
   container.append(heading(documentRef, 2, 'Schedule administration'));
+  if (actions.notice) {
+    const notice = createElement(documentRef, 'p', `alert ${actions.notice.kind === 'error' ? 'error' : 'success'}`);
+    notice.setAttribute('role', actions.notice.kind === 'error' ? 'alert' : 'status');
+    notice.textContent = actions.notice.message;
+    container.append(notice);
+  }
   const toolbar = createElement(documentRef, 'div', 'toolbar');
   const preview = button(documentRef, data.preview ? 'Refresh preview' : 'Preview scheduling', 'button', 'primary-button');
-  const publish = button(documentRef, 'Publish approved preview', 'button', 'primary-button');
+  const publish = button(documentRef, schedulePublishLabel(data), 'button', 'primary-button');
   publish.disabled = data.preview !== true || data.revision === undefined;
   const status = statusNode(documentRef, data.runStatus ?? '');
   preview.addEventListener('click', () => handleAction(status, actions.onPreview ? () => actions.onPreview?.() : undefined));
@@ -534,6 +564,31 @@ export function renderAdminSchedule(
     const scheduleRevision = createElement(documentRef, 'p', 'muted');
     scheduleRevision.textContent = `Current schedule revision: ${String(data.scheduleRevision)}`;
     container.append(scheduleRevision);
+  }
+  if (data.computedAt !== undefined) {
+    const computedAt = createElement(documentRef, 'p', 'muted');
+    computedAt.textContent = `Computed at: ${formatInstant(data.computedAt)}`;
+    container.append(computedAt);
+  }
+  if (data.outputRevision !== undefined) {
+    const outputRevision = createElement(documentRef, 'p', 'muted');
+    outputRevision.textContent = `Output revision: ${String(data.outputRevision)}`;
+    container.append(outputRevision);
+  }
+  if (data.summary !== undefined) {
+    const counts = createElement(documentRef, 'dl', 'summary-grid');
+    for (const [label, value] of [
+      ['Assignments', data.summary.assignmentCount],
+      ['Backups', data.summary.backupCount],
+      ['Shortfalls', data.summary.shortfallCount]
+    ] as const) {
+      const term = createElement(documentRef, 'dt');
+      term.textContent = label;
+      const count = createElement(documentRef, 'dd');
+      count.textContent = String(value);
+      counts.append(term, count);
+    }
+    container.append(counts);
   }
   if (data.diagnostic) {
     const diagnostic = createElement(documentRef, 'p', 'alert error');

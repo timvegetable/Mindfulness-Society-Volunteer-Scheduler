@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RouteLoader, type RouteIdentity } from './route-loader.js';
 import { parseDashboard, parseSchedule } from './main.js';
+import { schedulePublishLabel } from './views.js';
 
 const volunteer: RouteIdentity = { email: 'volunteer@example.test', role: 'volunteer' };
 
@@ -206,5 +207,27 @@ describe('read response revision parsing', () => {
     expect(parseDashboard({}).revision).toBeUndefined();
     // A volunteer-scoped revision is not the global revision, so it is never used.
     expect(parseDashboard({ volunteer: { revision: 4 } }).revision).toBeUndefined();
+  });
+
+  it('parses preview timestamps, output revisions, and zero-valued summary counts', () => {
+    const schedule = parseSchedule({
+      revision: 12,
+      inputRevision: 4,
+      scheduleRevision: 11,
+      computedAt: '2026-09-19T18:04:05.000Z',
+      outputRevision: 'preview-12',
+      summary: { assignmentCount: 0, backupCount: 0, shortfallCount: 0 },
+      preview: true,
+      sessions: []
+    });
+    expect(schedule.computedAt).toBe('2026-09-19T18:04:05.000Z');
+    expect(schedule.outputRevision).toBe('preview-12');
+    expect(schedule.summary).toEqual({ assignmentCount: 0, backupCount: 0, shortfallCount: 0 });
+  });
+
+  it('labels the publish control with the reviewed preview output', () => {
+    expect(schedulePublishLabel({ preview: false })).toBe('Preview required before publishing');
+    expect(schedulePublishLabel({ preview: true, outputRevision: 27 })).toBe('Publish preview output revision 27');
+    expect(schedulePublishLabel({ preview: true, outputRevision: 'run-28' })).toBe('Publish preview output revision run-28');
   });
 });

@@ -49,7 +49,7 @@ function now(): string {
 }
 
 function auditId(): string {
-  const cryptoApi = globalThis.crypto;
+  const cryptoApi = typeof globalThis.crypto === 'object' ? globalThis.crypto : undefined;
   if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
   return `audit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

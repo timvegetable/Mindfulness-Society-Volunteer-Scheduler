@@ -11,7 +11,7 @@ import { createCenterWorkflow } from './centers/service.js';
 import type { CenterCaller } from './centers/models.js';
 import { centerCodec, centerUserCodec, candidateScheduleCodec } from './centers/codecs.js';
 import { CacheInsightRepository, InsightStore, projectInsights as projectInsightDataset, type InsightConfig, type InsightDataset, type InsightSnapshot, type InsightSourceRevision, type ScriptCache } from './insights/index.js';
-import { runScheduling, SchedulingStore } from './scheduling/index.js';
+import { filterSessionsAfterCutoff, isSessionSchedulable, runScheduling, SchedulingStore } from './scheduling/index.js';
 import { validateCommittedSessionInputs } from './scheduling/inputs.js';
 import {
   assignmentCodec,
@@ -280,6 +280,8 @@ type ScheduleReadState = {
   schedulingInput: number;
   run: SchedulingRun | undefined;
   preview: boolean;
+  computedAt: string;
+  schedulingTimeZone: string;
 };
 
 /**
@@ -290,39 +292,49 @@ type ScheduleReadState = {
  */
 function scheduleProjection(repositories: RuntimeRepositories, rows: ScheduleRows, state: ScheduleReadState): Record<string, unknown> {
   const sessions = repositories.sessions.list();
+  const projectedSessions = filterSessionsAfterCutoff(
+    sessions.filter(isSessionSchedulable),
+    state.computedAt,
+    state.schedulingTimeZone
+  );
+  const projectedSessionIds = new Set(projectedSessions.map((session) => session.id));
   const volunteers = new Map(repositories.volunteers.list().map((volunteer) => [volunteer.id, volunteer]));
   const centers = new Map(repositories.centers.list().map((center) => [center.id, center]));
   // Index the published rows once instead of scanning them per session.
   const assignmentsBySession = new Map<string, ScheduleRows['assignments'][number][]>();
   for (const assignment of rows.assignments) {
-    if (assignment.status !== 'assigned' || assignment.scheduleRevision !== rows.outputRevision) continue;
+    if (assignment.status !== 'assigned' || assignment.scheduleRevision !== rows.outputRevision || !projectedSessionIds.has(assignment.sessionId)) continue;
     const existing = assignmentsBySession.get(assignment.sessionId);
     if (existing) existing.push(assignment);
     else assignmentsBySession.set(assignment.sessionId, [assignment]);
   }
   const backupsBySession = new Map<string, ScheduleRows['backups'][number][]>();
   for (const backup of rows.backups) {
-    if (backup.status !== 'available' || backup.scheduleRevision !== rows.outputRevision) continue;
+    if (backup.status !== 'available' || backup.scheduleRevision !== rows.outputRevision || !projectedSessionIds.has(backup.sessionId)) continue;
     const existing = backupsBySession.get(backup.sessionId);
     if (existing) existing.push(backup);
     else backupsBySession.set(backup.sessionId, [backup]);
   }
-  return {
-    sessions: sessions
-      // A proposed class is not schedulable, so it is reported as an explicit
-      // exclusion instead of as an unfilled committed occurrence.
-      .filter((session) => session.status !== 'proposed')
-      .map((session) => {
+  const sessionProjection = projectedSessions.map((session) => {
         const sessionAssignments = (assignmentsBySession.get(session.id) ?? []).map((assignment) => ({ ...assignment, volunteerName: volunteers.get(assignment.volunteerId)?.name }));
         const sessionBackups = (backupsBySession.get(session.id) ?? [])
           .sort((left, right) => left.position - right.position)
           .map((backup) => volunteers.get(backup.volunteerId)?.name ?? backup.volunteerId);
         return { ...session, displayName: sessionDisplayName(centers, session), assignments: sessionAssignments, backups: sessionBackups, shortfall: Math.max(0, session.requiredStaffCount - sessionAssignments.length) };
-      }),
+      });
+  return {
+    sessions: sessionProjection,
     preview: state.preview,
     revision: state.globalRevision,
     inputRevision: state.schedulingInput,
     scheduleRevision: state.run?.outputRevision ?? null,
+    outputRevision: rows.outputRevision,
+    computedAt: state.computedAt,
+    summary: {
+      assignmentCount: sessionProjection.reduce((total, session) => total + session.assignments.length, 0),
+      backupCount: sessionProjection.reduce((total, session) => total + session.backups.length, 0),
+      shortfallCount: sessionProjection.reduce((total, session) => total + session.shortfall, 0)
+    },
     stale: state.run ? state.run.inputRevision !== state.schedulingInput : false,
     runStatus: state.run?.status ?? 'none',
     diagnostic: state.run?.diagnostic,
@@ -372,16 +384,18 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     const value = Number(properties.getProperty('DATA_REVISION') ?? '0');
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   };
-  const computeSchedule = (inputRevision: number, previous: SchedulingRun | undefined, actorId: string) => {
+  const computeSchedule = (inputRevision: number, previous: SchedulingRun | undefined, actorId: string, startedAt: string) => {
     const schedulingStore = new SchedulingStore({ inputRevision, currentRevision: previous?.outputRevision ?? 0 });
     return runScheduling(schedulingStore, {
       inputRevision,
       actorId,
       volunteers: hydratedVolunteers(store),
       sessions: validateCommittedSessionInputs(store.sessions.list()),
+      schedulingTimeZone: configuration.timeZone,
       exceptions: store.exceptions.list(),
       assignments: store.assignments.list(),
-      runId: `scheduling-${inputRevision}-${Date.now()}`
+      runId: `scheduling-${inputRevision}-${Date.now()}`,
+      startedAt
     });
   };
   // The derivation lives behind the script cache: a read serves the stored
@@ -431,26 +445,26 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       const value = payload as { assignmentId: string; reason?: string };
       return serviceData(selfService.cancelAssignedOccurrence({ id: actor.user.id, volunteerId: actor.user.volunteerId, roles: actor.user.roles, active: actor.user.active }, { ...value, expectedRevision: store.assignments.revision().number, expectedExceptionRevision: store.exceptions.revision().number }));
     },
-    [INTEGRATION_OPERATIONS.adminSchedule]: () => {
+    [INTEGRATION_OPERATIONS.adminSchedule]: ({ now: requestNow }) => {
       const run = latestCompletedRun(store.schedulingRuns.list());
-      return scheduleProjection(store, { assignments: store.assignments.list(), backups: store.backups.list(), outputRevision: run?.outputRevision ?? 0 }, { globalRevision: globalRevision(), schedulingInput: schedulingInputRevision(properties), run, preview: false });
+      return scheduleProjection(store, { assignments: store.assignments.list(), backups: store.backups.list(), outputRevision: run?.outputRevision ?? 0 }, { globalRevision: globalRevision(), schedulingInput: schedulingInputRevision(properties), run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
     },
     // Read-only: the deterministic scheduler runs in memory against this
     // request's snapshot and writes no Sheet row, run record, audit entry, or revision.
-    [INTEGRATION_OPERATIONS.adminSchedulePreview]: () => {
+    [INTEGRATION_OPERATIONS.adminSchedulePreview]: ({ now: requestNow }) => {
       const inputRevision = schedulingInputRevision(properties);
       const previous = latestCompletedRun(store.schedulingRuns.list());
-      const result = computeSchedule(inputRevision, previous, 'administrator-preview');
+      const result = computeSchedule(inputRevision, previous, 'administrator-preview', requestNow);
       return scheduleProjection(
         store,
         { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision },
-        { globalRevision: globalRevision(), schedulingInput: inputRevision, run: previous, preview: true }
+        { globalRevision: globalRevision(), schedulingInput: inputRevision, run: previous, preview: true, computedAt: requestNow, schedulingTimeZone: configuration.timeZone }
       );
     },
-    [INTEGRATION_OPERATIONS.adminScheduleRerun]: ({ actor }) => {
+    [INTEGRATION_OPERATIONS.adminScheduleRerun]: ({ actor, now: requestNow }) => {
       const inputRevision = schedulingInputRevision(properties);
       const previous = latestCompletedRun(store.schedulingRuns.list());
-      const result = computeSchedule(inputRevision, previous, actor.user.id);
+      const result = computeSchedule(inputRevision, previous, actor.user.id, requestNow);
       const beforeAssignments = store.assignments.list();
       const beforeBackups = store.backups.list();
       try {
@@ -462,7 +476,7 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
         try { store.backups.replace(beforeBackups, store.backups.revision().number, actor.user.id, 'schedule-rollback'); } catch { /* preserve original error */ }
         throw error;
       }
-      return scheduleProjection(store, { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision }, { globalRevision: globalRevision(), schedulingInput: inputRevision, run: result.run, preview: false });
+      return scheduleProjection(store, { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision }, { globalRevision: globalRevision(), schedulingInput: inputRevision, run: result.run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
     },
     [INTEGRATION_OPERATIONS.adminImportPreview]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
@@ -525,4 +539,3 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
   };
   return { handlers, users: store.centerUsers.list() };
 }
-

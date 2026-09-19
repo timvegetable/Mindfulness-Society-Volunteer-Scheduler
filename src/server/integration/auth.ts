@@ -72,8 +72,6 @@ export type JwtClaimVerifierOptions = Readonly<{
 function decodeBase64Url(value: string): string {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
   if (typeof globalThis.atob === 'function') return globalThis.atob(normalized);
-  const bufferApi = (globalThis as { Buffer?: { from(value: string, encoding: string): { toString(encoding: string): string } } }).Buffer;
-  if (bufferApi) return bufferApi.from(normalized, 'base64').toString('utf8');
   throw new Error('Base64 decoding is unavailable.');
 }
 

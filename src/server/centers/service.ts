@@ -70,7 +70,7 @@ const systemClock: Clock = {
 
 const randomIds: IdGenerator = {
   next(prefix: string) {
-    const cryptoApi = globalThis.crypto;
+    const cryptoApi = typeof globalThis.crypto === 'object' ? globalThis.crypto : undefined;
     if (cryptoApi?.randomUUID) return `${prefix}-${cryptoApi.randomUUID()}`;
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }

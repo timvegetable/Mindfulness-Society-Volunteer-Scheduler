@@ -1,5 +1,6 @@
 import { parseEmbeddedWhenIsGoodData, type EmbeddedParserOptions } from './parser.js';
 import type { Fetcher, ParsedWhenIsGood, WhenIsGoodFetcherOptions } from './types.js';
+import { utf8ByteLength } from '../../shared/utf8.js';
 
 export class WhenIsGoodFetchError extends Error {
   readonly status?: number;
@@ -68,7 +69,7 @@ export class WhenIsGoodFetcher {
     }
     if (!response.ok) throw new WhenIsGoodFetchError(`WhenIsGood request returned HTTP ${response.status ?? 'error'}`, response.status);
     const html = response.text();
-    if (new TextEncoder().encode(html).byteLength > this.maxPayloadBytes) throw new WhenIsGoodFetchError('WhenIsGood response exceeds the configured payload limit');
+    if (utf8ByteLength(html) > this.maxPayloadBytes) throw new WhenIsGoodFetchError('WhenIsGood response exceeds the configured payload limit');
     let parsed: ParsedWhenIsGood;
     try {
       parsed = parseEmbeddedWhenIsGoodData(html, { ...this.parserOptions, resultId: normalizedResultId });

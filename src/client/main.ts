@@ -2,6 +2,7 @@ import '../styles.css';
 import { ApiClient, ApiClientError, type IdentityData } from './api';
 import { IdentityController, type IdentityState } from './identity';
 import { RouteLoader } from './route-loader';
+import { actionFailureMessage } from './format';
 import {
   renderAdminImport,
   renderAdminInsights,
@@ -17,6 +18,7 @@ import {
   type CenterScheduleData,
   type InsightsData,
   type ImportRunData,
+  type ScheduleNotice,
   type VolunteerDashboardData
 } from './views';
 
@@ -69,6 +71,8 @@ interface Runtime {
   loader: RouteLoader<RoutePayload>;
   profile?: IdentityData;
   route: Route;
+  /** Schedule action feedback survives the transient toolbar status node. */
+  scheduleNotice?: ScheduleNotice;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -220,6 +224,18 @@ export function parseSchedule(value: unknown): AdminScheduleData {
     revision: parseRevision(data.revision),
     inputRevision: parseRevision(data.inputRevision),
     scheduleRevision: parseRevision(data.scheduleRevision),
+    computedAt: stringValue(data.computedAt),
+    outputRevision: parseRevision(data.outputRevision),
+    summary: isRecord(data.summary) &&
+      numberValue(data.summary.assignmentCount) !== undefined &&
+      numberValue(data.summary.backupCount) !== undefined &&
+      numberValue(data.summary.shortfallCount) !== undefined
+      ? {
+        assignmentCount: numberValue(data.summary.assignmentCount) as number,
+        backupCount: numberValue(data.summary.backupCount) as number,
+        shortfallCount: numberValue(data.summary.shortfallCount) as number
+      }
+      : undefined,
     preview: data.preview === true,
     stale: data.stale === true,
     runStatus: stringValue(data.runStatus),
@@ -466,16 +482,44 @@ function paintRoute(runtime: Runtime, payload: RoutePayload, credential: string)
     return;
   }
   if (payload.route === 'schedule') {
-    renderAdminSchedule(runtime.app, payload.schedule, {
-      onPreview: async () => {
-        renderAdminSchedule(runtime.app, parseSchedule(await runtime.api.previewSchedule(credential)), {}, documentRef);
-      },
-      onPublish: async (expectedRevision) => {
-        if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
-        await runtime.api.rerunSchedule(expectedRevision, credential);
-        await afterMutation();
-      }
-    }, documentRef);
+    let scheduleData = payload.schedule;
+    // Keep the controller's render closure as the only way schedule actions
+    // paint the view. Previewing used to call the view directly with an empty
+    // action set, which silently detached both controls after the first click.
+    const renderSchedule = (): void => {
+      renderAdminSchedule(runtime.app, scheduleData, {
+        notice: runtime.scheduleNotice,
+        onPreview: async () => {
+          try {
+            scheduleData = parseSchedule(await runtime.api.previewSchedule(credential));
+            runtime.scheduleNotice = {
+              kind: 'success',
+              message: scheduleData.outputRevision === undefined
+                ? 'Scheduling preview is ready to review.'
+                : `Scheduling preview is ready to review (output revision ${String(scheduleData.outputRevision)}).`
+            };
+            renderSchedule();
+          } catch (error) {
+            runtime.scheduleNotice = { kind: 'error', message: actionFailureMessage(error) };
+            renderSchedule();
+            throw error;
+          }
+        },
+        onPublish: async (expectedRevision) => {
+          try {
+            if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+            await runtime.api.rerunSchedule(expectedRevision, credential);
+            runtime.scheduleNotice = { kind: 'success', message: 'Schedule published successfully.' };
+            await afterMutation();
+          } catch (error) {
+            runtime.scheduleNotice = { kind: 'error', message: actionFailureMessage(error) };
+            renderSchedule();
+            throw error;
+          }
+        }
+      }, documentRef);
+    };
+    renderSchedule();
     return;
   }
   if (payload.route === 'import') {
@@ -620,6 +664,7 @@ export async function boot(documentRef: Document = globalThis.document): Promise
       chooseRoute(runtime);
     } else if (state.status === 'signed-out' || state.status === 'unavailable') {
       runtime.profile = undefined;
+      runtime.scheduleNotice = undefined;
       runtime.loader.setIdentity(undefined);
       setRouteStatus(runtime, '');
       renderNavigation(runtime);

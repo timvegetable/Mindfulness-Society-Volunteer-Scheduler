@@ -256,7 +256,7 @@ export class SchedulingStore {
   }
 }
 
-export type SchedulingRunInput = SchedulerInput & {
+export type SchedulingRunInput = Omit<SchedulerInput, 'asOf'> & {
   inputRevision: number;
   actorId?: string;
   source?: string;
@@ -285,8 +285,13 @@ export function runScheduling(
       const schedulerInput: SchedulerInput = {
         volunteers: input.volunteers,
         sessions: input.sessions,
+        // The run start is the deterministic cutoff for both the calculation
+        // and the persisted run metadata. A session starting at this exact
+        // instant is already started and is therefore excluded.
+        asOf: run.startedAt,
         scheduleRevision: store.currentRevision() + 1
       };
+      if (input.schedulingTimeZone !== undefined) schedulerInput.schedulingTimeZone = input.schedulingTimeZone;
       if (input.exceptions !== undefined) schedulerInput.exceptions = input.exceptions;
       if (input.availabilityExceptions !== undefined) schedulerInput.availabilityExceptions = input.availabilityExceptions;
       if (input.assignments !== undefined) schedulerInput.assignments = input.assignments;

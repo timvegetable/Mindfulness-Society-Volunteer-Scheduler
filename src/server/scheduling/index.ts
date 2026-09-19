@@ -7,7 +7,9 @@ export {
 export type { CandidateVolunteer, ScheduleResult, SchedulerInput, ScheduleSessionsOptions } from './scheduler.js';
 export {
   eligibleCandidatesForSession,
+  filterSessionsAfterCutoff,
   isSessionSchedulable,
+  isSessionAfterCutoff,
   rankEligibleCandidates,
   runSchedulingAlgorithm,
   scheduleSessions

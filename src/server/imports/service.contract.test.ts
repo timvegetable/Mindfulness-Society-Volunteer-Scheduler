@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Volunteer } from '../../shared/domain.js';
-import type { WhenIsGoodFetcher } from './fetcher.js';
+import { WhenIsGoodFetcher, type WhenIsGoodFetcher as WhenIsGoodFetcherType } from './fetcher.js';
 import { MemoryImportRepository } from './memory.js';
 import { SourceMappingService } from './matching.js';
 import { StagedWhenIsGoodImportService, contentHash } from './service.js';
@@ -116,7 +116,7 @@ describe('staged WhenIsGood import contract', () => {
     service.stage(admin, withUnmatched, RAW, 'result-1');
     new SourceMappingService(repository).save(admin, { sourceParticipantId: 'p-9', volunteerId: 'vol-2' });
 
-    const fetcher = { fetchResult: (resultId: string) => ({ resultId, url: 'https://example.test/results', html: RAW, parsed: withUnmatched }) } as unknown as WhenIsGoodFetcher;
+    const fetcher = { fetchResult: (resultId: string) => ({ resultId, url: 'https://example.test/results', html: RAW, parsed: withUnmatched }) } as unknown as WhenIsGoodFetcherType;
     const restaged = service.restageUnresolved(admin, fetcher);
     expect(restaged).toHaveLength(1);
     expect(restaged[0]?.run.matchedCount).toBe(2);
@@ -156,5 +156,26 @@ describe('staged WhenIsGood import contract', () => {
     expect(next.preview.unchanged.map((row) => [row.weekday, row.start, row.end])).toEqual([[1, '09:00', '10:00']]);
     expect(next.preview.removed.map((row) => [row.weekday, row.start, row.end])).toEqual([[3, '09:00', '10:00'], [5, '11:00', '12:00']]);
     expect(next.preview.added).toEqual([]);
+  });
+
+  it('completes an import preview when Apps Script has no TextEncoder', () => {
+    const html = '<script>window.results = {"participants":[{"id":"p-1","name":"Example Volunteer","email":"volunteer@example.test","availability":[{"weekday":1,"start":"09:00","end":"10:00"}]}]};</script>';
+    const repository = new MemoryImportRepository(roster);
+    const service = serviceFor(repository);
+    const fetcher = new WhenIsGoodFetcher({
+      endpoint: 'https://whenisgood.example/results/{resultId}',
+      fetch: () => ({ ok: true, status: 200, text: () => html }),
+      parserOptions: { defaultTimeZone: 'America/New_York' }
+    });
+    const original = globalThis.TextEncoder;
+    Object.defineProperty(globalThis, 'TextEncoder', { configurable: true, value: undefined });
+    try {
+      const result = service.stageFromFetcher(admin, fetcher, 'result-without-text-encoder');
+      expect(result.run.status).toBe('staged');
+      expect(result.preview.canPromote).toBe(true);
+      expect(result.run.matchedCount).toBe(1);
+    } finally {
+      Object.defineProperty(globalThis, 'TextEncoder', { configurable: true, value: original });
+    }
   });
 });

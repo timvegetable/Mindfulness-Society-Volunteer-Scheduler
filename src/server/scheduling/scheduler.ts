@@ -9,10 +9,15 @@ import {
 } from '../../shared/domain.js';
 import { intervalsOverlap, isAvailableForSession } from '../../shared/time.js';
 import { validateSessionInputs, type SchedulingInputError } from './inputs.js';
+import { Temporal } from '@js-temporal/polyfill';
 
 export type SchedulerInput = {
   volunteers: readonly Volunteer[];
   sessions: readonly Session[];
+  /** Scheduling boundary. Session starts at or before this instant are excluded. */
+  asOf: string;
+  /** Zone in which session date/start cells are interpreted for the cutoff. */
+  schedulingTimeZone?: string;
   exceptions?: readonly AvailabilityException[];
   /** Alias used by workbook-facing adapters. */
   availabilityExceptions?: readonly AvailabilityException[];
@@ -27,7 +32,7 @@ export type SchedulerInput = {
   createdAt?: string;
 };
 
-export type ScheduleSessionsOptions = Pick<SchedulerInput, 'exceptions' | 'availabilityExceptions' | 'assignments' | 'currentAssignments' | 'existingAssignments' | 'scheduleRevision' | 'createdAt'>;
+export type ScheduleSessionsOptions = Pick<SchedulerInput, 'asOf' | 'schedulingTimeZone' | 'exceptions' | 'availabilityExceptions' | 'assignments' | 'currentAssignments' | 'existingAssignments' | 'scheduleRevision' | 'createdAt'>;
 
 export type CandidateVolunteer = {
   volunteerId: string;
@@ -40,8 +45,12 @@ export type ScheduleResult = {
   assignments: Assignment[];
   backups: Backup[];
   shortfalls: Shortfall[];
-  /** Session IDs excluded because they are proposed/cancelled or not committed. */
+  /** All session IDs omitted from this calculation, including proposals and started occurrences. */
   excludedSessionIds: string[];
+  /** Proposed UNIV100 occurrences excluded because they are not confirmed. */
+  excludedProposedSessionIds: string[];
+  /** Committed occurrences excluded because their local start is at/before asOf. */
+  excludedCutoffSessionIds: string[];
   /** Active volunteers without a completed numeric rank. */
   ineligibleVolunteerIds: string[];
 };
@@ -72,6 +81,30 @@ function sessionOrder(left: Session, right: Session): number {
 function isCommittedSession(session: Session): boolean {
   return (session.kind === 'center' && session.status === 'locked')
     || (session.kind === 'univ100' && session.status === 'confirmed');
+}
+
+/** Convert a session's local date/start cells to an instant in the scheduling zone. */
+export function sessionStartInstant(session: Pick<Session, 'date' | 'start' | 'timeZone'>, schedulingTimeZone = session.timeZone): Temporal.Instant {
+  const [yearText, monthText, dayText] = session.date.split('-');
+  const [hourText, minuteText] = session.start.split(':');
+  return Temporal.ZonedDateTime.from({
+    timeZone: schedulingTimeZone,
+    year: Number(yearText),
+    month: Number(monthText),
+    day: Number(dayText),
+    hour: Number(hourText),
+    minute: Number(minuteText)
+  }).toInstant();
+}
+
+/** A session is schedulable only when its start instant is strictly after asOf. */
+export function isSessionAfterCutoff(session: Pick<Session, 'date' | 'start' | 'timeZone'>, asOf: string, schedulingTimeZone = session.timeZone): boolean {
+  return Temporal.Instant.compare(sessionStartInstant(session, schedulingTimeZone), Temporal.Instant.from(asOf)) > 0;
+}
+
+/** Filter session inputs at one deterministic instant boundary. */
+export function filterSessionsAfterCutoff(sessions: readonly Session[], asOf: string, schedulingTimeZone?: string): Session[] {
+  return sessions.filter((session) => isSessionAfterCutoff(session, asOf, schedulingTimeZone ?? session.timeZone));
 }
 
 function assignmentKey(sessionId: string, volunteerId: string): string {
@@ -160,11 +193,15 @@ function candidateRows(
 export function rankEligibleCandidates(
   session: Session,
   volunteers: readonly Volunteer[],
-  options: ScheduleSessionsOptions & { sessions?: readonly Session[] } = {}
+  options: Partial<ScheduleSessionsOptions> & { sessions?: readonly Session[] } = {}
 ): CandidateVolunteer[] {
   const validated = validateSessionInputs([session])[0];
   if (!validated) throw new Error('Session is required');
-  const allSessions = (options.sessions ?? [validated]).filter(isCommittedSession);
+  const schedulingTimeZone = options.schedulingTimeZone;
+  if (options.asOf !== undefined && !isSessionAfterCutoff(validated, options.asOf, schedulingTimeZone ?? validated.timeZone)) return [];
+  const allSessions = (options.sessions ?? [validated])
+    .filter(isCommittedSession)
+    .filter((candidate) => options.asOf === undefined || isSessionAfterCutoff(candidate, options.asOf, schedulingTimeZone ?? candidate.timeZone));
   const assignments = options.assignments ?? options.currentAssignments ?? options.existingAssignments ?? [];
   const volunteerMap = new Map(volunteers.map((volunteer) => [volunteer.id, volunteer]));
   const occupancy = buildOccupancy(allSessions, assignments, volunteerMap);
@@ -223,23 +260,38 @@ export function scheduleSessions(input: SchedulerInput): ScheduleResult;
 export function scheduleSessions(
   volunteers: readonly Volunteer[],
   sessions: readonly Session[],
-  options?: ScheduleSessionsOptions
+  options: ScheduleSessionsOptions
 ): ScheduleResult;
 export function scheduleSessions(
   inputOrVolunteers: SchedulerInput | readonly Volunteer[],
   sessionsArgument?: readonly Session[],
-  optionsArgument: ScheduleSessionsOptions = {}
+  optionsArgument?: ScheduleSessionsOptions
 ): ScheduleResult {
+  if (Array.isArray(inputOrVolunteers) && optionsArgument === undefined) {
+    throw new Error('asOf is required when scheduling volunteers and sessions');
+  }
   const input: SchedulerInput = Array.isArray(inputOrVolunteers)
-    ? { volunteers: inputOrVolunteers as readonly Volunteer[], sessions: sessionsArgument ?? [], ...optionsArgument }
+    ? { volunteers: inputOrVolunteers as readonly Volunteer[], sessions: sessionsArgument ?? [], asOf: optionsArgument!.asOf, ...optionsArgument }
     : inputOrVolunteers as SchedulerInput;
   const volunteers = [...input.volunteers];
+  const asOf = Temporal.Instant.from(input.asOf);
   const validatedSessions = validateSessionInputs(input.sessions);
   const exceptions = input.exceptions ?? input.availabilityExceptions ?? [];
   const assignments = input.assignments ?? input.currentAssignments ?? input.existingAssignments ?? [];
-  const committedSessions = validatedSessions.filter(isCommittedSession).sort(sessionOrder);
+  const committedInputs = validatedSessions.filter(isCommittedSession);
+  const committedSessions = committedInputs
+    .filter((session) => Temporal.Instant.compare(sessionStartInstant(session, input.schedulingTimeZone ?? session.timeZone), asOf) > 0)
+    .sort(sessionOrder);
+  const excludedCutoffSessionIds = committedInputs
+    .filter((session) => Temporal.Instant.compare(sessionStartInstant(session, input.schedulingTimeZone ?? session.timeZone), asOf) <= 0)
+    .map((session) => session.id)
+    .sort((left, right) => stableCompare(left, right));
+  const excludedProposedSessionIds = validatedSessions
+    .filter((session) => session.kind === 'univ100' && session.status === 'proposed')
+    .map((session) => session.id)
+    .sort((left, right) => stableCompare(left, right));
   const excludedSessionIds = validatedSessions
-    .filter((session) => !isCommittedSession(session))
+    .filter((session) => !isCommittedSession(session) || excludedCutoffSessionIds.includes(session.id))
     .map((session) => session.id)
     .sort((left, right) => stableCompare(left, right));
   const ineligibleVolunteerIds = volunteers
@@ -260,6 +312,8 @@ export function scheduleSessions(
     backups: [],
     shortfalls: [],
     excludedSessionIds,
+    excludedProposedSessionIds,
+    excludedCutoffSessionIds,
     ineligibleVolunteerIds
   };
 

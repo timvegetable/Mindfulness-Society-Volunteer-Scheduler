@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ApiRequestSchema, type ApiResponse, type ErrorCode, type Role } from '../../shared/domain.js';
 import { RepositoryError } from '../workbook/repository.js';
+import { utf8ByteLength } from '../../shared/utf8.js';
 import {
   authenticateCredential,
   type AuthenticatedPrincipal,
@@ -211,8 +212,7 @@ function failure(code: ErrorCode, message: string, details?: IntegrationErrorDet
 function payloadBytes(value: unknown): number {
   const encoded = JSON.stringify(value);
   if (encoded === undefined) return Number.POSITIVE_INFINITY;
-  if (typeof globalThis.TextEncoder === 'function') return new TextEncoder().encode(encoded).byteLength;
-  return encodeURIComponent(encoded).replace(/%[0-9A-F]{2}|./g, 'x').length;
+  return utf8ByteLength(encoded);
 }
 
 function stableValue(value: unknown): unknown {

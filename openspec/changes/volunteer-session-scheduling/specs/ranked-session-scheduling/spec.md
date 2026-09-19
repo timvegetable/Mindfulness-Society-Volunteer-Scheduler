@@ -11,6 +11,25 @@ The system SHALL schedule only active, fixed center sessions and confirmed UNIV1
 - **WHEN** a proposed UNIV100 session has fewer eligible available volunteers than its required staffing count
 - **THEN** the system leaves the class unconfirmed, reports the staffing shortfall, and does not publish a staffing promise
 
+### Requirement: Started-session cutoff
+The system SHALL evaluate each scheduling run at a required `asOf` instant. It SHALL interpret every session's local date and start time in the configured scheduling time zone and SHALL schedule only occurrences whose start instant is strictly later than `asOf`.
+
+#### Scenario: Past occurrence is excluded
+- **WHEN** a committed session started before `asOf`
+- **THEN** the scheduler produces no assignment, backup, shortfall, or occupancy for that occurrence and the preview/publication session projection omits it
+
+#### Scenario: Exact-cutoff occurrence is excluded
+- **WHEN** a committed session's start instant is exactly equal to `asOf`
+- **THEN** the scheduler treats it as already started and produces no assignment, backup, shortfall, or occupancy for that occurrence
+
+#### Scenario: Future occurrence is evaluated
+- **WHEN** a committed session's start instant is strictly later than `asOf`
+- **THEN** the scheduler evaluates it using the normal rank, availability, overlap, assignment, and backup rules
+
+#### Scenario: Proposed exclusion remains distinct from cutoff exclusion
+- **WHEN** a proposed UNIV100 session is present along with past and future committed sessions
+- **THEN** the result reports the proposed session as a proposal exclusion separately from the time-based exclusions
+
 ### Requirement: Ranked deterministic assignment
 For each schedulable session, the system SHALL assign no more than two active, rank-eligible volunteers who are available for the entire session and have no overlapping assignment. It SHALL prefer rank 1 over rank 2 over rank 3 and SHALL apply a documented stable tie-breaker among volunteers with the same rank so identical inputs produce identical assignments.
 
