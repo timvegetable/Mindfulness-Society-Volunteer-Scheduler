@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { ConfigError, readJsonFile, summarizeConfig, validateConfig } from './lib/config.mjs';
 
@@ -36,21 +36,35 @@ async function saveReport(path, report) {
   await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 }
 
-function runClasp(rootDir, deploymentId) {
-  // A published web app serves a pinned version, so pushing code without a new
-  // version leaves production on the previous build. When the deployment id is
-  // supplied, redeploy it to the freshly pushed code.
-  const args = deploymentId
-    ? ['create-deployment', '--deploymentId', deploymentId, '--description', `deploy ${new Date().toISOString()}`]
-    : ['push', '--rootDir', rootDir];
+/**
+ * Runs clasp and reports the outcome together with its output. clasp exits 0
+ * after refusing a push (an unrecognized option, or a manifest change it will
+ * not overwrite without --force), so the exit code alone is not success.
+ */
+function runClasp(argv, cwd) {
   return new Promise((resolve) => {
-    const child = spawn('clasp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let outputBytes = 0;
-    child.stdout.on('data', (chunk) => { outputBytes += chunk.byteLength; });
-    child.stderr.on('data', (chunk) => { outputBytes += chunk.byteLength; });
-    child.on('error', () => resolve({ ok: false, outputBytes }));
-    child.on('exit', (code, signal) => resolve({ ok: code === 0, outputBytes, signal: signal ?? null }));
+    const child = spawn('clasp', argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { output += chunk.toString(); });
+    child.on('error', (error) => resolve({ ok: false, output: error.message }));
+    child.on('exit', (code, signal) => {
+      const refused = /\berror:/i.test(output) || /Skipping push\./i.test(output) || /not a valid/i.test(output);
+      resolve({ ok: code === 0 && !refused, output: output.trim(), signal: signal ?? null });
+    });
   });
+}
+
+/** The directory `clasp push` would upload, so a mismatch cannot silently deploy the wrong files. */
+async function configuredClaspRoot(repoRoot) {
+  const raw = await readFile(join(repoRoot, '.clasp.json'), 'utf8').catch(() => undefined);
+  if (raw === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed.rootDir === 'string' ? resolve(repoRoot, parsed.rootDir) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 let args;
@@ -113,13 +127,27 @@ try {
   if (args.execute && report.issues.length === 0) {
     const deploymentId = args['deployment-id'];
     if (deploymentId) report.checks.deploymentId = deploymentId;
-    const push = await runClasp(args['server-dist']);
-    report.checks.claspPushSucceeded = push.ok;
-    if (!push.ok) report.issues.push('clasp push failed or clasp is unavailable; prior deployment remains unchanged');
-    if (push.ok && deploymentId) {
-      const deployed = await runClasp(args['server-dist'], deploymentId);
-      report.checks.deploymentUpdated = deployed.ok;
-      if (!deployed.ok) report.issues.push('clasp could not update the deployment, so the published URL still serves the previous version');
+    const repoRoot = process.cwd();
+    const requestedRoot = resolve(repoRoot, args['server-dist']);
+    const claspRoot = await configuredClaspRoot(repoRoot);
+    report.checks.claspRootMatchesServerDist = claspRoot === requestedRoot;
+    if (claspRoot !== requestedRoot) {
+      report.issues.push(`.clasp.json rootDir resolves to ${claspRoot ?? '(none)'} but --server-dist is ${requestedRoot}; make them match so the reviewed bundle is the one that gets pushed`);
+    }
+    if (report.issues.length === 0) {
+      // --force is required: clasp treats a changed appsscript.json as a
+      // confirmation prompt and, with no terminal, answers it by skipping the
+      // entire push while still exiting 0.
+      const push = await runClasp(['push', '--force'], repoRoot);
+      report.checks.claspPushSucceeded = push.ok;
+      report.claspPushOutput = push.output.slice(-300);
+      if (!push.ok) report.issues.push(`clasp push was refused or failed, so the project still serves the previous code: ${push.output.slice(-200) || 'no output'}`);
+      if (push.ok && deploymentId) {
+        const deployed = await runClasp(['create-deployment', '--deploymentId', deploymentId, '--description', `deploy ${new Date().toISOString()}`], repoRoot);
+        report.checks.deploymentUpdated = deployed.ok;
+        report.claspDeployOutput = deployed.output.slice(-300);
+        if (!deployed.ok) report.issues.push(`clasp could not update the deployment, so the published URL still serves the previous version: ${deployed.output.slice(-200) || 'no output'}`);
+      }
     }
     report.productionMutation = report.issues.length === 0 ? 'Apps Script code pushed and the pinned deployment updated; write gate remained disabled' : 'none';
   }

@@ -36,6 +36,22 @@ describe('rejection reporting', () => {
   });
 });
 
+describe('write gate', () => {
+  it('refuses a state-changing operation while writes are disabled', () => {
+    const dispatcher = createIntegrationDispatcher({
+      verifier: new MemoryTokenVerifier({ 'valid-credential': claims }),
+      users: new MemoryUserDirectory([user as unknown as Parameters<typeof MemoryUserDirectory.prototype.set>[0]]),
+      // No revision source and no write lock: exactly what the runtime installs
+      // when the WRITE_ENABLED Script Property is not "true".
+      handlers: { [INTEGRATION_OPERATIONS.adminScheduleRerun]: () => ({ sessions: [] }) }
+    });
+
+    const response = dispatcher.dispatch({ operation: INTEGRATION_OPERATIONS.adminScheduleRerun, payload: {}, idempotencyKey: 'gate-check-1', credential: 'valid-credential', expectedRevision: 0 });
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE' } });
+  });
+});
+
 describe('reviewed scheduling publication', () => {
   it('publishes with the preview revision and rejects a superseded one', () => {
     const revision = new MemoryRevisionSource(7);
