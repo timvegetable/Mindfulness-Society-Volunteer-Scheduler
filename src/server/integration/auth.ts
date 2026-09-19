@@ -21,6 +21,8 @@ export type TokenVerifier = {
 
 export type UserDirectory = {
   findByEmail(email: string): User | undefined;
+  /** Optional, used only to make a failed lookup diagnosable. */
+  list?(): User[];
 };
 
 export type AuthenticatedPrincipal = Readonly<{
@@ -31,11 +33,14 @@ export type AuthenticatedPrincipal = Readonly<{
 
 export class AuthenticationError extends Error {
   readonly reason: 'missing' | 'invalid' | 'unknown-identity';
+  /** Non-sensitive explanation written to the Apps Script execution log. */
+  readonly detail?: string;
 
-  constructor(reason: 'missing' | 'invalid' | 'unknown-identity', message = 'Authentication is required.') {
+  constructor(reason: 'missing' | 'invalid' | 'unknown-identity', message = 'Authentication is required.', detail?: string) {
     super(message);
     this.name = 'AuthenticationError';
     this.reason = reason;
+    if (detail !== undefined) this.detail = detail;
   }
 }
 
@@ -241,21 +246,36 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/**
+ * The client reports only that the account was rejected, so the reason is written
+ * to the Apps Script execution log where an operator can read it. The credential
+ * itself is never logged.
+ */
+function reject(reason: AuthenticationError['reason'], detail: string): AuthenticationError {
+  const error = new AuthenticationError(reason, 'Authentication is required.', detail);
+  console.warn(`sign-in rejected (${reason}): ${detail}`);
+  return error;
+}
+
 export function authenticateCredential(
   credential: string | undefined,
   verifier: TokenVerifier,
   users: UserDirectory
 ): AuthenticatedPrincipal {
-  if (!credential?.trim()) throw new AuthenticationError('missing');
+  if (!credential?.trim()) throw reject('missing', 'the request carried no credential');
   let claims: VerifiedIdentityClaims;
   try {
     claims = verifier.verify(credential);
-  } catch {
-    throw new AuthenticationError('invalid');
+  } catch (error) {
+    throw reject('invalid', `token verification failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   const email = normalizeEmail(claims.email);
   const user = users.findByEmail(email);
-  if (!user || !user.active) throw new AuthenticationError('unknown-identity');
+  if (!user) {
+    const directorySize = users.list?.().length;
+    throw reject('unknown-identity', `no Users row for ${email}${directorySize === undefined ? '' : ` (directory holds ${directorySize} row(s))`}`);
+  }
+  if (!user.active) throw reject('unknown-identity', `the Users row for ${email} is marked inactive`);
   return { claims, user, email };
 }
 

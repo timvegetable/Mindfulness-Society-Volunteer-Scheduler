@@ -5,12 +5,12 @@ import { spawn } from 'node:child_process';
 import { ConfigError, readJsonFile, summarizeConfig, validateConfig } from './lib/config.mjs';
 
 function usage() {
-  console.error('Usage: node scripts/deploy-apps-script.mjs --config PRIVATE_CONFIG_PATH --server-dist APPS_SCRIPT_DIST_PATH --report REPORT_PATH [--execute --confirm DEPLOY_APPS_SCRIPT_WITH_WRITES_DISABLED]');
+  console.error('Usage: node scripts/deploy-apps-script.mjs --config PRIVATE_CONFIG_PATH --server-dist APPS_SCRIPT_DIST_PATH --report REPORT_PATH [--deployment-id ID] [--execute --confirm DEPLOY_APPS_SCRIPT_WITH_WRITES_DISABLED]');
 }
 
 function parseArgs(argv) {
   const result = {};
-  const values = new Set(['config', 'server-dist', 'report', 'confirm']);
+  const values = new Set(['config', 'server-dist', 'report', 'confirm', 'deployment-id']);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--execute') {
@@ -36,9 +36,15 @@ async function saveReport(path, report) {
   await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 }
 
-function runClasp(rootDir) {
+function runClasp(rootDir, deploymentId) {
+  // A published web app serves a pinned version, so pushing code without a new
+  // version leaves production on the previous build. When the deployment id is
+  // supplied, redeploy it to the freshly pushed code.
+  const args = deploymentId
+    ? ['create-deployment', '--deploymentId', deploymentId, '--description', `deploy ${new Date().toISOString()}`]
+    : ['push', '--rootDir', rootDir];
   return new Promise((resolve) => {
-    const child = spawn('clasp', ['push', '--rootDir', rootDir], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('clasp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let outputBytes = 0;
     child.stdout.on('data', (chunk) => { outputBytes += chunk.byteLength; });
     child.stderr.on('data', (chunk) => { outputBytes += chunk.byteLength; });
@@ -68,6 +74,7 @@ const report = {
     'Verify the Apps Script private property or configuration has writeEnabled=false before pushing code.',
     'Verify the intended Apps Script project/deployment identity using administrator-owned clasp credentials.',
     'After deployment, exercise authentication, authorization, preview, stale revision, and failed-write behavior before enabling writes.',
+    'Pass --deployment-id so the published URL is redeployed to the pushed code; a pinned deployment otherwise keeps serving the previous version.',
     'Retain the prior Apps Script deployment and Sheet export for rollback.'
   ]
 };
@@ -99,11 +106,17 @@ try {
   }
 
   if (args.execute && report.issues.length === 0) {
-    const result = await runClasp(args['server-dist']);
-    report.productionMutation = result.ok ? 'Apps Script code pushed; write gate remained disabled' : 'none';
-    report.checks.claspPushSucceeded = result.ok;
-    report.claspOutputBytes = result.outputBytes;
-    if (!result.ok) report.issues.push('clasp push failed or clasp is unavailable; prior deployment remains unchanged');
+    const deploymentId = args['deployment-id'];
+    if (deploymentId) report.checks.deploymentId = deploymentId;
+    const push = await runClasp(args['server-dist']);
+    report.checks.claspPushSucceeded = push.ok;
+    if (!push.ok) report.issues.push('clasp push failed or clasp is unavailable; prior deployment remains unchanged');
+    if (push.ok && deploymentId) {
+      const deployed = await runClasp(args['server-dist'], deploymentId);
+      report.checks.deploymentUpdated = deployed.ok;
+      if (!deployed.ok) report.issues.push('clasp could not update the deployment, so the published URL still serves the previous version');
+    }
+    report.productionMutation = report.issues.length === 0 ? 'Apps Script code pushed and the pinned deployment updated; write gate remained disabled' : 'none';
   }
   report.status = report.issues.length === 0 ? (args.execute ? 'deployed-write-disabled' : 'ready-for-administrator-review') : 'blocked';
 } catch (error) {
