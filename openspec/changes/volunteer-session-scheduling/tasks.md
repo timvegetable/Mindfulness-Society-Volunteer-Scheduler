@@ -76,3 +76,15 @@
 - [x] 8.3 Implement full-interval candidate coverage comparison with ranked volunteer counts and advisory, non-promissory labeling
 - [x] 8.4 Build administrator confirmation that rechecks current coverage, enforces the two-volunteer maximum, and creates auditable session occurrences
 - [ ] 8.5 Pilot the center workflow with one center and browser-verify tenant isolation, locked-session protection, changed-coverage rejection, and administrator-only confirmation
+
+## 9. Production Correctness and Responsiveness
+
+- [ ] 9.1 Normalize Sheet temporal values and insight operating hours
+- [ ] 9.2 Make promoted availability authoritative for every consumer
+- [ ] 9.3 Separate revisions and add reviewed scheduling preview
+- [ ] 9.4 Read each required Sheet tab once per operation
+- [ ] 9.5 Reuse insights by correct source and schedule revisions
+- [ ] 9.6 Cache verified claims within credential expiry
+- [ ] 9.7 Cache identity-scoped routes and format session labels
+- [ ] 9.8 Reject duplicate locked center confirmation
+- [ ] 9.9 Verify warm read p95 and corrected deployed flows

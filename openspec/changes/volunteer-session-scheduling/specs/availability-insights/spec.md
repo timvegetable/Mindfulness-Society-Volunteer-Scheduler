@@ -34,8 +34,20 @@ The administrator interface SHALL display the overlap result in both a sortable 
 - **THEN** the interface shows the interval, count, and contributing volunteer names from the same analysis revision
 
 ### Requirement: Insight freshness
-The system SHALL mark availability insights stale when volunteer eligibility, recurring availability, or the current assignment revision changes and SHALL regenerate them from one consistent data revision before presenting them as current.
+The system SHALL mark availability insights stale when volunteer eligibility, recurring availability, the latest completed schedule output revision, or the assignment rows revision changes and SHALL regenerate them from one consistent data revision before presenting them as current. The leftover population SHALL be derived from the latest completed schedule output revision: an assignment SHALL exclude its volunteer only when it belongs to that output revision, cancelled assignments SHALL never exclude a volunteer, and an unchanged set of source revisions SHALL reuse the previously derived dataset instead of recomputing it.
 
 #### Scenario: Scheduling changes the leftover population
 - **WHEN** a new scheduling revision assigns or unassigns volunteers
 - **THEN** previously generated insights are marked stale until recalculated against that scheduling revision
+
+#### Scenario: Cancellation does not hide a volunteer
+- **WHEN** an assignment was cancelled, changing the assignment rows without a new completed schedule output revision
+- **THEN** the cancelled assignment does not exclude its volunteer from the leftover population even though the insights are marked stale
+
+#### Scenario: Only current-output assignments exclude volunteers
+- **WHEN** a volunteer holds an assignment whose schedule revision is not the latest completed output revision
+- **THEN** that assignment does not exclude the volunteer from the leftover population
+
+#### Scenario: Unchanged sources reuse derived insights
+- **WHEN** insights are read while eligibility, recurring availability, schedule output, and assignment rows revisions are unchanged
+- **THEN** the system returns the previously derived dataset without regenerating it

@@ -43,3 +43,40 @@ The system SHALL record the source, actor, and timestamp of roster, ranking, ava
 #### Scenario: Administrator corrects an imported record
 - **WHEN** an administrator changes a volunteer's status, rank, or imported availability
 - **THEN** the updated value is used by future scheduling runs and the audit data identifies the administrator and update time
+
+### Requirement: Authoritative promoted availability
+Promoting a validated import SHALL replace the recurring availability dataset consumed by scheduling, availability self-service, center coverage comparison, and availability insights, while staged import records remain provenance only. Promotion SHALL write the authoritative recurring rows and the provenance records before the run is marked promoted and SHALL restore both previous sets if either write fails. Import preview SHALL compare staged intervals with the authoritative recurring rows, including self-service changes made since any earlier import.
+
+#### Scenario: Promotion changes scheduling and insight eligibility
+- **WHEN** a staged, matched interval is promoted for an eligible volunteer
+- **THEN** subsequent scheduling candidate evaluation and availability insights use the promoted recurring interval immediately
+
+#### Scenario: Failed promotion preserves prior availability
+- **WHEN** either the authoritative rows or the provenance records cannot be written during promotion
+- **THEN** the previous authoritative availability and provenance records remain unchanged and the run is not marked promoted
+
+#### Scenario: Preview reflects authoritative changes since the last import
+- **WHEN** a volunteer changed recurring availability after the last import and the same source result is imported again
+- **THEN** the preview compares the staged intervals with the current authoritative rows instead of the previous import records
+
+### Requirement: Administrator reconciliation of unmatched imports
+Administrators SHALL resolve unmatched or ambiguous import participants through strict, audited mapping operations that require the expected global revision and at least one source identity. An unchanged staged import with unmatched participants SHALL be re-matched after the mapping revision changes without duplicating availability rows and without hand-edited mapping rows.
+
+#### Scenario: Administrator maps an unmatched participant
+- **WHEN** an administrator submits a source identity and a target volunteer for an unmatched participant
+- **THEN** the system stores or updates the mapping, audits the change, and re-runs matching for the staged import
+
+#### Scenario: Unchanged import is re-matched without duplication
+- **WHEN** the same source result is re-imported after a mapping change reconciled the previously unmatched participants
+- **THEN** the staged run is updated in place and the promoted availability contains no duplicate volunteer intervals
+
+### Requirement: Normalized workbook temporal values
+The integration boundary SHALL normalize Sheet date and clock cells using the configured IANA time zone into canonical `YYYY-MM-DD` date, `HH:mm` clock, and ISO 8601 instant values before schema validation, SHALL accept canonical strings and numeric time-of-day fractions, and SHALL leave unrecognized text unchanged so validation fails loudly. Session presentations SHALL use a human-readable center or class name resolved from the workbook together with a readable local date and time range.
+
+#### Scenario: Sheet date cells are normalized
+- **WHEN** a Spreadsheet date cell containing 2026-09-04 and clock cells containing 09:32 and 17:00 are read in the configured time zone
+- **THEN** the codecs decode 2026-09-04, 09:32, and 17:00 as canonical values
+
+#### Scenario: Session label is readable
+- **WHEN** a session is presented to a volunteer or administrator
+- **THEN** the label uses the resolved center or class name and a readable local date and time range

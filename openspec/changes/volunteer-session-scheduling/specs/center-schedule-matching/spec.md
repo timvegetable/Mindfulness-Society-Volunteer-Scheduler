@@ -32,3 +32,7 @@ Only an authorized administrator SHALL be able to convert a center candidate int
 #### Scenario: Coverage changed before confirmation
 - **WHEN** a candidate previously showed coverage but current availability no longer meets the requested staffing count
 - **THEN** the system blocks confirmation and displays the current staffing shortfall
+
+#### Scenario: Matching locked occurrence blocks confirmation
+- **WHEN** an administrator attempts to confirm a candidate whose occurrence already exists as a locked session
+- **THEN** the system rejects the confirmation as a conflict before writing any session or changing candidate state and creates no duplicate occurrence

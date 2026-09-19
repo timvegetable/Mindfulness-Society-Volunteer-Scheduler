@@ -58,3 +58,33 @@ The system SHALL persist each scheduling run's input revision, assignments, back
 #### Scenario: Scheduling run fails midway
 - **WHEN** an error prevents a scheduling run from completing
 - **THEN** the incomplete result does not replace the current schedule and administrators receive a failure diagnostic
+
+### Requirement: Separate global and scheduling-input revisions
+Every read projection SHALL report the current global data revision as its revision and SHALL name the dedicated scheduling-input counter and the latest completed run's output revision separately. The scheduling-input counter SHALL advance exactly once whenever Volunteers, RecurringAvailability, AvailabilityExceptions, or Sessions commits, SHALL remain unchanged for reads and unrelated tabs, and schedule staleness SHALL be derived by comparing the latest completed run's recorded input revision with the current scheduling-input revision. Mutation requests SHALL carry the read response's global revision for concurrency control.
+
+#### Scenario: Unrelated change does not make the schedule stale
+- **WHEN** a tab outside the scheduling inputs changes
+- **THEN** the scheduling-input revision is unchanged and a completed schedule is not marked stale by that change
+
+#### Scenario: Scheduling-input change marks the schedule stale
+- **WHEN** any scheduling-input tab changes, including a change whose tab revision is not the highest revision in the workbook
+- **THEN** the scheduling-input revision advances and the completed run's recorded input revision no longer matches, so the schedule is stale
+
+#### Scenario: Revisions are reported separately
+- **WHEN** an administrator reads the schedule while the global, scheduling-input, and completed-run output revisions differ
+- **THEN** the response reports the global revision as revision, the dedicated input counter as inputRevision, and the completed run's output revision as scheduleRevision
+
+### Requirement: Read-only scheduling preview
+The system SHALL provide an administrator-only read-only preview that hydrates the current workbook snapshot, runs the deterministic scheduler in memory, and returns the same assignments, backups, shortfalls, revision fields, and explicit proposed-session exclusions as a publication would, without writing any Sheet row, run record, audit entry, or revision. Publication SHALL recompute the schedule under the write lock and SHALL reject a publish whose expected global revision no longer matches.
+
+#### Scenario: Preview has no side effects
+- **WHEN** an administrator requests a scheduling preview
+- **THEN** the response contains the projected assignments, backups, shortfalls, proposed-session exclusions, and revision fields, and no Sheet, run, audit, or revision state changes
+
+#### Scenario: Approved preview is published
+- **WHEN** an administrator publishes with the global revision returned by the reviewed preview and no intervening mutation occurred
+- **THEN** the run completes against the unchanged inputs and its deterministic result becomes the current schedule
+
+#### Scenario: Stale preview cannot publish
+- **WHEN** a mutation changed the global revision after the preview was generated
+- **THEN** publication is rejected with the current revision and a new preview is required before publishing

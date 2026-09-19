@@ -41,7 +41,7 @@ An authorized volunteer SHALL be able to cancel one of their own future assignme
 - **THEN** the system records a dated unavailability exception, removes the assignment, invokes backup promotion, and emails administrators the cancellation and promotion or shortfall result
 
 ### Requirement: Explicit administrator rerun
-The administrator interface SHALL show when a current schedule is stale and SHALL provide an authorized, deliberate action to rerun the scheduling algorithm against the latest Sheet data. It SHALL prevent concurrent reruns and show the resulting revision or failure without discarding the prior completed revision.
+The administrator interface SHALL show when a current schedule is stale and SHALL provide an authorized, deliberate action to rerun the scheduling algorithm against the latest Sheet data. It SHALL prevent concurrent reruns and show the resulting revision or failure without discarding the prior completed revision. Stale state SHALL be derived by comparing the latest completed run's scheduling-input revision with the current scheduling-input revision.
 
 #### Scenario: Administrator reruns after an availability update
 - **WHEN** an authorized administrator invokes rerun while the schedule is stale
@@ -50,3 +50,14 @@ The administrator interface SHALL show when a current schedule is stale and SHAL
 #### Scenario: Another rerun is in progress
 - **WHEN** an administrator invokes rerun while a scheduling run already holds the scheduling lock
 - **THEN** the system does not start a competing run and reports that scheduling is already in progress
+
+### Requirement: Reviewed scheduling publication
+The administrator interface SHALL require a fresh read-only preview before publication: the administrator previews assignments, backups, shortfalls, and proposed-session exclusions, then publishes the approved preview using the global revision returned by that preview. Publication SHALL be rejected when any intervening mutation changed the global revision, forcing a new preview. Every client mutation, including volunteer self-service writes, SHALL carry the read response's global revision for concurrency control.
+
+#### Scenario: Publish after a reviewed preview
+- **WHEN** an administrator publishes the preview they just reviewed without any intervening mutation
+- **THEN** the system publishes the deterministic schedule for the previewed inputs and reports the new completed output revision
+
+#### Scenario: Intervening mutation requires a new preview
+- **WHEN** any mutation occurs between preview and publication
+- **THEN** the publication is rejected with the current global revision and the administrator must preview again before publishing
