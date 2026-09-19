@@ -142,10 +142,10 @@ export class StagedWhenIsGoodImportService {
     if (!this.defaultTimeZone.trim()) throw new Error('A default scheduling time zone is required');
   }
 
-  async stageFromFetcher(actor: AdministratorActor, fetcher: WhenIsGoodFetcher, resultId: string): Promise<StageResult> {
+  stageFromFetcher(actor: AdministratorActor, fetcher: WhenIsGoodFetcher, resultId: string): StageResult {
     requireAdministrator(actor);
     try {
-      const fetched = await fetcher.fetchResult(resultId);
+      const fetched = fetcher.fetchResult(resultId);
       return this.stage(actor, fetched.parsed, fetched.html, fetched.resultId);
     } catch (error) {
       const failed = this.recordFailure(actor, resultId, error, 'FETCH_FAILED');

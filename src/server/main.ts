@@ -1,6 +1,6 @@
 import { createGoogleTokenInfoVerifier, MemoryUserDirectory, type UserDirectory } from './integration/auth.js';
 import { createAppsScriptAdapters, type AppsScriptAdapterOptions, type AppsScriptRequest, type JsonOutput } from './integration/adapters.js';
-import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
+import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type OperationHandlers, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
 import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
 import { createProductionRuntime } from './runtime.js';
@@ -10,8 +10,8 @@ export type ServerOptions = IntegrationDispatcherOptions & Readonly<{ adapter?: 
 
 export type Server = Readonly<{
   dispatcher: IntegrationDispatcher;
-  doGet(event: AppsScriptRequest): Promise<JsonOutput | string>;
-  doPost(event: AppsScriptRequest): Promise<JsonOutput | string>;
+  doGet(event: AppsScriptRequest): JsonOutput | string;
+  doPost(event: AppsScriptRequest): JsonOutput | string;
   initializeWorkbook(): unknown;
   checkWorkbookSchema(): unknown;
 }>;
@@ -140,7 +140,7 @@ function defaultServer(): Server {
   const writeLock = writeEnabled ? runtimeWriteLock() : undefined;
   const spreadsheet = (globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof createProductionRuntime>[0] } }).SpreadsheetApp?.getActiveSpreadsheet();
   const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties) : undefined;
-  const handlers = production?.handlers ?? {
+  const handlers: OperationHandlers = production?.handlers ?? {
     [INTEGRATION_OPERATIONS.me]: ({ actor }: HandlerContext) => projectIdentity(actor)
   };
   return createServer({ verifier, users: runtimeUserDirectory(), revision, writeLock, handlers });
@@ -221,11 +221,11 @@ function migrationPayload(): unknown {
   return runtime.MIGRATION_PAYLOAD;
 }
 
-export async function doGet(event: AppsScriptRequest): Promise<JsonOutput | string> {
+export function doGet(event: AppsScriptRequest): JsonOutput | string {
   return server().doGet(event);
 }
 
-export async function doPost(event: AppsScriptRequest): Promise<JsonOutput | string> {
+export function doPost(event: AppsScriptRequest): JsonOutput | string {
   return server().doPost(event);
 }
 

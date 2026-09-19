@@ -249,7 +249,7 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
   const imports = new StagedWhenIsGoodImportService(importRepository, { defaultTimeZone: timeZone });
   const endpoint = properties.getProperty('WHENISGOOD_ENDPOINT')?.trim();
   const urlFetch = (globalThis as unknown as { UrlFetchApp?: { fetch(url: string): { getResponseCode(): number; getContentText(): string } } }).UrlFetchApp;
-  const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: async (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: async () => response.getContentText() }; }, parserOptions: { defaultTimeZone: timeZone } }) : undefined;
+  const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: () => response.getContentText() }; }, parserOptions: { defaultTimeZone: timeZone } }) : undefined;
   const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: store.volunteers, exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
   const handlers: OperationHandlers = {
     [INTEGRATION_OPERATIONS.me]: ({ actor }) => projectIdentity(actor),
@@ -294,16 +294,16 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       }
       return scheduleProjection(store, Number(properties.getProperty('DATA_REVISION') ?? '0'));
     },
-    [INTEGRATION_OPERATIONS.adminImportPreview]: async ({ actor }, payload) => {
+    [INTEGRATION_OPERATIONS.adminImportPreview]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
       const resultId = (payload as { resultsCode: string }).resultsCode;
-      const staged = await imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, resultId);
+      const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, resultId);
       return projectImport(staged, resultId, Number(properties.getProperty('DATA_REVISION') ?? '0'));
     },
-    [INTEGRATION_OPERATIONS.adminImportPromote]: async ({ actor }, payload) => {
+    [INTEGRATION_OPERATIONS.adminImportPromote]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
       const resultId = (payload as { resultsCode: string }).resultsCode;
-      const staged = await imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, resultId);
+      const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, resultId);
       if (!staged.preview.canPromote) throw new IntegrationError('CONFLICT', `Import cannot be promoted: ${staged.preview.blockers.join('; ')}`);
       return imports.promote({ id: actor.user.id, roles: actor.user.roles }, staged.run.id);
     },

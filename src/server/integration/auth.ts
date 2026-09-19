@@ -15,11 +15,12 @@ export type VerifiedIdentityClaims = Readonly<{
 }>;
 
 export type TokenVerifier = {
-  verify(token: string): VerifiedIdentityClaims | Promise<VerifiedIdentityClaims>;
+  /** Synchronous by contract: an Apps Script web app cannot return a Promise. */
+  verify(token: string): VerifiedIdentityClaims;
 };
 
 export type UserDirectory = {
-  findByEmail(email: string): User | undefined | Promise<User | undefined>;
+  findByEmail(email: string): User | undefined;
 };
 
 export type AuthenticatedPrincipal = Readonly<{
@@ -60,7 +61,7 @@ export type JwtClaimVerifierOptions = Readonly<{
   clock?: Clock;
   clockSkewSeconds?: number;
   requireEmailVerified?: boolean;
-  verifySignature?: (token: string, header: JwtHeader, claims: VerifiedIdentityClaims) => boolean | Promise<boolean>;
+  verifySignature?: (token: string, header: JwtHeader, claims: VerifiedIdentityClaims) => boolean;
 }>;
 
 function decodeBase64Url(value: string): string {
@@ -105,7 +106,7 @@ export function createJwtClaimVerifier(options: JwtClaimVerifierOptions): TokenV
   const requireEmailVerified = options.requireEmailVerified ?? true;
 
   return {
-    async verify(token: string): Promise<VerifiedIdentityClaims> {
+    verify(token: string): VerifiedIdentityClaims {
       const pieces = token.split('.');
       if (pieces.length !== 3) throw new Error('Credential is not a valid JWT.');
       const header = parseJwtPart(pieces[0]!, JwtHeaderSchema);
@@ -127,7 +128,7 @@ export function createJwtClaimVerifier(options: JwtClaimVerifierOptions): TokenV
         ...(payload.iat === undefined ? {} : { iat: payload.iat }),
         ...(payload.name === undefined ? {} : { name: payload.name })
       };
-      if (options.verifySignature && !(await options.verifySignature(token, header, claims))) {
+      if (options.verifySignature && !options.verifySignature(token, header, claims)) {
         throw new Error('Credential signature is invalid.');
       }
       return claims;
@@ -142,7 +143,7 @@ export type GoogleTokenInfoVerifierOptions = Readonly<{
   clockSkewSeconds?: number;
 }>;
 
-export type GoogleTokenInfoFetcher = (token: string) => Promise<unknown> | unknown;
+export type GoogleTokenInfoFetcher = (token: string) => unknown;
 
 const GoogleTokenInfoSchema = z.object({
   aud: z.string().min(1),
@@ -173,8 +174,8 @@ export function createGoogleTokenInfoVerifier(options: GoogleTokenInfoVerifierOp
     return JSON.parse(response.getContentText()) as unknown;
   });
   return {
-    async verify(token: string): Promise<VerifiedIdentityClaims> {
-      const parsed = GoogleTokenInfoSchema.safeParse(await fetcher(token));
+    verify(token: string): VerifiedIdentityClaims {
+      const parsed = GoogleTokenInfoSchema.safeParse(fetcher(token));
       if (!parsed.success || parsed.data.aud !== options.audience) throw new Error('Google credential audience is invalid.');
       if (parsed.data.iss !== undefined && !issuerMatches(parsed.data.iss, undefined)) throw new Error('Google credential issuer is invalid.');
       if (parsed.data.verified_email !== true && parsed.data.verified_email !== 'true') throw new Error('Google credential email is not verified.');
@@ -240,20 +241,20 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-export async function authenticateCredential(
+export function authenticateCredential(
   credential: string | undefined,
   verifier: TokenVerifier,
   users: UserDirectory
-): Promise<AuthenticatedPrincipal> {
+): AuthenticatedPrincipal {
   if (!credential?.trim()) throw new AuthenticationError('missing');
   let claims: VerifiedIdentityClaims;
   try {
-    claims = await verifier.verify(credential);
+    claims = verifier.verify(credential);
   } catch {
     throw new AuthenticationError('invalid');
   }
   const email = normalizeEmail(claims.email);
-  const user = await users.findByEmail(email);
+  const user = users.findByEmail(email);
   if (!user || !user.active) throw new AuthenticationError('unknown-identity');
   return { claims, user, email };
 }

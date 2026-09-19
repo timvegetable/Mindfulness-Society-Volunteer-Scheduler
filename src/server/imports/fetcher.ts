@@ -55,19 +55,19 @@ export class WhenIsGoodFetcher {
     this.parserOptions = options.parserOptions ?? {};
   }
 
-  async fetchResult(resultId: string): Promise<WhenIsGoodFetchResult> {
+  fetchResult(resultId: string): WhenIsGoodFetchResult {
     const normalizedResultId = resultId.trim();
     if (!normalizedResultId) throw new WhenIsGoodFetchError('A WhenIsGood result identifier is required');
     const url = buildUrl(this.endpoint, normalizedResultId);
     let response;
     try {
-      response = await this.request(url);
+      response = this.request(url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown network error';
       throw new WhenIsGoodFetchError(`WhenIsGood request failed: ${message}`);
     }
     if (!response.ok) throw new WhenIsGoodFetchError(`WhenIsGood request returned HTTP ${response.status ?? 'error'}`, response.status);
-    const html = await response.text();
+    const html = response.text();
     if (new TextEncoder().encode(html).byteLength > this.maxPayloadBytes) throw new WhenIsGoodFetchError('WhenIsGood response exceeds the configured payload limit');
     let parsed: ParsedWhenIsGood;
     try {
@@ -79,7 +79,7 @@ export class WhenIsGoodFetcher {
     return { resultId: normalizedResultId, url, html, parsed };
   }
 
-  async fetch(resultId: string): Promise<WhenIsGoodFetchResult> {
+  fetch(resultId: string): WhenIsGoodFetchResult {
     return this.fetchResult(resultId);
   }
 }

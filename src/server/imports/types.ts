@@ -145,10 +145,11 @@ export type ImportRepository = {
 export type FetchResponse = {
   ok: boolean;
   status?: number;
-  text(): Promise<string>;
+  text(): string;
 };
 
-export type Fetcher = (url: string) => Promise<FetchResponse>;
+/** Synchronous by contract: Apps Script's UrlFetchApp has no async form. */
+export type Fetcher = (url: string) => FetchResponse;
 
 export type WhenIsGoodFetcherOptions = {
   endpoint: string;

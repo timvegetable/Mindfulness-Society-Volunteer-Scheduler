@@ -80,8 +80,8 @@ function postRequest(event: AppsScriptRequest): unknown {
 }
 
 export type AppsScriptAdapters = Readonly<{
-  doGet(event: AppsScriptRequest): Promise<JsonOutput | string>;
-  doPost(event: AppsScriptRequest): Promise<JsonOutput | string>;
+  doGet(event: AppsScriptRequest): JsonOutput | string;
+  doPost(event: AppsScriptRequest): JsonOutput | string;
 }>;
 
 /**
@@ -93,29 +93,29 @@ export function createAppsScriptAdapters(
   options: AppsScriptAdapterOptions = {}
 ): AppsScriptAdapters {
   return {
-    async doGet(event: AppsScriptRequest): Promise<JsonOutput | string> {
-      const response = await dispatcher.dispatchReadOnly(queryRequest(event));
+    doGet(event: AppsScriptRequest): JsonOutput | string {
+      const response = dispatcher.dispatchReadOnly(queryRequest(event));
       return output(response, options);
     },
-    async doPost(event: AppsScriptRequest): Promise<JsonOutput | string> {
-      const response = await dispatcher.dispatch(postRequest(event));
+    doPost(event: AppsScriptRequest): JsonOutput | string {
+      const response = dispatcher.dispatch(postRequest(event));
       return output(response, options);
     }
   };
 }
 
-export async function doGet(
+export function doGet(
   event: AppsScriptRequest,
   dispatcher: IntegrationDispatcher,
   options: AppsScriptAdapterOptions = {}
-): Promise<JsonOutput | string> {
-  return (await createAppsScriptAdapters(dispatcher, options).doGet(event));
+): JsonOutput | string {
+  return createAppsScriptAdapters(dispatcher, options).doGet(event);
 }
 
-export async function doPost(
+export function doPost(
   event: AppsScriptRequest,
   dispatcher: IntegrationDispatcher,
   options: AppsScriptAdapterOptions = {}
-): Promise<JsonOutput | string> {
-  return (await createAppsScriptAdapters(dispatcher, options).doPost(event));
+): JsonOutput | string {
+  return createAppsScriptAdapters(dispatcher, options).doPost(event);
 }

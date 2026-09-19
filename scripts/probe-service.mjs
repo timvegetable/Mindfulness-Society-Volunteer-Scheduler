@@ -23,6 +23,17 @@ function parseArgs(argv) {
   return result;
 }
 
+function visibleText(html) {
+  const stripped = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return stripped.slice(0, 200);
+}
+
 const args = (() => {
   try {
     return parseArgs(process.argv.slice(2));
@@ -62,7 +73,25 @@ if (response) {
   const location = response.headers.get('location') ?? '';
   const contentType = response.headers.get('content-type') ?? '';
   const text = await response.text();
-  if (response.status >= 300 && response.status < 400) {
+  if (response.status >= 300 && response.status < 400 && location.includes('script.googleusercontent.com/macros/echo')) {
+    // The healthy path: Apps Script answered and serves the payload through its
+    // echo endpoint, which the browser follows (302 turns a POST into a GET).
+    const echo = await fetch(location, { headers: { Origin: new URL(url).origin } });
+    const echoText = await echo.text();
+    const allowOrigin = echo.headers.get('access-control-allow-origin');
+    console.log(`reachable: echo ${echo.status} ${echo.headers.get('content-type') ?? ''}, access-control-allow-origin=${allowOrigin ?? 'MISSING'}`);
+    console.log(`body: ${echoText.slice(0, 200)}`);
+    let code;
+    try {
+      code = JSON.parse(echoText)?.error?.code ?? 'ok';
+    } catch {
+      code = 'unparseable';
+    }
+    console.log(code === 'UNAUTHORIZED' || code === 'FORBIDDEN' || code === 'ok'
+      ? 'The deployment is public and the scheduler answered, so browser sign-in can reach it.'
+      : `Unexpected envelope: ${echoText.slice(0, 200)}`);
+    process.exitCode = code === 'UNAUTHORIZED' || code === 'FORBIDDEN' || code === 'ok' ? 0 : 1;
+  } else if (response.status >= 300 && response.status < 400) {
     console.log(`NOT PUBLIC: the deployment redirected to ${location.includes('ServiceLogin') ? 'the Google sign-in page' : location}`);
     console.log('Set the versioned web app deployment to "Who has access: Anyone" and use that deployment URL, not the @HEAD URL.');
     process.exitCode = 1;
@@ -70,11 +99,18 @@ if (response) {
     console.log(`NOT PUBLIC: Google rejected the request with ${response.status} ${contentType || 'text/html'} before Apps Script ran.`);
     console.log('Set the versioned web app deployment to "Who has access: Anyone" and use that deployment URL, not the @HEAD URL.');
     process.exitCode = 1;
-  } else if (/^\s*<!DOCTYPE html/i.test(text) || text.includes('ServiceLogin') || text.includes("window['ppConfig']")) {
+  } else if (text.includes('not a supported return type') || /The script completed but/i.test(text)) {
+    // Apps Script's own error page, which shares the ppConfig bootstrap with the
+    // sign-in page: the deployment is reachable, but the app returned a value the
+    // platform will not accept (typically a Promise from doGet/doPost).
+    console.log(`SCRIPT ERROR: ${visibleText(text) || 'the script returned an unsupported value'}`);
+    console.log('The deployment is public, so this is application code, not access control.');
+    process.exitCode = 1;
+  } else if (/ServiceLogin|accounts\.google\.com/i.test(text) || /^\s*<!DOCTYPE html/i.test(text)) {
     // "Anyone with Google account" also lands here: the platform still demands a
     // session, so it renders the sign-in page inline instead of running the app.
-    console.log(`NOT PUBLIC: Google served its sign-in page (${response.status} ${contentType}) instead of the scheduler's JSON.`);
-    console.log('"Anyone with Google account" is not sufficient: the deployment must be set to "Who has access: Anyone".');
+    console.log(`NOT PUBLIC: Google served a sign-in or error page (${response.status} ${contentType}) instead of the scheduler's JSON.`);
+    console.log('"Anyone with Google account" is not sufficient: the deployment must be set to "Who has access: Anyone", which the manifest spells ANYONE_ANONYMOUS.');
     process.exitCode = 1;
   } else {
     let parsed;

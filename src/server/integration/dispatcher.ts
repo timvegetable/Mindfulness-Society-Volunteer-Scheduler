@@ -164,7 +164,7 @@ export type HandlerContext = Readonly<{
   now: string;
 }>;
 
-export type OperationHandler = (context: HandlerContext, payload: unknown) => unknown | Promise<unknown>;
+export type OperationHandler = (context: HandlerContext, payload: unknown) => unknown;
 export type OperationHandlers = Partial<Record<IntegrationOperation, OperationHandler>>;
 
 export type IntegrationDispatcherOptions = Readonly<{
@@ -228,6 +228,19 @@ function rejectDangerousKeys(value: unknown, depth = 0): void {
     if (DANGEROUS_KEYS.has(key.toLowerCase())) throw new IntegrationError('INVALID_REQUEST', `Payload field ${key} is not supported.`);
     rejectDangerousKeys(child, depth + 1);
   }
+}
+
+/**
+ * Apps Script web apps cannot return a Promise: a handler that yields one makes
+ * the platform report "The script completed but the returned value is not a
+ * supported return type". Fail loudly here instead, so the diagnostic names the
+ * operation rather than the transport.
+ */
+function assertSynchronous(operation: IntegrationOperation, value: unknown): unknown {
+  if (typeof (value as { then?: unknown } | null)?.then === 'function') {
+    throw new IntegrationError('INTERNAL_ERROR', `Operation ${operation} returned a Promise; Apps Script handlers must complete synchronously.`);
+  }
+  return value;
 }
 
 function mapUnknownError(error: unknown): IntegrationError {
@@ -296,7 +309,7 @@ export class IntegrationDispatcher {
     }
   }
 
-  async dispatch(input: unknown, options: Readonly<{ readOnly?: boolean }> = {}): Promise<ApiResponse<unknown>> {
+  dispatch(input: unknown, options: Readonly<{ readOnly?: boolean }> = {}): ApiResponse<unknown> {
     this.pruneIdempotency(Date.now());
     let operation: IntegrationOperation | undefined;
     let lockAcquired = false;
@@ -318,7 +331,7 @@ export class IntegrationDispatcher {
       }
       const payloadResult = policy.payload.safeParse(parsedRequest.payload);
       if (!payloadResult.success) return failure('INVALID_REQUEST', 'Request payload is invalid.', { issues: payloadResult.error.issues });
-      const actor = await authenticateCredential(parsedRequest.credential, this.options.verifier, this.options.users);
+      const actor = authenticateCredential(parsedRequest.credential, this.options.verifier, this.options.users);
       if (!policy.roles.some((role) => actor.user.roles.includes(role))) return failure('FORBIDDEN', 'Your account is not authorized for this operation.');
       enforceCenterCandidateBoundary(operation, actor, payloadResult.data);
       const expectedRevision = expectedRevisionFrom(parsedRequest.expectedRevision);
@@ -352,7 +365,7 @@ export class IntegrationDispatcher {
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
         now: this.options.clock?.() ?? new Date().toISOString()
       };
-      const data = await handler(context, payloadResult.data);
+      const data = assertSynchronous(operation, handler(context, payloadResult.data));
       let revision: number | undefined;
       if (policy.mutating && this.options.revision?.advance) revision = this.options.revision.advance(actor.user.id, operation);
       const response: ApiResponse<unknown> = revision === undefined ? { ok: true, data } : { ok: true, data, revision };
@@ -367,7 +380,7 @@ export class IntegrationDispatcher {
     }
   }
 
-  dispatchReadOnly(input: unknown): Promise<ApiResponse<unknown>> {
+  dispatchReadOnly(input: unknown): ApiResponse<unknown> {
     return this.dispatch(input, { readOnly: true });
   }
 

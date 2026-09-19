@@ -14,14 +14,14 @@ describe('WhenIsGood fetcher', () => {
     let requestedUrl = '';
     const fetcher = new WhenIsGoodFetcher({
       endpoint: 'https://whenisgood.net/d7y3d5c/results/mx8t23j',
-      fetch: async (url) => {
+      fetch: (url) => {
         requestedUrl = url;
-        return { ok: true, status: 200, text: async () => html };
+        return { ok: true, status: 200, text: () => html };
       },
       parserOptions: { defaultTimeZone: 'America/New_York' }
     });
 
-    const result = await fetcher.fetchResult('mx8t23j');
+    const result = fetcher.fetchResult('mx8t23j');
 
     expect(requestedUrl).toBe('https://whenisgood.net/d7y3d5c/results/mx8t23j');
     expect(result.parsed.participants).toHaveLength(1);
