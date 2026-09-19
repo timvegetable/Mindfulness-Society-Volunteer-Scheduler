@@ -79,12 +79,12 @@
 
 ## 9. Production Correctness and Responsiveness
 
-- [ ] 9.1 Normalize Sheet temporal values and insight operating hours
-- [ ] 9.2 Make promoted availability authoritative for every consumer
-- [ ] 9.3 Separate revisions and add reviewed scheduling preview
-- [ ] 9.4 Read each required Sheet tab once per operation
-- [ ] 9.5 Reuse insights by correct source and schedule revisions
-- [ ] 9.6 Cache verified claims within credential expiry
-- [ ] 9.7 Cache identity-scoped routes and format session labels
-- [ ] 9.8 Reject duplicate locked center confirmation
+- [x] 9.1 Normalize Sheet temporal values and insight operating hours
+- [x] 9.2 Make promoted availability authoritative for every consumer
+- [x] 9.3 Separate revisions and add reviewed scheduling preview
+- [x] 9.4 Read each required Sheet tab once per operation
+- [x] 9.5 Reuse insights by correct source and schedule revisions
+- [x] 9.6 Cache verified claims within credential expiry
+- [x] 9.7 Cache identity-scoped routes and format session labels
+- [x] 9.8 Reject duplicate locked center confirmation
 - [ ] 9.9 Verify warm read p95 and corrected deployed flows
