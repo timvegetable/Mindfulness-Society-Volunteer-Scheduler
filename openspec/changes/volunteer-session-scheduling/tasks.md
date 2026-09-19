@@ -88,3 +88,12 @@
 - [x] 9.7 Cache identity-scoped routes and format session labels
 - [x] 9.8 Reject duplicate locked center confirmation
 - [ ] 9.9 Verify warm read p95 and corrected deployed flows
+- [x] 9.10 Decode workbook date and time cells in the workbook's own zone and report it in the sign-in diagnostic
+
+## 10. Follow-Ups Recorded During Production Verification
+
+- [ ] 10.1 Scope scheduling to occurrences that have not already started: choose the cut-off (already started versus earlier than the run day) and express it in the ranked-session-scheduling delta spec, filter the run inputs, and add a scheduler contract test, so a preview cannot assign or list backups for a session in the past
+- [ ] 10.2 Load the WhenIsGood result inside the Apps Script runtime: the fetch path calls `TextEncoder`, which V8 does not define, so every import preview fails with "TextEncoder is not defined" and the run is stored as failed while the Node contract tests pass; count UTF-8 bytes with the dispatcher's guarded helper instead, and add a regression that runs the import preview with `TextEncoder` removed from the global scope
+- [ ] 10.3 Audit the rest of the server bundle for Node-only globals and pin the audit with a test, so `TextDecoder`, `Buffer`, `process`, `structuredClone`, or an unguarded `crypto` cannot reach the deployed runtime unnoticed
+- [ ] 10.4 Make a scheduling preview unmistakable: show the computed-at time, input and output revisions, and assignment, backup, and shortfall counts including zeros; keep the saved or failed confirmation visible after the view re-renders; and label the disabled publish control with the preview it requires
+- [ ] 10.5 Re-run the deployed flows that 10.2 and 10.4 unblock and close 7.4, 7.6, 7.8, 8.5, and 9.9 against the corrected behavior
