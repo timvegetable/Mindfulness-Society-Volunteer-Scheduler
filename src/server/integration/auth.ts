@@ -154,6 +154,10 @@ const GoogleTokenInfoSchema = z.object({
   aud: z.string().min(1),
   sub: z.string().min(1),
   email: z.string().email(),
+  // tokeninfo mirrors the ID token claims. The claim is `email_verified`, returned
+  // as a boolean or the string "true"/"false"; `verified_email` is accepted as an
+  // alias so a naming difference cannot silently fail every sign-in.
+  email_verified: z.union([z.literal('true'), z.literal('false'), z.boolean()]).optional(),
   verified_email: z.union([z.literal('true'), z.literal('false'), z.boolean()]).optional(),
   exp: z.union([z.string(), z.number()]),
   iat: z.union([z.string(), z.number()]).optional(),
@@ -183,7 +187,8 @@ export function createGoogleTokenInfoVerifier(options: GoogleTokenInfoVerifierOp
       const parsed = GoogleTokenInfoSchema.safeParse(fetcher(token));
       if (!parsed.success || parsed.data.aud !== options.audience) throw new Error('Google credential audience is invalid.');
       if (parsed.data.iss !== undefined && !issuerMatches(parsed.data.iss, undefined)) throw new Error('Google credential issuer is invalid.');
-      if (parsed.data.verified_email !== true && parsed.data.verified_email !== 'true') throw new Error('Google credential email is not verified.');
+      const emailVerified = parsed.data.email_verified ?? parsed.data.verified_email;
+      if (emailVerified !== true && emailVerified !== 'true') throw new Error('Google credential email is not verified.');
       const exp = Number(parsed.data.exp);
       const iat = parsed.data.iat === undefined ? undefined : Number(parsed.data.iat);
       if (!Number.isFinite(exp) || (iat !== undefined && !Number.isFinite(iat))) throw new Error('Google credential timestamps are invalid.');
