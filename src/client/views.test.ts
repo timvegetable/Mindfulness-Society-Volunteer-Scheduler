@@ -278,3 +278,46 @@ describe('center candidate state', () => {
     ])).toEqual(['Coverage shortfall', 'Coverage shortfall', 'Candidate coverage', 'Confirmed', 'Candidate']);
   });
 });
+
+describe('center candidate actions', () => {
+  const candidate = (overrides: Record<string, unknown>): Record<string, unknown> => ({
+    id: 'candidate-x',
+    weekday: 1,
+    start: '12:00',
+    end: '13:00',
+    timeZone: 'America/New_York',
+    requestedStaffCount: 1,
+    status: 'candidate',
+    ...overrides
+  });
+
+  function actionCells(candidates: Record<string, unknown>[], role: 'administrator' | 'center-contact' = 'administrator'): string[] {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+    renderCenterSchedule(container as unknown as HTMLElement, { centerName: 'Example Center', candidates, revision: 3 } as never, role, {}, documentRef as unknown as Document);
+    return findAll(container, (node) => node.tagName === 'TD').filter((_node, index) => index % 4 === 3).map((node) => node.textContent);
+  }
+
+  // Both writes are refused once a candidate is resolved, so a resolved row must
+  // not keep offering controls that can only fail.
+  it('drops the edit and confirm controls once a candidate is resolved', () => {
+    const cells = actionCells([
+      candidate({ id: 'c-pending', coverageCount: 2 }),
+      candidate({ id: 'c-confirmed', status: 'confirmed', coverageCount: 2 })
+    ]);
+
+    expect(cells[0]).toContain('Edit candidate');
+    expect(cells[0]).toContain('Confirm for scheduling');
+    expect(cells[1]).toContain('Confirmed for scheduling');
+    expect(cells[1]).not.toContain('Edit candidate');
+    expect(cells[1]).not.toContain('Confirm for scheduling');
+  });
+
+  it('offers a centre contact no confirmation control', () => {
+    const cells = actionCells([candidate({ id: 'c-pending', coverageCount: 1 })], 'center-contact');
+
+    expect(cells[0]).toContain('Edit candidate');
+    expect(cells[0]).toContain('Administrator confirmation required');
+    expect(cells[0]).not.toContain('Confirm for scheduling');
+  });
+});

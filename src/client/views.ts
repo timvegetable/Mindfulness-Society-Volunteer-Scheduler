@@ -1066,7 +1066,16 @@ export function renderCenterSchedule(
       state.textContent = pending ? verdict ?? lifecycle : lifecycle;
       const actionCell = createElement(documentRef, 'td');
       const candidateId = candidate.id;
-      if (candidateId) {
+      if (!candidateId) {
+        actionCell.append(documentRef.createTextNode('Awaiting candidate identifier'));
+      } else if (!pending) {
+        // Editing and confirming are both refused once a candidate is resolved, so
+        // the row reports the outcome rather than offering controls that cannot work.
+        const outcome = documentRef.createElement('span');
+        outcome.className = 'outcome-text';
+        outcome.textContent = lifecycle === 'Confirmed' ? 'Confirmed for scheduling' : lifecycle;
+        actionCell.append(outcome);
+      } else {
         const edit = button(documentRef, 'Edit candidate');
         edit.addEventListener('click', () => {
           editingId = candidateId;
@@ -1081,18 +1090,16 @@ export function renderCenterSchedule(
           editor.start.focus();
         });
         actionCell.append(edit);
-      }
-      if (role === 'administrator' && candidateId) {
-        const confirm = button(documentRef, 'Confirm for scheduling');
-        const confirmStatus = statusNode(documentRef);
-        confirm.addEventListener('click', () => handleAction(confirmStatus, actions.onCandidateConfirm ? () => actions.onCandidateConfirm?.(candidateId, data.revision) : undefined));
-        actionCell.append(confirm, confirmStatus);
-      } else if (!candidateId) {
-        actionCell.append(documentRef.createTextNode('Awaiting candidate identifier'));
-      } else if (role !== 'administrator') {
-        const note = documentRef.createElement('span');
-        note.textContent = 'Administrator confirmation required';
-        actionCell.append(note);
+        if (role === 'administrator') {
+          const confirm = button(documentRef, 'Confirm for scheduling');
+          const confirmStatus = statusNode(documentRef);
+          confirm.addEventListener('click', () => handleAction(confirmStatus, actions.onCandidateConfirm ? () => actions.onCandidateConfirm?.(candidateId, data.revision) : undefined));
+          actionCell.append(confirm, confirmStatus);
+        } else {
+          const note = documentRef.createElement('span');
+          note.textContent = 'Administrator confirmation required';
+          actionCell.append(note);
+        }
       }
       row.append(interval, requested, coverage, state, actionCell);
       tbody.append(row);
