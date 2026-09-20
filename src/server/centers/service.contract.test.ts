@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Session, Volunteer } from '../../shared/domain.js';
 import type { CenterCaller, CandidateSchedule } from './models.js';
-import { CandidateCoverageService, CenterConfirmationService, CenterWorkflowError } from './service.js';
+import { CandidateCoverageService, CenterConfirmationService, CenterScheduleService, CenterWorkflowError } from './service.js';
 import { MemoryCandidateScheduleStore, MemorySessionStore } from './stores.js';
 
 const timestamp = '2026-09-18T00:00:00.000Z';
@@ -44,11 +44,11 @@ function candidate(): CandidateSchedule {
   };
 }
 
-function lockedSession(id: string, date: string): Session {
+function lockedSession(id: string, date: string, centerId = 'center-1'): Session {
   return {
     id,
     kind: 'center',
-    centerId: 'center-1',
+    centerId,
     title: `Existing occurrence ${date}`,
     date,
     start: '09:00',
@@ -108,5 +108,41 @@ describe('center confirmation duplicates', () => {
       'session-candidate-1-2026-09-07'
     ]);
     expect(candidates.get('candidate-1')?.status).toBe('confirmed');
+  });
+});
+
+describe('center candidate entry against locked occurrences', () => {
+  const contact: CenterCaller = { id: 'contact@example.test', active: true, roles: ['center-contact'], centerIds: ['center-1'] };
+
+  it('refuses to create an interval that overlaps a locked occurrence', () => {
+    const existing = lockedSession('session-existing-2026-09-07', occurrenceDate);
+    const candidates = new MemoryCandidateScheduleStore([]);
+    const sessions = new MemorySessionStore<Session>([existing]);
+
+    let caught: unknown;
+    try {
+      new CenterScheduleService({ candidates, sessions }).create(contact, { centerId: 'center-1', weekday: 1, start: '09:00', end: '10:00', timeZone, requestedStaffCount: 1 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CenterWorkflowError);
+    expect((caught as CenterWorkflowError).code).toBe('CONFLICT');
+    expect((caught as CenterWorkflowError).message).toContain('an administrator must manage the existing session');
+    expect((caught as CenterWorkflowError).details?.lockedSessionId).toBe(existing.id);
+    // Nothing is stored and the locked occurrence is untouched.
+    expect(candidates.list()).toEqual([]);
+    expect(sessions.list().map((session) => [session.id, session.status, session.start, session.end])).toEqual([['session-existing-2026-09-07', 'locked', '09:00', '10:00']]);
+  });
+
+  it('still creates the same time slot for a different center', () => {
+    const candidates = new MemoryCandidateScheduleStore([]);
+    const sessions = new MemorySessionStore<Session>([lockedSession('session-existing-2026-09-07', occurrenceDate)]);
+    const other: CenterCaller = { id: 'other@example.test', active: true, roles: ['center-contact'], centerIds: ['center-2'] };
+
+    const created = new CenterScheduleService({ candidates, sessions }).create(other, { centerId: 'center-2', weekday: 1, start: '09:00', end: '10:00', timeZone, requestedStaffCount: 1 });
+
+    expect(created.centerId).toBe('center-2');
+    expect(candidates.list().map((row) => row.centerId)).toEqual(['center-2']);
   });
 });

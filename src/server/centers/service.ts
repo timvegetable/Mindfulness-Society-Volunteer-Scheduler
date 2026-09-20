@@ -387,6 +387,16 @@ export class CenterScheduleService {
     };
     const row: CandidateSchedule = occurrenceDates ? { ...rowBase, occurrenceDates } : rowBase;
     const checked = validateCandidateShape(row);
+    // Entering an interval that lands on a locked occurrence is the same attempt
+    // to change one as editing into it, so it earns the same refusal.
+    const locked = lockedOccurrenceForCandidate(checked, this.sessions.list());
+    if (locked) {
+      throw new CenterWorkflowError('CONFLICT', 'Locked session occurrences are immutable; an administrator must manage the existing session', {
+        candidateId: checked.id,
+        lockedSessionId: locked.id,
+        centerId
+      });
+    }
     const revision = expectedRevision ?? this.candidates.revision().number;
     this.candidates.upsert(checked, revision, caller.id, 'center-candidate-create');
     return checked;
