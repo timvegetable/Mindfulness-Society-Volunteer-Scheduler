@@ -13,7 +13,7 @@ const PRIVATE_KEYS = new Set([
   'writeEnabled'
 ]);
 
-const PUBLIC_KEYS = new Set(['appsScriptUrl', 'oauthClientId']);
+const PUBLIC_KEYS = new Set(['appsScriptUrl', 'oauthClientId', 'timeZone']);
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 const CLOCK_PATTERN = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u;
 const PLACEHOLDER_PATTERN = /^(?:REPLACE|SET_|PUBLIC_|DEPLOYMENT_ID|YOUR_|CHANGE_ME|EXAMPLE)/iu;
@@ -165,9 +165,21 @@ export function validatePublicConfig(publicConfig, privateConfig) {
       PLACEHOLDER_PATTERN.test(publicConfig.oauthClientId)) {
     issue(issues, 'public oauthClientId must be a configured non-placeholder client ID');
   }
+  if (publicConfig.timeZone !== undefined) {
+    if (typeof publicConfig.timeZone !== 'string' || !publicConfig.timeZone.trim()) {
+      issue(issues, 'public timeZone must be a non-empty IANA time-zone identifier');
+    } else {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: publicConfig.timeZone });
+      } catch {
+        issue(issues, 'public timeZone must be a recognized IANA time-zone identifier');
+      }
+    }
+  }
   if (isRecord(privateConfig)) {
     if (publicConfig.appsScriptUrl !== privateConfig.appsScriptUrl) issue(issues, 'public appsScriptUrl does not match private configuration');
     if (publicConfig.oauthClientId !== privateConfig.oauthAudience) issue(issues, 'public oauthClientId does not match private oauthAudience');
+    if (publicConfig.timeZone !== undefined && publicConfig.timeZone !== privateConfig.timeZone) issue(issues, 'public timeZone does not match private configuration');
   }
   return { valid: issues.length === 0, issues };
 }
@@ -197,7 +209,13 @@ export function assertValidConfig(config, label = 'configuration') {
 
 export function publicProjection(config) {
   assertValidConfig(config, 'private configuration');
-  return { appsScriptUrl: config.appsScriptUrl, oauthClientId: config.oauthAudience };
+  // The scheduling zone is published so the client can render audit instants in
+  // the same zone the schedule is built in instead of an unlabelled UTC clock.
+  return {
+    appsScriptUrl: config.appsScriptUrl,
+    oauthClientId: config.oauthAudience,
+    ...(config.timeZone === undefined ? {} : { timeZone: config.timeZone })
+  };
 }
 
 export function isPrivateKey(key) {

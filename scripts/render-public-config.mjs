@@ -36,7 +36,7 @@ try {
   const projection = publicProjection(config);
   await mkdir(dirname(args.output), { recursive: true });
   await writeFile(args.output, `${JSON.stringify(projection, null, 2)}\n`, { mode: 0o644 });
-  console.log('Rendered public configuration with only Apps Script URL and OAuth client ID.');
+  console.log('Rendered public configuration with only the Apps Script URL, OAuth client ID, and scheduling time zone.');
 } catch (error) {
   const issues = error instanceof ConfigError ? error.issues : [error.message];
   console.error('Public configuration was not written.');

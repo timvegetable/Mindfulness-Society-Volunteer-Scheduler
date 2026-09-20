@@ -2,7 +2,7 @@ import '../styles.css';
 import { ApiClient, ApiClientError, type IdentityData } from './api';
 import { IdentityController, type IdentityState } from './identity';
 import { RouteLoader } from './route-loader';
-import { actionFailureMessage } from './format';
+import { actionFailureMessage, setDisplayTimeZone } from './format';
 import {
   renderAdminImport,
   renderAdminInsights,
@@ -25,6 +25,8 @@ import {
 export interface ClientConfig {
   appsScriptUrl: string;
   oauthClientId: string;
+  /** The scheduling zone, used to render audit instants. */
+  timeZone?: string;
 }
 
 export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
@@ -350,7 +352,8 @@ function configFrom(value: unknown): ClientConfig {
   if (!isRecord(value)) return DEFAULT_CLIENT_CONFIG;
   const appsScriptUrl = stringValue(value.appsScriptUrl) ?? '';
   const oauthClientId = stringValue(value.oauthClientId) ?? '';
-  return { appsScriptUrl, oauthClientId };
+  const timeZone = stringValue(value.timeZone);
+  return { appsScriptUrl, oauthClientId, ...(timeZone === undefined ? {} : { timeZone }) };
 }
 
 /**
@@ -638,6 +641,7 @@ export async function boot(documentRef: Document = globalThis.document): Promise
   const identityHost = documentRef.getElementById('identity');
   const loadedConfig = await loadClientConfig();
   let config = loadedConfig;
+  setDisplayTimeZone(config.timeZone);
   let api: ApiClient;
   try {
     api = new ApiClient(config.appsScriptUrl);

@@ -31,6 +31,13 @@ describe('client configuration loading', () => {
     expect(capture.resolve()).toBe('https://example.test/config.json');
   });
 
+  it('carries the scheduling zone that audit instants are rendered in, and omits it when absent', async () => {
+    const withZone = await loadClientConfig(capturingFetch({ ...served, timeZone: 'America/New_York' }).fetchImpl);
+    expect(withZone.timeZone).toBe('America/New_York');
+    const withoutZone = await loadClientConfig(capturingFetch(served).fetchImpl);
+    expect(withoutZone.timeZone).toBeUndefined();
+  });
+
   it('falls back to an unconfigured client when the file is missing or malformed', async () => {
     expect(await loadClientConfig(capturingFetch({}, 404).fetchImpl)).toEqual(DEFAULT_CLIENT_CONFIG);
     expect(await loadClientConfig(capturingFetch([{ appsScriptUrl: 1 }]).fetchImpl)).toEqual(DEFAULT_CLIENT_CONFIG);

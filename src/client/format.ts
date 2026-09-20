@@ -13,6 +13,34 @@ const DATE_FORMAT = new Intl.DateTimeFormat(LOCALE, { timeZone: UTC, weekday: 's
 const CLOCK_FORMAT = new Intl.DateTimeFormat(LOCALE, { timeZone: UTC, hour: 'numeric', minute: '2-digit', hour12: true });
 const instantFormats = new Map<string, Intl.DateTimeFormat>();
 
+/**
+ * The zone audit instants render in when a call site does not name one. It is
+ * set once from the scheduling configuration, because a stored instant is
+ * otherwise easy to misread: rendering it in UTC made "Computed at" look like a
+ * local wall clock that was hours off.
+ */
+let displayTimeZone = UTC;
+
+/** Accepts a zone only if this runtime can actually format with it. */
+function usesZone(timeZone: string): string | undefined {
+  try {
+    new Intl.DateTimeFormat(LOCALE, { timeZone });
+    return timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Sets the zone used for audit instants. An unusable or absent zone falls back
+ * to the reader's own zone rather than silently showing UTC.
+ */
+export function setDisplayTimeZone(timeZone: string | undefined): void {
+  const requested = timeZone?.trim();
+  const readerZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  displayTimeZone = (requested ? usesZone(requested) : undefined) ?? (readerZone ? usesZone(readerZone) : undefined) ?? UTC;
+}
+
 /** Some ICU builds separate a time from its meridiem with a narrow no-break space. */
 function render(formatter: Intl.DateTimeFormat, instant: Date): string {
   return formatter.format(instant).replace(/[\u00a0\u202f]/g, ' ');
@@ -53,8 +81,8 @@ export function formatRange(start: string, end: string): string {
   return `${formatClock(start)}–${formatClock(end)}`;
 }
 
-/** Renders an ISO 8601 instant in the given zone (UTC by default). */
-export function formatInstant(value: string, timeZone: string = UTC): string {
+/** Renders an ISO 8601 instant in the given zone (the configured display zone by default). */
+export function formatInstant(value: string, timeZone: string = displayTimeZone): string {
   const instant = new Date(value);
   if (Number.isNaN(instant.getTime())) return value;
   let formatter = instantFormats.get(timeZone);

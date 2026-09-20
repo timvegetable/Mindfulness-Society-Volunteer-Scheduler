@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ApiClientError } from './api.js';
 import {
   actionFailureMessage,
@@ -8,7 +8,8 @@ import {
   formatInstant,
   formatRange,
   futureAssignments,
-  sessionLabel
+  sessionLabel,
+  setDisplayTimeZone
 } from './format.js';
 
 describe('canonical date, clock, range, and instant formatting', () => {
@@ -40,6 +41,26 @@ describe('canonical date, clock, range, and instant formatting', () => {
     expect(formatClock('9:32 AM')).toBe('9:32 AM');
     expect(formatClock('25:00')).toBe('25:00');
     expect(formatInstant('not-an-instant')).toBe('not-an-instant');
+  });
+});
+
+describe('audit instant display zone', () => {
+  afterEach(() => setDisplayTimeZone('UTC'));
+
+  it('renders audit instants in the zone it was configured with', () => {
+    setDisplayTimeZone('America/New_York');
+    expect(formatInstant('2026-09-19T23:16:00.000Z')).toBe('Sep 19, 2026, 7:16 PM');
+  });
+
+  it('ignores an unusable zone and falls back to the reader instead of UTC', () => {
+    setDisplayTimeZone('Nowhere/Nothing');
+    const readerZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    expect(formatInstant('2026-09-19T23:16:00.000Z')).toBe(formatInstant('2026-09-19T23:16:00.000Z', readerZone));
+  });
+
+  it('leaves an explicitly requested zone in charge', () => {
+    setDisplayTimeZone('America/New_York');
+    expect(formatInstant('2026-09-19T23:16:00.000Z', 'UTC')).toBe('Sep 19, 2026, 11:16 PM');
   });
 });
 
