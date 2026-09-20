@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   renderAdminSchedule,
+  renderCenterSchedule,
   renderVolunteerDashboard,
   type AdminScheduleData,
   type AvailabilityException,
@@ -241,5 +242,39 @@ describe('volunteer availability form', () => {
     expect(exception?.date).toBe('2026-09-24');
     expect(exception?.kind).toBe('unavailable');
     expect(exception?.timeZone).toBeTruthy();
+  });
+});
+
+describe('center candidate state', () => {
+  const candidate = (overrides: Record<string, unknown>): Record<string, unknown> => ({
+    id: 'candidate-x',
+    weekday: 1,
+    start: '12:00',
+    end: '13:00',
+    timeZone: 'America/New_York',
+    requestedStaffCount: 1,
+    status: 'candidate',
+    ...overrides
+  });
+
+  function stateCells(candidates: Record<string, unknown>[]): string[] {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+    renderCenterSchedule(container as unknown as HTMLElement, { centerName: 'Example Center', candidates, revision: 3 } as never, 'administrator', {}, documentRef as unknown as Document);
+    // One row per candidate: requested, coverage, state, action.
+    return findAll(container, (node) => node.tagName === 'TD').filter((_node, index) => index % 4 === 2).map((node) => node.textContent);
+  }
+
+  // The stored status is "candidate" for every unconfirmed interval, so it can
+  // never tell a centre whether its hours are coverable. Reading the status
+  // alone left the shortfall unlabelled.
+  it('names the shortfall or the coverage instead of echoing the stored status', () => {
+    expect(stateCells([
+      candidate({ id: 'c-short', requestedStaffCount: 2, coverageCount: 0 }),
+      candidate({ id: 'c-one', requestedStaffCount: 2, coverageCount: 1 }),
+      candidate({ id: 'c-covered', requestedStaffCount: 1, coverageCount: 2 }),
+      candidate({ id: 'c-confirmed', status: 'confirmed', coverageCount: 2 }),
+      candidate({ id: 'c-unknown' })
+    ])).toEqual(['Coverage shortfall', 'Coverage shortfall', 'Candidate coverage', 'Confirmed', 'Candidate']);
   });
 });

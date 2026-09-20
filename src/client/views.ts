@@ -1055,7 +1055,15 @@ export function renderCenterSchedule(
         coverage.append(documentRef.createTextNode(` — ${candidate.volunteerNames.join(', ')}`));
       }
       const state = createElement(documentRef, 'td');
-      state.textContent = candidateStateLabel(candidate.status) ?? (candidate.coverageCount !== undefined && candidate.coverageCount >= candidate.requestedStaffCount ? 'Candidate coverage' : 'Coverage shortfall');
+      // A pending interval is judged by its coverage, a resolved one reports the
+      // state it reached. The stored status alone cannot say whether coverage is
+      // sufficient, so a shortfall has to be spelled out here.
+      const pending = candidate.status === undefined || candidate.status === 'candidate';
+      const lifecycle = candidateStateLabel(candidate.status) ?? 'Candidate';
+      const verdict = candidate.coverageCount === undefined
+        ? undefined
+        : candidate.coverageCount >= candidate.requestedStaffCount ? 'Candidate coverage' : 'Coverage shortfall';
+      state.textContent = pending ? verdict ?? lifecycle : lifecycle;
       const actionCell = createElement(documentRef, 'td');
       const candidateId = candidate.id;
       if (candidateId) {

@@ -135,6 +135,7 @@ export function futureAssignments<T extends CancellableAssignment>(assignments: 
 }
 
 const CANDIDATE_STATE_LABELS: Record<string, string> = {
+  candidate: 'Candidate',
   draft: 'Draft',
   submitted: 'Submitted',
   confirmed: 'Confirmed',
