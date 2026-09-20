@@ -1,16 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { renderAdminSchedule, type AdminScheduleData, type ScheduleNotice } from './views.js';
+import {
+  renderAdminSchedule,
+  renderVolunteerDashboard,
+  type AdminScheduleData,
+  type AvailabilityException,
+  type AvailabilityInterval,
+  type ScheduleNotice,
+  type VolunteerDashboardData
+} from './views.js';
+
+/** The event surface the view's wire handlers actually touch. */
+type FakeEvent = { preventDefault(): void };
 
 /** Small DOM double for the view's event wiring; Vitest intentionally runs in node. */
 class FakeNode {
   readonly tagName: string;
   readonly children: FakeNode[] = [];
-  readonly listeners = new Map<string, () => void>();
+  readonly listeners = new Map<string, (event: FakeEvent) => void>();
   ownerDocument!: FakeDocument;
   parent: FakeNode | undefined;
   className = '';
   type = '';
+  value = '';
   disabled = false;
+  required = false;
   readonly classList = { add: (_name: string) => undefined, remove: (_name: string) => undefined };
   private ownText = '';
 
@@ -43,16 +56,29 @@ class FakeNode {
     if (index >= 0) this.parent?.children.splice(index, 1);
   }
 
+  closest(selector: string): FakeNode | null {
+    if (this.tagName === selector.toUpperCase()) return this;
+    return this.parent?.closest(selector) ?? null;
+  }
+
   setAttribute(): void {
     // Accessibility attributes are not needed for this wiring-focused double.
   }
 
-  addEventListener(type: string, listener: () => void): void {
+  focus(): void {
+    // Focus is a browser behaviour the double does not model.
+  }
+
+  addEventListener(type: string, listener: (event: FakeEvent) => void): void {
     this.listeners.set(type, listener);
   }
 
   click(): void {
-    this.listeners.get('click')?.();
+    this.listeners.get('click')?.({ preventDefault: () => undefined });
+  }
+
+  submit(): void {
+    this.listeners.get('submit')?.({ preventDefault: () => undefined });
   }
 }
 
@@ -71,11 +97,29 @@ class FakeDocument {
   }
 }
 
+function walk(node: FakeNode): FakeNode[] {
+  return [node, ...node.children.flatMap(walk)];
+}
+
+function findAll(node: FakeNode, predicate: (candidate: FakeNode) => boolean): FakeNode[] {
+  return walk(node).filter(predicate);
+}
+
+function find(node: FakeNode, predicate: (candidate: FakeNode) => boolean): FakeNode | undefined {
+  return walk(node).find(predicate);
+}
+
+function first(node: FakeNode | undefined): FakeNode {
+  if (!node) throw new Error('expected a matching node');
+  return node;
+}
+
+function setValue(node: FakeNode | undefined, value: string): void {
+  first(node).value = value;
+}
+
 function buttons(container: FakeNode): FakeNode[] {
-  return container.children.flatMap((child) => [
-    ...(child.tagName === 'BUTTON' ? [child] : []),
-    ...buttons(child)
-  ]);
+  return findAll(container, (node) => node.tagName === 'BUTTON');
 }
 
 const initial: AdminScheduleData = { sessions: [], revision: 7 };
@@ -133,5 +177,69 @@ describe('schedule preview rendering', () => {
     expect(container.textContent).toContain('Assignments0');
     expect(container.textContent).toContain('Backups0');
     expect(container.textContent).toContain('Shortfalls0');
+  });
+});
+
+const dashboard: VolunteerDashboardData = {
+  recurringAvailability: [
+    { weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' },
+    { weekday: 2, start: '09:00', end: '10:00', timeZone: 'America/New_York' }
+  ],
+  exceptions: [],
+  assignments: [],
+  revision: 4
+};
+
+describe('volunteer availability form', () => {
+  it('saves the remaining intervals even though the interval adder is empty', () => {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+    let saved: AvailabilityInterval[] | undefined;
+    renderVolunteerDashboard(container as unknown as HTMLElement, dashboard, {
+      onRecurringUpdate: (intervals) => {
+        saved = intervals;
+      }
+    }, documentRef as unknown as Document);
+
+    const removers = buttons(container).filter((control) => control.textContent === 'Remove');
+    expect(removers).toHaveLength(2);
+    first(removers[0]).click();
+
+    const form = first(findAll(container, (node) => node.tagName === 'FORM')[0]);
+    // Nothing required may live inside the submitted form: a required, empty
+    // adder field would let native validation cancel the submit silently.
+    expect(findAll(form, (node) => node.required)).toHaveLength(0);
+
+    form.submit();
+    expect(saved?.map((interval) => interval.weekday)).toEqual([2]);
+  });
+
+  it('states the change in the first person and hides no zone field', () => {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+    let exception: AvailabilityException | undefined;
+    renderVolunteerDashboard(container as unknown as HTMLElement, { ...dashboard, recurringAvailability: [] }, {
+      onExceptionCreate: (value) => {
+        exception = value;
+      }
+    }, documentRef as unknown as Document);
+
+    expect(container.textContent).toContain('I am unavailable');
+    expect(container.textContent).not.toContain('Time zone');
+
+    const form = first(findAll(container, (node) => node.tagName === 'FORM')[1]);
+    expect(findAll(form, (node) => node.required).length).toBeGreaterThan(0);
+    const inputs = findAll(form, (node) => node.tagName === 'INPUT');
+    const kind = find(form, (node) => node.tagName === 'SELECT');
+    expect(inputs).toHaveLength(4);
+    setValue(inputs[0], '2026-09-24');
+    setValue(inputs[1], '14:00');
+    setValue(inputs[2], '21:00');
+    if (kind) kind.value = 'unavailable';
+
+    form.submit();
+    expect(exception?.date).toBe('2026-09-24');
+    expect(exception?.kind).toBe('unavailable');
+    expect(exception?.timeZone).toBeTruthy();
   });
 });

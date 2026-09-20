@@ -311,7 +311,16 @@ function weekdayOptions(documentRef: Document, includeWeekend = true): HTMLSelec
   return labelledSelect(documentRef, 'Weekday', options).select;
 }
 
-function intervalEditor(documentRef: Document, includeWeekend = true): { wrapper: HTMLDivElement; weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement; timeZone: HTMLInputElement } {
+/**
+ * The browser's own IANA zone. Every interval is stored with a zone and the
+ * scheduling zone is a deployment setting, so an immutable field only suggested
+ * a setting the volunteer could not actually change.
+ */
+function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
+
+function intervalEditor(documentRef: Document, includeWeekend = true): { wrapper: HTMLDivElement; weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement; timeZone: string } {
   const wrapper = createElement(documentRef, 'div', 'interval-editor');
   const weekday = weekdayOptions(documentRef, includeWeekend);
   const weekdayLabel = createElement(documentRef, 'label', 'field');
@@ -320,24 +329,18 @@ function intervalEditor(documentRef: Document, includeWeekend = true): { wrapper
   wrapper.append(weekdayLabel);
   const start = labelledInput(documentRef, 'Start', 'time').input;
   const end = labelledInput(documentRef, 'End', 'time').input;
-  const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  const timeZone = labelledInput(documentRef, 'Time zone', 'text', browserTimeZone).input;
-  timeZone.readOnly = true;
-  timeZone.required = true;
-  timeZone.maxLength = 100;
   start.required = true;
   end.required = true;
   start.step = '900';
   end.step = '900';
-  wrapper.append(start.closest('label') as HTMLLabelElement, end.closest('label') as HTMLLabelElement, timeZone.closest('label') as HTMLLabelElement);
-  return { wrapper, weekday, start, end, timeZone };
+  wrapper.append(start.closest('label') as HTMLLabelElement, end.closest('label') as HTMLLabelElement);
+  return { wrapper, weekday, start, end, timeZone: browserTimeZone() };
 }
 
-function parseInterval(editor: { weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement; timeZone: HTMLInputElement }): AvailabilityInterval {
+function parseInterval(editor: { weekday: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement }, timeZone: string): AvailabilityInterval & { timeZone: string } {
   const weekday = Number(editor.weekday.value);
   const start = editor.start.value;
   const end = editor.end.value;
-  const timeZone = editor.timeZone.value;
   if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7 || !start || !end || !timeZone || start >= end) {
     throw new Error('Choose a weekday and an interval whose end is after its start.');
   }
@@ -379,11 +382,12 @@ export function renderVolunteerDashboard(
     }
   }
   recurringSection.append(recurringList);
-  const recurringForm = createElement(documentRef, 'form', 'stacked-form');
-  recurringForm.noValidate = false;
+  // The interval adder is a tool, not part of the submitted set. Keeping it out
+  // of the form stops its still-empty fields from failing native validation and
+  // silently cancelling the save, which no submit handler can intercept.
   const editor = intervalEditor(documentRef);
-  recurringForm.append(editor.wrapper);
   const add = button(documentRef, 'Add interval');
+  const recurringForm = createElement(documentRef, 'form', 'stacked-form');
   const intervalDrafts = data.recurringAvailability.map((interval) => ({ ...interval }));
   const draftList = createElement(documentRef, 'ul', 'draft-list');
   const formStatus = statusNode(documentRef);
@@ -403,7 +407,7 @@ export function renderVolunteerDashboard(
   };
   add.addEventListener('click', () => {
     try {
-      intervalDrafts.push(parseInterval(editor));
+      intervalDrafts.push(parseInterval(editor, editor.timeZone));
       drawDrafts();
       formStatus.textContent = '';
       formStatus.classList.remove('error-text');
@@ -412,13 +416,13 @@ export function renderVolunteerDashboard(
     }
   });
   const save = button(documentRef, 'Save weekly availability', 'submit', 'primary-button');
-  recurringForm.append(add, draftList, save, formStatus);
+  recurringForm.append(draftList, save, formStatus);
   recurringForm.addEventListener('submit', (event) => {
     event.preventDefault();
     handleAction(formStatus, actions.onRecurringUpdate ? () => actions.onRecurringUpdate?.(intervalDrafts, data.revision) : undefined);
   });
   drawDrafts();
-  recurringSection.append(recurringForm);
+  recurringSection.append(editor.wrapper, add, recurringForm);
   container.append(recurringSection);
 
   const exceptionSection = createElement(documentRef, 'section', 'panel');
@@ -441,26 +445,22 @@ export function renderVolunteerDashboard(
   date.required = true;
   const exceptionStart = labelledInput(documentRef, 'Start', 'time').input;
   const exceptionEnd = labelledInput(documentRef, 'End', 'time').input;
-  const exceptionTimeZone = labelledInput(documentRef, 'Time zone', 'text', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC').input;
-  exceptionTimeZone.readOnly = true;
-  exceptionTimeZone.required = true;
-  exceptionTimeZone.maxLength = 100;
   exceptionStart.required = true;
   exceptionEnd.required = true;
   const kind = labelledSelect(documentRef, 'Change', [
-    { value: 'unavailable', label: 'Unavailable' },
-    { value: 'available', label: 'Available instead' }
+    { value: 'unavailable', label: 'I am unavailable' },
+    { value: 'available', label: 'I am available instead' }
   ]).select;
   const reason = labelledInput(documentRef, 'Reason (optional)', 'text').input;
   reason.maxLength = 240;
-  exceptionForm.append(date.closest('label') as HTMLLabelElement, kind.closest('label') as HTMLLabelElement, exceptionStart.closest('label') as HTMLLabelElement, exceptionEnd.closest('label') as HTMLLabelElement, exceptionTimeZone.closest('label') as HTMLLabelElement, reason.closest('label') as HTMLLabelElement);
+  exceptionForm.append(date.closest('label') as HTMLLabelElement, kind.closest('label') as HTMLLabelElement, exceptionStart.closest('label') as HTMLLabelElement, exceptionEnd.closest('label') as HTMLLabelElement, reason.closest('label') as HTMLLabelElement);
   const exceptionStatus = statusNode(documentRef);
   const exceptionSave = button(documentRef, 'Save dated change', 'submit', 'primary-button');
   exceptionForm.append(exceptionSave, exceptionStatus);
   exceptionForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    const exception: AvailabilityException = { date: date.value, kind: kind.value === 'available' ? 'available' : 'unavailable', start: exceptionStart.value, end: exceptionEnd.value, timeZone: exceptionTimeZone.value, reason: reason.value.trim() || undefined };
-    if (!exception.date || !exception.start || !exception.end || !exception.timeZone || exception.start >= exception.end) {
+    const exception: AvailabilityException = { date: date.value, kind: kind.value === 'available' ? 'available' : 'unavailable', start: exceptionStart.value, end: exceptionEnd.value, timeZone: browserTimeZone(), reason: reason.value.trim() || undefined };
+    if (!exception.date || !exception.start || !exception.end || exception.start >= exception.end) {
       announceFailure(exceptionStatus, new Error('Choose a date and an interval whose end is after its start.'));
       return;
     }
@@ -987,6 +987,8 @@ export function renderCenterSchedule(
   count.required = true;
   form.append(editor.wrapper, count.closest('label') as HTMLLabelElement);
   let editingId: string | undefined;
+  // An edited candidate keeps the zone it was stored with; a new one uses the browser's.
+  let candidateTimeZone = editor.timeZone;
   const submit = button(documentRef, 'Save candidate interval', 'submit', 'primary-button');
   const cancelEdit = button(documentRef, 'Cancel editing');
   cancelEdit.hidden = true;
@@ -998,6 +1000,7 @@ export function renderCenterSchedule(
     editor.start.value = '';
     editor.end.value = '';
     count.value = '';
+    candidateTimeZone = editor.timeZone;
     status.textContent = '';
   };
   cancelEdit.addEventListener('click', resetEditor);
@@ -1005,10 +1008,9 @@ export function renderCenterSchedule(
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     try {
-      const interval = parseInterval(editor);
+      const interval = parseInterval(editor, candidateTimeZone);
       const requestedStaffCount = Number(count.value);
       if (!Number.isInteger(requestedStaffCount) || requestedStaffCount < 1 || requestedStaffCount > 2) throw new Error('Requested staffing must be one or two volunteers.');
-      if (!interval.timeZone) throw new Error('A time zone is required.');
       const candidate = editingId === undefined ? { weekday: interval.weekday, start: interval.start, end: interval.end, timeZone: interval.timeZone, requestedStaffCount } : { weekday: interval.weekday, start: interval.start, end: interval.end, timeZone: interval.timeZone, requestedStaffCount, id: editingId };
       handleAction(status, actions.onCandidateUpdate ? () => actions.onCandidateUpdate?.(candidate, data.revision) : undefined);
     } catch (error) {
@@ -1063,7 +1065,7 @@ export function renderCenterSchedule(
           editor.weekday.value = String(candidate.weekday);
           editor.start.value = candidate.start;
           editor.end.value = candidate.end;
-          editor.timeZone.value = candidate.timeZone;
+          candidateTimeZone = candidate.timeZone;
           count.value = String(candidate.requestedStaffCount);
           submit.textContent = 'Save candidate changes';
           cancelEdit.hidden = false;
