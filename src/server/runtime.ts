@@ -519,16 +519,30 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       const value = payload as { candidateId?: string; id?: string; centerId?: string; weekday?: number; start?: string; end?: string; timeZone?: string; requestedStaffCount?: number; intervals?: Array<{ weekday: number; start: string; end: string; timeZone: string }> };
       const centerCaller = caller(actor);
       const candidateId = value.candidateId ?? value.id;
-      if (!candidateId) throw new IntegrationError('INVALID_REQUEST', 'candidateId is required');
-      const existing = centerWorkflow.schedule.get(centerCaller, candidateId);
       const interval = value.intervals?.[0];
+      const currentCandidateRevision = store.candidates.revision().number;
+      if (!candidateId) {
+        // No id means a new interval rather than an edit: the client has no id to
+        // send, so the schedule service mints one. Rejecting the payload here made
+        // the create path unreachable and a center could never enter a candidate.
+        const created = centerWorkflow.schedule.create(centerCaller, {
+          ...(value.centerId === undefined ? {} : { centerId: value.centerId }),
+          weekday: (value.weekday ?? interval?.weekday) as 1 | 2 | 3 | 4 | 5,
+          start: value.start ?? interval?.start ?? '',
+          end: value.end ?? interval?.end ?? '',
+          timeZone: value.timeZone ?? interval?.timeZone ?? '',
+          requestedStaffCount: value.requestedStaffCount ?? 1
+        }, currentCandidateRevision);
+        return { candidate: created, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, created), revision: globalRevision() };
+      }
+      const existing = centerWorkflow.schedule.get(centerCaller, candidateId);
       const updated = centerWorkflow.schedule.update(centerCaller, candidateId, {
         ...(value.weekday === undefined && interval === undefined ? {} : { weekday: (value.weekday ?? interval?.weekday) as 1 | 2 | 3 | 4 | 5 }),
         ...(value.start === undefined && interval === undefined ? {} : { start: value.start ?? interval?.start ?? existing.start }),
         ...(value.end === undefined && interval === undefined ? {} : { end: value.end ?? interval?.end ?? existing.end }),
         ...(value.timeZone === undefined && interval === undefined ? {} : { timeZone: value.timeZone ?? interval?.timeZone ?? existing.timeZone }),
         ...(value.requestedStaffCount === undefined ? {} : { requestedStaffCount: value.requestedStaffCount })
-      }, store.candidates.revision().number);
+      }, currentCandidateRevision);
       return { candidate: updated, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, updated), revision: globalRevision() };
     },
     [INTEGRATION_OPERATIONS.adminCenterCandidateConfirm]: ({ actor }, payload) => {

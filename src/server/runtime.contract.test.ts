@@ -258,3 +258,57 @@ describe('production Apps Script runtime', () => {
     }
   });
 });
+
+describe('center candidate entry', () => {
+  const contact = {
+    claims: { iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-2', email: 'contact@example.test', email_verified: true, exp: 0 },
+    email: 'contact@example.test',
+    user: { id: 'contact@example.test', email: 'contact@example.test', roles: ['center-contact'] as const, centerIds: ['center-a'], active: true, revision: 0 }
+  };
+
+  function centerRuntime(): ReturnType<typeof createProductionRuntime> {
+    const spreadsheet = new InMemorySpreadsheet();
+    spreadsheet.getSheetByName('Centers')?.appendRow(['center-a', 'Example Center', true, 0, '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z']);
+    return createProductionRuntime(spreadsheet, new InMemoryProperties());
+  }
+
+  function context(): HandlerContext {
+    return { actor: contact as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.centerCandidateUpdate, idempotencyKey: 'candidate-entry', now: '2026-09-20T00:00:00.000Z' };
+  }
+
+  // The center form has no id to send for a new interval, so the service must
+  // mint one. Refusing an id-less payload made creating the first candidate
+  // impossible: the browser surfaced "candidateId is required".
+  it('creates a candidate from the exact payload the center form sends', () => {
+    const runtime = centerRuntime();
+    const result = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidateUpdate]?.(context(), {
+      weekday: 3,
+      start: '13:00',
+      end: '14:00',
+      timeZone: 'America/New_York',
+      requestedStaffCount: 1
+    }) as { candidate: { id: string; centerId: string; weekday: number; status: string } };
+
+    expect(result.candidate.id).toMatch(/^candidate/u);
+    expect(result.candidate.centerId).toBe('center-a');
+    expect(result.candidate.weekday).toBe(3);
+    expect(result.candidate.status).toBe('candidate');
+  });
+
+  it('still edits an existing candidate when the payload carries its id', () => {
+    const runtime = centerRuntime();
+    const handler = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidateUpdate];
+    const created = handler?.(context(), { weekday: 3, start: '13:00', end: '14:00', timeZone: 'America/New_York', requestedStaffCount: 1 }) as { candidate: { id: string } };
+    const edited = handler?.(context(), { id: created.candidate.id, start: '14:00', end: '15:00' }) as { candidate: { id: string; start: string; end: string; weekday: number } };
+
+    expect(edited.candidate.id).toBe(created.candidate.id);
+    expect([edited.candidate.start, edited.candidate.end]).toEqual(['14:00', '15:00']);
+    expect(edited.candidate.weekday).toBe(3);
+  });
+
+  it('rejects a weekend candidate interval rather than storing it', () => {
+    const runtime = centerRuntime();
+    const handler = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidateUpdate];
+    expect(() => handler?.(context(), { weekday: 6, start: '13:00', end: '14:00', timeZone: 'America/New_York', requestedStaffCount: 1 })).toThrow(/Monday through Friday/u);
+  });
+});
