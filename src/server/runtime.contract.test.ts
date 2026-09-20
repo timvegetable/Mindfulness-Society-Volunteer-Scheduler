@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Temporal } from '@js-temporal/polyfill';
-import { INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationOperation } from './integration/dispatcher.js';
+import { INTEGRATION_OPERATIONS, IntegrationError, type HandlerContext, type IntegrationOperation } from './integration/dispatcher.js';
 import { createProductionRuntime, repositories, runtimeConfiguration } from './runtime.js';
 import { InMemoryProperties, InMemorySpreadsheet } from './workbook/in-memory-sheet.js';
 
@@ -266,9 +266,10 @@ describe('center candidate entry', () => {
     user: { id: 'contact@example.test', email: 'contact@example.test', roles: ['center-contact'] as const, centerIds: ['center-a'], active: true, revision: 0 }
   };
 
-  function centerRuntime(): ReturnType<typeof createProductionRuntime> {
+  function centerRuntime(seed?: (spreadsheet: InMemorySpreadsheet) => void): ReturnType<typeof createProductionRuntime> {
     const spreadsheet = new InMemorySpreadsheet();
     spreadsheet.getSheetByName('Centers')?.appendRow(['center-a', 'Example Center', true, 0, '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z']);
+    seed?.(spreadsheet);
     return createProductionRuntime(spreadsheet, new InMemoryProperties());
   }
 
@@ -310,5 +311,65 @@ describe('center candidate entry', () => {
     const runtime = centerRuntime();
     const handler = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidateUpdate];
     expect(() => handler?.(context(), { weekday: 6, start: '13:00', end: '14:00', timeZone: 'America/New_York', requestedStaffCount: 1 })).toThrow(/Monday through Friday/u);
+  });
+});
+
+describe('center workflow failures reach the caller', () => {
+  const contact = {
+    claims: { iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-2', email: 'contact@example.test', email_verified: true, exp: 0 },
+    email: 'contact@example.test',
+    user: { id: 'contact@example.test', email: 'contact@example.test', roles: ['center-contact'] as const, centerIds: ['center-a'], active: true, revision: 0 }
+  };
+
+  // 2026-09-09 is a Wednesday, matching the candidate weekday below.
+  function lockedCenterRuntime(): ReturnType<typeof createProductionRuntime> {
+    const spreadsheet = new InMemorySpreadsheet();
+    spreadsheet.getSheetByName('Centers')?.appendRow(['center-a', 'Example Center', true, 0, '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z']);
+    spreadsheet.getSheetByName('Sessions')?.appendRow(['session-locked-a', 'center', 'center-a', 'Locked occurrence', '2026-09-09', '13:00', '14:00', 'America/New_York', 1, 'locked', '', 0, '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z']);
+    return createProductionRuntime(spreadsheet, new InMemoryProperties());
+  }
+
+  // The centers package throws its own error type. Unmapped, the dispatcher
+  // reduced every refusal to "The scheduling service could not complete the
+  // request." and dropped the reason and the shortfall counts with it.
+  it('reports the locked-occurrence refusal by name instead of a generic failure', () => {
+    const runtime = lockedCenterRuntime();
+    const context: HandlerContext = { actor: contact as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.centerCandidateUpdate, idempotencyKey: 'locked-entry', now: '2026-09-20T00:00:00.000Z' };
+
+    let caught: unknown;
+    try {
+      runtime.handlers[INTEGRATION_OPERATIONS.centerCandidateUpdate]?.(context, { weekday: 3, start: '13:00', end: '14:00', timeZone: 'America/New_York', requestedStaffCount: 1 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(IntegrationError);
+    const failure = caught as IntegrationError;
+    expect(failure.code).toBe('CONFLICT');
+    expect(failure.message).toContain('an administrator must manage the existing session');
+    expect(failure.message).not.toContain('could not complete the request');
+    expect(failure.details?.lockedSessionId).toBe('session-locked-a');
+  });
+
+  it('reports the coverage refusal with its shortfall counts', () => {
+    const runtime = lockedCenterRuntime();
+    // Candidate coverage is compared against volunteer availability, so an
+    // unstaffed centre cannot confirm at all; the counts must survive the throw.
+    const handler = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidateUpdate];
+    const created = handler?.({ actor: contact as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.centerCandidateUpdate, idempotencyKey: 'seed-candidate', now: '2026-09-20T00:00:00.000Z' }, { weekday: 2, start: '10:00', end: '11:00', timeZone: 'America/New_York', requestedStaffCount: 1 }) as { candidate: { id: string } };
+
+    const confirmContext: HandlerContext = { actor: { ...contact, user: { ...contact.user, roles: ['administrator'] } } as unknown as HandlerContext['actor'], operation: INTEGRATION_OPERATIONS.adminCenterCandidateConfirm, idempotencyKey: 'confirm-candidate', now: '2026-09-20T00:00:00.000Z' };
+    let caught: unknown;
+    try {
+      runtime.handlers[INTEGRATION_OPERATIONS.adminCenterCandidateConfirm]?.(confirmContext, { candidateId: created.candidate.id });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(IntegrationError);
+    const failure = caught as IntegrationError;
+    expect(failure.code).toBe('CONFLICT');
+    expect(failure.message).toContain('coverage is insufficient');
+    expect(failure.details?.shortfall).toBe(1);
   });
 });

@@ -7,7 +7,7 @@ import { StagedWhenIsGoodImportService } from './imports/service.js';
 import { WhenIsGoodFetcher } from './imports/fetcher.js';
 import type { IdentityMapping, ImportRepository, ImportRun } from './imports/types.js';
 import { SelfServiceService, type ServiceResult } from './self-service/index.js';
-import { createCenterWorkflow } from './centers/service.js';
+import { createCenterWorkflow, CenterWorkflowError } from './centers/service.js';
 import type { CenterCaller } from './centers/models.js';
 import { centerCodec, centerUserCodec, candidateScheduleCodec } from './centers/codecs.js';
 import { CacheInsightRepository, InsightStore, projectInsights as projectInsightDataset, type InsightConfig, type InsightDataset, type InsightSnapshot, type InsightSourceRevision, type ScriptCache } from './insights/index.js';
@@ -223,6 +223,22 @@ class SheetImportRepository implements ImportRepository {
 
 function caller(actor: AuthenticatedPrincipal): CenterCaller {
   return { id: actor.user.id, active: actor.user.active, roles: actor.user.roles, centerIds: actor.user.centerIds };
+}
+
+/**
+ * The centers package throws its own error type and knows nothing about the
+ * transport, so an unmapped throw reaches the dispatcher as an unrecognised
+ * error and every refusal — a locked occurrence, an insufficient-coverage
+ * confirmation — is reported as a generic failure with the reason and the
+ * shortfall counts dropped. Translating here keeps those messages and details.
+ */
+function withCenterWorkflowErrors<T>(action: () => T): T {
+  try {
+    return action();
+  } catch (error) {
+    if (error instanceof CenterWorkflowError) throw new IntegrationError(error.code, error.message, error.details, error.code === 'CONFLICT');
+    throw error;
+  }
 }
 
 function serviceData<T>(result: ServiceResult<T>): T {
@@ -508,14 +524,14 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       return projectInsightRead(current ?? insights.regenerate(insightSnapshot()));
     },
     [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => projectInsightRead(insights.refresh(insightSnapshot())),
-    [INTEGRATION_OPERATIONS.centerCandidate]: ({ actor }) => {
+    [INTEGRATION_OPERATIONS.centerCandidate]: ({ actor }) => withCenterWorkflowErrors(() => {
       const centerCaller = caller(actor);
       const candidates = centerWorkflow.schedule.list(centerCaller).map((candidate) => ({ ...candidate, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, candidate) }));
       const names = new Set(candidates.map((candidate) => candidate.centerId));
       const centerName = names.size === 1 ? store.centers.get([...names][0]!)?.name : undefined;
       return { centerName, candidates, revision: globalRevision() };
-    },
-    [INTEGRATION_OPERATIONS.centerCandidateUpdate]: ({ actor }, payload) => {
+    }),
+    [INTEGRATION_OPERATIONS.centerCandidateUpdate]: ({ actor }, payload) => withCenterWorkflowErrors(() => {
       const value = payload as { candidateId?: string; id?: string; centerId?: string; weekday?: number; start?: string; end?: string; timeZone?: string; requestedStaffCount?: number; intervals?: Array<{ weekday: number; start: string; end: string; timeZone: string }> };
       const centerCaller = caller(actor);
       const candidateId = value.candidateId ?? value.id;
@@ -544,12 +560,12 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
         ...(value.requestedStaffCount === undefined ? {} : { requestedStaffCount: value.requestedStaffCount })
       }, currentCandidateRevision);
       return { candidate: updated, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, updated), revision: globalRevision() };
-    },
-    [INTEGRATION_OPERATIONS.adminCenterCandidateConfirm]: ({ actor }, payload) => {
+    }),
+    [INTEGRATION_OPERATIONS.adminCenterCandidateConfirm]: ({ actor }, payload) => withCenterWorkflowErrors(() => {
       const candidateId = (payload as { candidateId: string }).candidateId;
       const result = centerWorkflow.confirmation.confirm(caller(actor), candidateId, { expectedRevision: store.candidates.revision().number });
       return { ...result, revision: globalRevision() };
-    }
+    })
   };
   return { handlers, users: store.centerUsers.list() };
 }
