@@ -261,9 +261,9 @@ describe('center candidate state', () => {
   function stateCells(candidates: Record<string, unknown>[]): string[] {
     const documentRef = new FakeDocument();
     const container = documentRef.createElement('main');
-    renderCenterSchedule(container as unknown as HTMLElement, { centerName: 'Example Center', candidates, revision: 3 } as never, 'administrator', {}, documentRef as unknown as Document);
+    renderCenterSchedule(container as unknown as HTMLElement, { candidates, revision: 3 } as never, 'administrator', {}, documentRef as unknown as Document);
     // One row per candidate: requested, coverage, state, action.
-    return findAll(container, (node) => node.tagName === 'TD').filter((_node, index) => index % 4 === 2).map((node) => node.textContent);
+    return findAll(container, (node) => node.tagName === 'TD').filter((_node, index) => index % 5 === 3).map((node) => node.textContent);
   }
 
   // The stored status is "candidate" for every unconfirmed interval, so it can
@@ -295,8 +295,8 @@ describe('center candidate actions', () => {
   function actionCells(candidates: Record<string, unknown>[], role: 'administrator' | 'center-contact' = 'administrator'): string[] {
     const documentRef = new FakeDocument();
     const container = documentRef.createElement('main');
-    renderCenterSchedule(container as unknown as HTMLElement, { centerName: 'Example Center', candidates, revision: 3 } as never, role, {}, documentRef as unknown as Document);
-    return findAll(container, (node) => node.tagName === 'TD').filter((_node, index) => index % 4 === 3).map((node) => node.textContent);
+    renderCenterSchedule(container as unknown as HTMLElement, { candidates, revision: 3 } as never, role, {}, documentRef as unknown as Document);
+    return findAll(container, (node) => node.tagName === 'TD').filter((_node, index) => index % 5 === 4).map((node) => node.textContent);
   }
 
   // Both writes are refused once a candidate is resolved, so a resolved row must
@@ -338,7 +338,7 @@ describe('center attribution in the candidate table', () => {
   function renderCandidates(candidates: Record<string, unknown>[]): FakeNode {
     const documentRef = new FakeDocument();
     const container = documentRef.createElement('main');
-    renderCenterSchedule(container as unknown as HTMLElement, { centerName: 'OPAL Senior Center', candidates, revision: 3 } as never, 'administrator', {}, documentRef as unknown as Document);
+    renderCenterSchedule(container as unknown as HTMLElement, { candidates, revision: 3 } as never, 'administrator', {}, documentRef as unknown as Document);
     return container;
   }
 
@@ -346,11 +346,13 @@ describe('center attribution in the candidate table', () => {
     return findAll(container, (node) => node.tagName === 'TH' && node.scope === 'col').map((node) => node.textContent);
   }
 
-  // A single-centre contact already reads the centre from the heading, so the
-  // column only appears once rows would otherwise be unattributable.
-  it('states each row\u2019s center only when the rows span more than one', () => {
+  // Each row names its own centre and the heading stays generic, so one table
+  // reads correctly whether it holds a single centre's proposals or several.
+  it('names the center on every row and never in the heading', () => {
     const one = renderCandidates([candidate({ centerName: 'OPAL Senior Center', coverageCount: 1 })]);
-    expect(columnHeaders(one)).toEqual(['Interval', 'Requested', 'Coverage', 'State', 'Action']);
+    expect(columnHeaders(one)).toEqual(['Interval', 'Center', 'Requested', 'Coverage', 'State', 'Action']);
+    expect(first(find(one, (node) => node.tagName === 'H2')).textContent).toBe('Candidate center schedule');
+    expect(first(findAll(one, (node) => node.tagName === 'TD')[0]).textContent).toBe('OPAL Senior Center');
 
     const many = renderCandidates([
       candidate({ centerName: 'OPAL Senior Center', coverageCount: 1 }),
@@ -360,6 +362,8 @@ describe('center attribution in the candidate table', () => {
     const firstRowCells = findAll(many, (node) => node.tagName === 'TD').slice(0, 5).map((node) => node.textContent);
     expect(firstRowCells[0]).toBe('OPAL Senior Center');
     expect(firstRowCells[1]).toBe('1');
+    expect(firstRowCells[2]).toBe('1 eligible volunteers');
+    expect(findAll(many, (node) => node.tagName === 'TD')[5]?.textContent).toBe('Pasadena Senior Activity Center');
   });
 
   it('rewords the caption so it reads correctly for an administrator', () => {

@@ -347,7 +347,7 @@ export function parseCenter(value: unknown): CenterScheduleData {
     else if (rankedNames.length > 0) candidate.volunteerNames = rankedNames;
     return [candidate];
   });
-  return { centerName: stringValue(data.centerName), candidates, revision: parseRevision(data.revision) };
+  return { candidates, revision: parseRevision(data.revision) };
 }
 
 function configFrom(value: unknown): ClientConfig {

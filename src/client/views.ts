@@ -180,7 +180,6 @@ export interface CenterCandidate {
 export type CenterCandidateInput = Pick<CenterCandidate, 'weekday' | 'start' | 'end' | 'timeZone' | 'requestedStaffCount'> & { id?: string };
 
 export interface CenterScheduleData {
-  centerName?: string;
   candidates: CenterCandidate[];
   revision?: number | string;
 }
@@ -973,8 +972,10 @@ export function renderCenterSchedule(
   documentRef: Document = container.ownerDocument
 ): void {
   clear(container);
-  const centerName = data.centerName ? ` — ${data.centerName}` : '';
-  container.append(heading(documentRef, 2, `Candidate center schedule${centerName}`));
+  // The heading stays generic: several centers can appear in one table, so a
+  // center name there would be wrong for an administrator and redundant for a
+  // single-center contact, who reads it on every row instead.
+  container.append(heading(documentRef, 2, 'Candidate center schedule'));
   const intro = createElement(documentRef, 'p');
   intro.textContent = 'Candidate coverage is advisory only. It does not create assignments or promise a class until an administrator confirms it.';
   container.append(intro);
@@ -1025,12 +1026,9 @@ export function renderCenterSchedule(
   const caption = createElement(documentRef, 'caption');
   caption.textContent = 'Proposed candidate intervals and current advisory coverage';
   table.append(caption);
-  // An administrator reads every center's rows together, so the rows say which
-  // center they belong to whenever they do not all share one.
-  const showsCenters = new Set(data.candidates.map((candidate) => candidate.centerName ?? candidate.centerId ?? '')).size > 1;
-  const columnLabels = showsCenters
-    ? ['Interval', 'Center', 'Requested', 'Coverage', 'State', 'Action']
-    : ['Interval', 'Requested', 'Coverage', 'State', 'Action'];
+  // Every row names its center, so one table reads correctly whether it holds a
+  // single center's proposals or several.
+  const columnLabels = ['Interval', 'Center', 'Requested', 'Coverage', 'State', 'Action'];
   const header = createElement(documentRef, 'tr');
   for (const label of columnLabels) {
     const cell = createElement(documentRef, 'th');
@@ -1109,13 +1107,9 @@ export function renderCenterSchedule(
           actionCell.append(note);
         }
       }
-      const cells = [interval, requested, coverage, state, actionCell];
-      if (showsCenters) {
-        const center = createElement(documentRef, 'td');
-        center.textContent = candidate.centerName ?? candidate.centerId ?? '';
-        cells.splice(1, 0, center);
-      }
-      row.append(...cells);
+      const center = createElement(documentRef, 'td');
+      center.textContent = candidate.centerName ?? candidate.centerId ?? '';
+      row.append(interval, center, requested, coverage, state, actionCell);
       tbody.append(row);
     }
   }
