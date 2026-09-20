@@ -25,6 +25,7 @@ class FakeNode {
   value = '';
   disabled = false;
   required = false;
+  scope = '';
   readonly classList = { add: (_name: string) => undefined, remove: (_name: string) => undefined };
   private ownText = '';
 
@@ -319,5 +320,50 @@ describe('center candidate actions', () => {
     expect(cells[0]).toContain('Edit candidate');
     expect(cells[0]).toContain('Administrator confirmation required');
     expect(cells[0]).not.toContain('Confirm for scheduling');
+  });
+});
+
+describe('center attribution in the candidate table', () => {
+  const candidate = (overrides: Record<string, unknown>): Record<string, unknown> => ({
+    id: 'candidate-x',
+    weekday: 1,
+    start: '12:00',
+    end: '13:00',
+    timeZone: 'America/New_York',
+    requestedStaffCount: 1,
+    status: 'candidate',
+    ...overrides
+  });
+
+  function renderCandidates(candidates: Record<string, unknown>[]): FakeNode {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+    renderCenterSchedule(container as unknown as HTMLElement, { centerName: 'OPAL Senior Center', candidates, revision: 3 } as never, 'administrator', {}, documentRef as unknown as Document);
+    return container;
+  }
+
+  function columnHeaders(container: FakeNode): string[] {
+    return findAll(container, (node) => node.tagName === 'TH' && node.scope === 'col').map((node) => node.textContent);
+  }
+
+  // A single-centre contact already reads the centre from the heading, so the
+  // column only appears once rows would otherwise be unattributable.
+  it('states each row\u2019s center only when the rows span more than one', () => {
+    const one = renderCandidates([candidate({ centerName: 'OPAL Senior Center', coverageCount: 1 })]);
+    expect(columnHeaders(one)).toEqual(['Interval', 'Requested', 'Coverage', 'State', 'Action']);
+
+    const many = renderCandidates([
+      candidate({ centerName: 'OPAL Senior Center', coverageCount: 1 }),
+      candidate({ centerName: 'Pasadena Senior Activity Center', coverageCount: 1 })
+    ]);
+    expect(columnHeaders(many)).toEqual(['Interval', 'Center', 'Requested', 'Coverage', 'State', 'Action']);
+    const firstRowCells = findAll(many, (node) => node.tagName === 'TD').slice(0, 5).map((node) => node.textContent);
+    expect(firstRowCells[0]).toBe('OPAL Senior Center');
+    expect(firstRowCells[1]).toBe('1');
+  });
+
+  it('rewords the caption so it reads correctly for an administrator', () => {
+    expect(first(find(renderCandidates([candidate({})]), (node) => node.tagName === 'CAPTION')).textContent)
+      .toBe('Proposed candidate intervals and current advisory coverage');
   });
 });

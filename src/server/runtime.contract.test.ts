@@ -373,3 +373,34 @@ describe('center workflow failures reach the caller', () => {
     expect(failure.details?.shortfall).toBe(1);
   });
 });
+
+describe('center attribution', () => {
+  const contact = {
+    claims: { iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-2', email: 'contact@example.test', email_verified: true, exp: 0 },
+    email: 'contact@example.test',
+    user: { id: 'contact@example.test', email: 'contact@example.test', roles: ['center-contact'] as const, centerIds: ['center-a'], active: true, revision: 0 }
+  };
+
+  function centerRuntime(): ReturnType<typeof createProductionRuntime> {
+    const spreadsheet = new InMemorySpreadsheet();
+    spreadsheet.getSheetByName('Centers')?.appendRow(['center-a', 'Example Center', true, 0, '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z']);
+    return createProductionRuntime(spreadsheet, new InMemoryProperties());
+  }
+
+  function context(operation: IntegrationOperation): HandlerContext {
+    return { actor: contact as unknown as HandlerContext['actor'], operation, idempotencyKey: `attribution-${operation}`, now: '2026-09-20T00:00:00.000Z' };
+  }
+
+  // An administrator reads every centre's rows at once, so a row has to carry its
+  // own centre rather than relying on a heading that only names a single one.
+  it('names the center each candidate belongs to', () => {
+    const runtime = centerRuntime();
+    runtime.handlers[INTEGRATION_OPERATIONS.centerCandidateUpdate]?.(context(INTEGRATION_OPERATIONS.centerCandidateUpdate), { weekday: 3, start: '13:00', end: '14:00', timeZone: 'America/New_York', requestedStaffCount: 1 });
+
+    const listed = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidate]?.(context(INTEGRATION_OPERATIONS.centerCandidate), {}) as { candidates: Array<{ centerId: string; centerName?: string }> };
+
+    expect(listed.candidates).toHaveLength(1);
+    expect(listed.candidates[0]?.centerId).toBe('center-a');
+    expect(listed.candidates[0]?.centerName).toBe('Example Center');
+  });
+});

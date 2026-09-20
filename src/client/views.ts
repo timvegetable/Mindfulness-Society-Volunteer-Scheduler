@@ -165,6 +165,8 @@ export interface AdminInsightsActions {
 
 export interface CenterCandidate {
   id?: string;
+  centerId?: string;
+  centerName?: string;
   weekday: number;
   start: string;
   end: string;
@@ -1021,10 +1023,16 @@ export function renderCenterSchedule(
 
   const table = createElement(documentRef, 'table', 'data-table');
   const caption = createElement(documentRef, 'caption');
-  caption.textContent = 'Your candidate intervals and current advisory coverage';
+  caption.textContent = 'Proposed candidate intervals and current advisory coverage';
   table.append(caption);
+  // An administrator reads every center's rows together, so the rows say which
+  // center they belong to whenever they do not all share one.
+  const showsCenters = new Set(data.candidates.map((candidate) => candidate.centerName ?? candidate.centerId ?? '')).size > 1;
+  const columnLabels = showsCenters
+    ? ['Interval', 'Center', 'Requested', 'Coverage', 'State', 'Action']
+    : ['Interval', 'Requested', 'Coverage', 'State', 'Action'];
   const header = createElement(documentRef, 'tr');
-  for (const label of ['Interval', 'Requested', 'Coverage', 'State', 'Action']) {
+  for (const label of columnLabels) {
     const cell = createElement(documentRef, 'th');
     cell.scope = 'col';
     cell.textContent = label;
@@ -1037,7 +1045,7 @@ export function renderCenterSchedule(
   if (data.candidates.length === 0) {
     const row = createElement(documentRef, 'tr');
     const cell = createElement(documentRef, 'td');
-    cell.colSpan = 5;
+    cell.colSpan = columnLabels.length;
     cell.textContent = 'No candidate intervals have been entered.';
     row.append(cell);
     tbody.append(row);
@@ -1101,7 +1109,13 @@ export function renderCenterSchedule(
           actionCell.append(note);
         }
       }
-      row.append(interval, requested, coverage, state, actionCell);
+      const cells = [interval, requested, coverage, state, actionCell];
+      if (showsCenters) {
+        const center = createElement(documentRef, 'td');
+        center.textContent = candidate.centerName ?? candidate.centerId ?? '';
+        cells.splice(1, 0, center);
+      }
+      row.append(...cells);
       tbody.append(row);
     }
   }

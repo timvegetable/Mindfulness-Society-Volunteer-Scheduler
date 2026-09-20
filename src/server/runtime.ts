@@ -526,7 +526,13 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => projectInsightRead(insights.refresh(insightSnapshot())),
     [INTEGRATION_OPERATIONS.centerCandidate]: ({ actor }) => withCenterWorkflowErrors(() => {
       const centerCaller = caller(actor);
-      const candidates = centerWorkflow.schedule.list(centerCaller).map((candidate) => ({ ...candidate, coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, candidate) }));
+      const candidates = centerWorkflow.schedule.list(centerCaller).map((candidate) => ({
+        ...candidate,
+        // An administrator reads every center's rows at once, so each row carries
+        // its own center name rather than relying on one shared heading.
+        centerName: store.centers.get(candidate.centerId)?.name ?? candidate.centerId,
+        coverage: centerWorkflow.coverage.compareAuthorized(centerCaller, candidate)
+      }));
       const names = new Set(candidates.map((candidate) => candidate.centerId));
       const centerName = names.size === 1 ? store.centers.get([...names][0]!)?.name : undefined;
       return { centerName, candidates, revision: globalRevision() };

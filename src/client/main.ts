@@ -338,7 +338,9 @@ export function parseCenter(value: unknown): CenterScheduleData {
     const names = arrayValue(item.volunteerNames);
     const rankedNames = coverage ? arrayValue(coverage.rankedVolunteers).flatMap((entry) => isRecord(entry) && typeof entry.name === 'string' ? [entry.name] : []) : [];
     const id = stringValue(item.id);
+    const centerName = stringValue(item.centerName);
     if (id !== undefined) candidate.id = id;
+    if (centerName !== undefined) candidate.centerName = centerName;
     if (coverageCount !== undefined) candidate.coverageCount = coverageCount;
     if (status !== undefined) candidate.status = status;
     if (names.length > 0 && names.every((entry) => typeof entry === 'string')) candidate.volunteerNames = names as string[];
