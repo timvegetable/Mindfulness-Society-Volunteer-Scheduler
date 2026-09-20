@@ -132,7 +132,12 @@ export class BackupPromotionService {
     if (session.status === 'cancelled') return failure('CONFLICT', 'Cancelled sessions cannot receive a promotion');
     try {
       const allAssignments = this.assignments.list();
-      const allBackups = this.backups.list().filter((backup) => backup.sessionId === sessionId);
+      // Backups are rebuilt one session at a time below, but the replacement is a
+      // whole-tab write: other sessions' rows must be carried through untouched or
+      // a single cancellation drops the backups for the rest of the schedule.
+      const everyBackup = this.backups.list();
+      const allBackups = everyBackup.filter((backup) => backup.sessionId === sessionId);
+      const otherBackups = everyBackup.filter((backup) => backup.sessionId !== sessionId);
       const assigned = allAssignments.filter((assignment) => assignment.sessionId === sessionId && assignment.status === 'assigned');
       // Recurring availability lives in its own tab, so the roster row alone
       // carries no intervals: hydrate once, then index everything the candidate
@@ -199,7 +204,7 @@ export class BackupPromotionService {
           const assignmentRevisionState = this.assignments?.upsert(promotedAssignment, currentAssignmentRevision, actorId, 'self-service-backup-promotion');
           assignmentRevision = assignmentRevisionState?.number ?? currentAssignmentRevision;
         }
-        const backupRevision = this.backups?.replace(reordered, currentBackupRevision, actorId, 'self-service-backup-promotion') ?? { number: currentBackupRevision };
+        const backupRevision = this.backups?.replace([...otherBackups.map((backup) => ({ ...backup })), ...reordered], currentBackupRevision, actorId, 'self-service-backup-promotion') ?? { number: currentBackupRevision };
         const audit: AuditEntry = cancellationAudit(this.idGenerator.next('audit'), actorId, 'backup', sessionId, selected ? 'promote' : 'understaffed', timestamp, allBackups, reordered);
         this.backups?.appendAudit(audit);
         appendAudit(this.repositories, audit);

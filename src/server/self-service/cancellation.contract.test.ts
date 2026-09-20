@@ -48,8 +48,12 @@ function assignment(id: string, volunteerId: string): Assignment {
   return { id, sessionId: 'session-1', volunteerId, scheduleRevision: 1, status: 'assigned', createdAt: timestamp };
 }
 
-function backup(volunteerId: string, position: number): Backup {
-  return { id: `backup-${volunteerId}`, sessionId: 'session-1', volunteerId, scheduleRevision: 1, position, status: 'available' };
+function secondSession(): Session {
+  return { ...session(), id: 'session-2', title: 'Other center session', start: '13:00', end: '15:00' };
+}
+
+function backup(volunteerId: string, position: number, sessionId = 'session-1'): Backup {
+  return { id: `backup-${sessionId}-${volunteerId}`, sessionId, volunteerId, scheduleRevision: 1, position, status: 'available' };
 }
 
 function serviceFor(options: {
@@ -57,6 +61,7 @@ function serviceFor(options: {
   backups: readonly Backup[];
   exceptions?: readonly AvailabilityException[];
   recurringAvailability: readonly RecurringAvailabilityRecord[];
+  sessions?: readonly Session[];
 }) {
   const assignments = new MemoryRepository<Assignment>();
   for (const row of options.assignments) assignments.upsert(row, assignments.revision().number, 'seed', 'seed');
@@ -65,7 +70,7 @@ function serviceFor(options: {
   const exceptions = new MemoryRepository<AvailabilityException>();
   for (const row of options.exceptions ?? []) exceptions.upsert(row, exceptions.revision().number, 'seed', 'seed');
   const sessions = new MemoryRepository<Session>();
-  sessions.upsert(session(), sessions.revision().number, 'seed', 'seed');
+  for (const row of options.sessions ?? [session()]) sessions.upsert(row, sessions.revision().number, 'seed', 'seed');
   const volunteers = new MemoryRepository<Volunteer>();
   for (const row of [volunteer('vol-1', 1, 'First Volunteer'), volunteer('vol-2', 2, 'Second Volunteer')]) volunteers.upsert(row, volunteers.revision().number, 'seed', 'seed');
   const recurring = new MemoryRepository<RecurringAvailabilityRecord>();
@@ -135,5 +140,25 @@ describe('cancellation backup promotion', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.promotion.promotedVolunteerId).toBe('vol-2');
+  });
+
+  it('leaves another session\u2019s backups intact when rebuilding one session', () => {
+    const { service, assignments, backups, exceptions } = serviceFor({
+      assignments: [assignment('assignment-1', 'vol-1')],
+      backups: [backup('vol-2', 1), backup('vol-3', 1, 'session-2'), backup('vol-4', 2, 'session-2')],
+      sessions: [session(), secondSession()],
+      recurringAvailability: [availability('availability-2', 'vol-2', 1, '08:00', '12:00')]
+    });
+
+    const result = service.cancel(caller, { assignmentId: 'assignment-1', expectedRevision: assignments.revision().number, expectedExceptionRevision: exceptions.revision().number });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.promotion.promotedVolunteerId).toBe('vol-2');
+    // The cancelled session's backup is promoted...
+    expect(backups.list().filter((row) => row.sessionId === 'session-1').map((row) => [row.volunteerId, row.status])).toEqual([['vol-2', 'promoted']]);
+    // ...while the untouched session keeps every backup it had, in order.
+    expect(backups.list().filter((row) => row.sessionId === 'session-2').map((row) => [row.volunteerId, row.status, row.position])).toEqual([['vol-3', 'available', 1], ['vol-4', 'available', 2]]);
+    expect(backups.list()).toHaveLength(3);
   });
 });
