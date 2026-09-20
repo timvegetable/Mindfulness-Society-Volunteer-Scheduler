@@ -146,3 +146,46 @@ describe('center candidate entry against locked occurrences', () => {
     expect(candidates.list().map((row) => row.centerId)).toEqual(['center-2']);
   });
 });
+
+describe('centre tenant isolation', () => {
+  const opalContact: CenterCaller = { id: 'opal@example.test', active: true, roles: ['center-contact'], centerIds: ['center-1'] };
+  const otherContact: CenterCaller = { id: 'other@example.test', active: true, roles: ['center-contact'], centerIds: ['center-2'] };
+
+  function scheduleService(): CenterScheduleService {
+    // candidate() and the seeded candidate belong to center-1.
+    return new CenterScheduleService({ candidates: new MemoryCandidateScheduleStore([candidate()]), sessions: new MemorySessionStore<Session>([]) });
+  }
+
+  it('hides another centre s candidate from a centre contact list', () => {
+    const service = scheduleService();
+
+    expect(service.list(opalContact).map((row) => row.id)).toEqual(['candidate-1']);
+    expect(service.list(otherContact)).toEqual([]);
+    expect(service.list(admin).map((row) => row.id)).toEqual(['candidate-1']);
+  });
+
+  it('refuses a centre contact reading another centre s candidate', () => {
+    let caught: unknown;
+    try {
+      scheduleService().get(otherContact, 'candidate-1');
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CenterWorkflowError);
+    expect((caught as CenterWorkflowError).code).toBe('FORBIDDEN');
+    expect((caught as CenterWorkflowError).message).toContain('not authorized for this center');
+  });
+
+  it('refuses a centre contact editing another centre s candidate', () => {
+    let caught: unknown;
+    try {
+      scheduleService().update(otherContact, 'candidate-1', { start: '10:00', end: '11:00' });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CenterWorkflowError);
+    expect((caught as CenterWorkflowError).message).toContain('not authorized for this center');
+  });
+});
