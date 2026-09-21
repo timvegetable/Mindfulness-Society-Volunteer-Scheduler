@@ -7,6 +7,10 @@ dist/
 *.local.json
 .pi/
 .omp/
+.codex/
+.minimax/
+# Local tool wiring, not part of the project.
+.mcp.json
 # Private migration material: never commit these exports.
 migration-output/
 scrubbed_exports/
