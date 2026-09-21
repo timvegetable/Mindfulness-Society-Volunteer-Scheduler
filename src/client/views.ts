@@ -142,6 +142,8 @@ export interface AdminImportActions {
     source: Readonly<{ sourceParticipantId?: string; sourceEmail?: string; sourceName?: string }>,
     volunteerId: string
   ) => void | Promise<void>;
+  /** Persisted by the import controller and passed to every rerender. */
+  notice?: ScheduleNotice;
 }
 
 export interface InsightCell {
@@ -670,6 +672,12 @@ export function renderAdminImport(
   const description = createElement(documentRef, 'p');
   description.textContent = 'Preview a complete source result before promoting it. A failed parse never replaces the last successful import.';
   container.append(description);
+  if (actions.notice) {
+    const notice = createElement(documentRef, 'p', `alert ${actions.notice.kind === 'error' ? 'error' : 'success'}`);
+    notice.setAttribute('role', actions.notice.kind === 'error' ? 'alert' : 'status');
+    notice.textContent = actions.notice.message;
+    container.append(notice);
+  }
   const form = createElement(documentRef, 'form', 'toolbar');
   const codeField = labelledInput(documentRef, 'Results code', 'text', data.resultsCode ?? '');
   codeField.input.required = true;

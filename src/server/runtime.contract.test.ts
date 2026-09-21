@@ -117,7 +117,16 @@ describe('production Apps Script runtime', () => {
       expect(preview.availabilityPreview).toEqual([{ volunteerId: 'vol-1', volunteerName: 'Example Person', intervals: [{ weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' }, { weekday: 1, start: '10:00', end: '11:00', timeZone: 'America/New_York' }] }]);
       expect(preview.mappingOptions.map((option) => option.volunteerId)).toEqual(['vol-1']);
 
-      runtime.handlers[INTEGRATION_OPERATIONS.adminImportPromote]?.(context(INTEGRATION_OPERATIONS.adminImportPromote), { resultsCode: 'legacy-result' });
+      const promotion = runtime.handlers[INTEGRATION_OPERATIONS.adminImportPromote]?.(context(INTEGRATION_OPERATIONS.adminImportPromote), { resultsCode: 'legacy-result' }) as {
+        status: string;
+        import: { status: string; resultsCode: string; runId: string; canPromote: boolean; availabilityPreview: unknown[] };
+      };
+      expect(promotion).toMatchObject({
+        status: 'promoted',
+        import: { status: 'promoted', resultsCode: 'legacy-result', canPromote: false }
+      });
+      expect(promotion.import.runId).toBeTruthy();
+      expect(promotion.import.availabilityPreview).toEqual(preview.availabilityPreview);
       const authoritative = spreadsheet.getSheetByName('RecurringAvailability')?.values.slice(1);
       expect(authoritative?.map((row) => [row[1], row[2], row[3], row[4], row[5]])).toEqual([
         ['vol-1', 1, '09:00', '10:00', 'America/New_York'],

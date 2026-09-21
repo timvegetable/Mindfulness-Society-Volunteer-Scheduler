@@ -75,6 +75,8 @@ interface Runtime {
   route: Route;
   /** Schedule action feedback survives the transient toolbar status node. */
   scheduleNotice?: ScheduleNotice;
+  /** Import action feedback survives the import view's controller rerender. */
+  importNotice?: ScheduleNotice;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -530,11 +532,25 @@ function paintRoute(runtime: Runtime, payload: RoutePayload, credential: string)
   if (payload.route === 'import') {
     const renderImport = (importData: ImportRunData): void => {
       const actions: AdminImportActions = {
-        onPreview: async (resultsCode) => renderImport(parseImport(await runtime.api.importPreview(resultsCode, credential))),
+        notice: runtime.importNotice,
+        onPreview: async (resultsCode) => {
+          runtime.importNotice = undefined;
+          renderImport(parseImport(await runtime.api.importPreview(resultsCode, credential)));
+        },
         onPromote: async (resultsCode, expectedRevision) => {
-          if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
-          await runtime.api.importPromote(resultsCode, expectedRevision, credential);
-          await afterMutation();
+          try {
+            if (expectedRevision === undefined) throw new Error('Preview a valid import before promoting it.');
+            const response = await runtime.api.importPromote(resultsCode, expectedRevision, credential);
+            const promoted = isRecord(response) && isRecord(response.import) ? parseImport(response.import) : undefined;
+            if (!promoted) throw new Error('The import was promoted, but its saved result could not be displayed. Reload before retrying.');
+            runtime.loader.invalidate(runtime.route);
+            runtime.importNotice = { kind: 'success', message: 'Availability import promoted successfully.' };
+            renderImport(promoted);
+          } catch (error) {
+            runtime.importNotice = { kind: 'error', message: actionFailureMessage(error) };
+            renderImport(importData);
+            throw error;
+          }
         },
         // The server saves the mapping and re-matches the staged import, so the
         // refreshed preview normally arrives with the response. Fall back to a

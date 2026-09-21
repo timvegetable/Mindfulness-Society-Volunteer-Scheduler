@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  renderAdminImport,
+  renderAdminInsights,
   renderAdminSchedule,
   renderCenterSchedule,
   renderVolunteerDashboard,
   type AdminScheduleData,
   type AvailabilityException,
   type AvailabilityInterval,
+  type InsightsData,
   type ScheduleNotice,
   type VolunteerDashboardData
 } from './views.js';
@@ -27,6 +30,7 @@ class FakeNode {
   required = false;
   scope = '';
   readonly classList = { add: (_name: string) => undefined, remove: (_name: string) => undefined };
+  readonly style = { setProperty: (_name: string, _value: string) => undefined };
   private ownText = '';
 
   constructor(tagName: string) {
@@ -179,6 +183,64 @@ describe('schedule preview rendering', () => {
     expect(container.textContent).toContain('Assignments0');
     expect(container.textContent).toContain('Backups0');
     expect(container.textContent).toContain('Shortfalls0');
+  });
+});
+
+describe('import promotion rendering', () => {
+  it('keeps a promotion result and notice visible after the controller rerenders', () => {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+
+    renderAdminImport(container as unknown as HTMLElement, {
+      status: 'promoted',
+      resultsCode: 'legacy-result',
+      runId: 'import-1',
+      participantCount: 1,
+      matchedCount: 1,
+      unmatchedCount: 0,
+      canPromote: false
+    }, {
+      notice: { kind: 'success', message: 'Availability import promoted successfully.' }
+    }, 8, documentRef as unknown as Document);
+
+    expect(container.textContent).toContain('Availability import promoted successfully.');
+    expect(container.textContent).toContain('promoted');
+    expect(container.textContent).toContain('Participants1');
+    expect(container.textContent).toContain('Matched1');
+    expect(container.textContent).toContain('Unmatched0');
+  });
+});
+
+describe('availability insight rendering', () => {
+  it('renders the same split windows and counts in the table and heatmap and labels stale data', () => {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+    const data: InsightsData = {
+      revision: 8,
+      stale: true,
+      cells: [
+        { weekday: 1, start: '09:00', end: '10:00', count: 1, volunteerNames: ['Left A'] },
+        { weekday: 1, start: '10:00', end: '11:00', count: 2, volunteerNames: ['Left A', 'Left B'] },
+        { weekday: 1, start: '11:00', end: '12:00', count: 1, volunteerNames: ['Left B'] }
+      ]
+    };
+
+    renderAdminInsights(container as unknown as HTMLElement, data, {}, true, documentRef as unknown as Document);
+
+    expect(container.textContent).toContain('Counts are from an earlier revision and must be refreshed before use.');
+    const rows = findAll(container, (node) => node.tagName === 'TBODY')
+      .flatMap((body) => body.children)
+      .map((row) => row.textContent);
+    expect(rows).toEqual([
+      'Monday 9:00 AM–10:00 AM1Left A',
+      'Monday 10:00 AM–11:00 AM2Left A, Left B',
+      'Monday 11:00 AM–12:00 PM1Left B'
+    ]);
+    expect(findAll(container, (node) => node.className === 'heatmap-cell').map((cell) => cell.textContent)).toEqual([
+      '9:00 AM–10:00 AM: 1',
+      '10:00 AM–11:00 AM: 2',
+      '11:00 AM–12:00 PM: 1'
+    ]);
   });
 });
 

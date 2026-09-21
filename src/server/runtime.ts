@@ -505,7 +505,22 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       const request = payload as { resultsCode: string }; // validated by the operation policy before dispatch
       const staged = imports.stageFromFetcher({ id: actor.user.id, roles: actor.user.roles }, fetcher, request.resultsCode);
       if (!staged.preview.canPromote) throw new IntegrationError('CONFLICT', `Import cannot be promoted: ${staged.preview.blockers.join('; ')}`);
-      return imports.promote({ id: actor.user.id, roles: actor.user.roles }, staged.run.id);
+      const promotion = imports.promote({ id: actor.user.id, roles: actor.user.roles }, staged.run.id);
+      // Promotion mutates the saved run, so return a projection built from the
+      // persisted value rather than the stale staged object. The import route
+      // has no independent read operation; without this projection the client
+      // can only repaint an empty form after a successful promotion.
+      const promotedRun = importRepository.getRun(promotion.runId);
+      if (!promotedRun) throw new IntegrationError('UNAVAILABLE', 'The promoted import could not be read back');
+      return {
+        ...promotion,
+        import: projectImport(
+          { run: promotedRun, preview: { canPromote: false, blockers: [] } },
+          request.resultsCode,
+          globalRevision(),
+          hydratedVolunteers(store)
+        )
+      };
     },
     [INTEGRATION_OPERATIONS.adminImportMappingUpsert]: ({ actor }, payload) => {
       const adminActor = { id: actor.user.id, roles: actor.user.roles };

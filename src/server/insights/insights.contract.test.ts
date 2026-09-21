@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { Assignment, Volunteer } from '../../shared/domain.js';
 import { INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationOperation } from '../integration/dispatcher.js';
 import { createProductionRuntime, repositories } from '../runtime.js';
 import { InMemoryProperties, InMemorySheet, InMemorySpreadsheet } from '../workbook/in-memory-sheet.js';
+import { calculateOverlapCells, deriveLeftoverVolunteers } from './index.js';
 
 const actor = {
   claims: { iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-1', email: 'admin@example.test', email_verified: true, exp: 0 },
@@ -120,5 +122,57 @@ describe('cached insight reads', () => {
     expect(refreshed.stale).toBe(false);
     expect(refreshed.leftoverVolunteerCount).toBe(1);
     expect(refreshed.cells).toEqual([{ weekday: 1, start: '09:00', end: '20:00', timeZone: 'America/New_York', count: 1, volunteerIds: ['vol-1'], volunteerNames: ['Example Volunteer'] }]);
+  });
+});
+
+describe('insight acceptance population and boundaries', () => {
+  const timestamp = '2026-09-01T00:00:00.000Z';
+  const volunteer = (
+    id: string,
+    name: string,
+    start: string,
+    end: string,
+    lifecycleStatus: Volunteer['lifecycleStatus'] = 'active'
+  ): Volunteer => ({
+    id,
+    name,
+    email: `${id}@example.test`,
+    lifecycleStatus,
+    interviewStatus: 'complete',
+    readinessRank: 1,
+    recurringAvailability: [{ weekday: 1, start, end, timeZone: 'America/New_York' }],
+    revision: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+
+  it('excludes assigned and graduated volunteers and splits cells when the volunteer set changes', () => {
+    const volunteers = [
+      volunteer('left-a', 'Left A', '09:00', '11:00'),
+      volunteer('left-b', 'Left B', '10:00', '12:00'),
+      volunteer('assigned', 'Assigned', '09:00', '12:00'),
+      volunteer('graduated', 'Graduated', '09:00', '12:00', 'graduated')
+    ];
+    const assignments: Assignment[] = [{
+      id: 'assignment-1',
+      sessionId: 'session-1',
+      volunteerId: 'assigned',
+      scheduleRevision: 4,
+      status: 'assigned',
+      createdAt: timestamp
+    }];
+
+    const leftover = deriveLeftoverVolunteers({ volunteers, assignments, assignmentRevision: 4 });
+    expect(leftover.map((entry) => entry.id)).toEqual(['left-a', 'left-b']);
+    expect(calculateOverlapCells(leftover, {
+      timeZone: 'America/New_York',
+      incrementMinutes: 60,
+      startTime: '09:00',
+      endTime: '12:00'
+    })).toEqual([
+      { weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York', count: 1, volunteerIds: ['left-a'] },
+      { weekday: 1, start: '10:00', end: '11:00', timeZone: 'America/New_York', count: 2, volunteerIds: ['left-a', 'left-b'] },
+      { weekday: 1, start: '11:00', end: '12:00', timeZone: 'America/New_York', count: 1, volunteerIds: ['left-b'] }
+    ]);
   });
 });
