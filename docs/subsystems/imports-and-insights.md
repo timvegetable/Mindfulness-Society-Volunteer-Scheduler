@@ -8,6 +8,8 @@ The importer parses the complete source, normalizes time-zone intervals, hashes 
 
 Promotion is all-or-nothing from the staged result. It replaces authoritative `RecurringAvailability` for imported participants and writes `ImportedAvailability` provenance. Because promoted availability is authoritative for scheduling and insights, promotion must use repository revisions and advance scheduling-input staleness. A mapping update may re-stage unresolved imports; it must rebuild rather than append duplicate rows.
 
+The promote operation returns both mutation metadata and an `import` projection rebuilt from the persisted promoted run. The client uses that projection to repaint the import route and retain its promotion notice; the route has no separate read operation and must not replace a successful result with an empty form.
+
 The WhenIsGood page is an undocumented external format. Keep parser fixtures scrubbed and representative. Do not move parsing into the browser or expose result data/codes in committed artifacts.
 
 ## Availability insights
@@ -17,4 +19,3 @@ The WhenIsGood page is an undocumented external format. Keep parser fixtures scr
 The overlap grid uses configured operating hours and fixed increments. Adjacent increments merge only when their exact volunteer sets match. Table and heatmap are projections of the same cells; counts and names must agree, with names restricted to administrators.
 
 An insight dataset records its source tuple, including eligibility/availability and current schedule assignment revisions. Reuse is legal only for an exact source match. A source change returns/regenerates stale data from one consistent snapshot. Script Cache is an optimization: malformed, missing, oversize, or evicted entries must fall back safely to regeneration and can never authorize access.
-

@@ -2,7 +2,7 @@
 
 Volunteer session scheduling for a mindfulness society. Google Sheets is the system of record, a Google Apps Script web app exposes the JSON operation API, and a static TypeScript client is served from GitHub Pages.
 
-Read `docs/architecture.md` before changing application boundaries, persistence, authorization, revisions, or server operations. Follow `docs/AGENTS.md` when changing documentation. Open work lives in `openspec/changes/volunteer-session-scheduling/tasks.md`.
+Read `docs/architecture.md` before changing application boundaries, persistence, authorization, revisions, or server operations. Follow `docs/AGENTS.md` when changing documentation. Open work lives in the active change task lists under `openspec/changes/`.
 
 ## Critical safety rules
 
