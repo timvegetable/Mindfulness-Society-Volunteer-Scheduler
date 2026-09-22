@@ -115,7 +115,7 @@ export type SheetCodec<T extends { id: string }> = {
 export class SheetRepository<T extends { id: string }> implements RevisionedRepository<T> {
   private snapshot: T[] | undefined;
 
-  constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore, private readonly auditWriter?: (entry: AuditEntry) => void, private readonly context: SheetValueContext = {}) {}
+  constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore, private readonly auditWriter?: (entry: AuditEntry) => void, private readonly context: SheetValueContext = {}, private readonly onRead?: <R>(tab: string, action: () => R) => R, private readonly onSheetCall?: <R>(action: () => R) => R) {}
 
   /**
    * Decodes the tab once per request: `get`, `upsert`, and every consumer of
@@ -124,12 +124,14 @@ export class SheetRepository<T extends { id: string }> implements RevisionedRepo
    */
   list(): T[] {
     if (!this.snapshot) {
-      const rowCount = this.sheet.getLastRow();
-      if (rowCount < 2) this.snapshot = [];
-      else {
-        const values = this.sheet.getRange(2, 1, rowCount - 1, this.headers.length).getValues();
-        this.snapshot = values.map((row) => this.codec.fromRow(this.recordFromRow(row), this.context));
-      }
+      const read = (): T[] => {
+        const rowCount = this.onSheetCall ? this.onSheetCall(() => this.sheet.getLastRow()) : this.sheet.getLastRow();
+        if (rowCount < 2) return [];
+        const readValues = () => this.sheet.getRange(2, 1, rowCount - 1, this.headers.length).getValues();
+        const values = this.onSheetCall ? this.onSheetCall(readValues) : readValues();
+        return values.map((row) => this.codec.fromRow(this.recordFromRow(row), this.context));
+      };
+      this.snapshot = this.onRead ? this.onRead(this.sheet.getName(), read) : read();
     }
     return [...this.snapshot];
   }

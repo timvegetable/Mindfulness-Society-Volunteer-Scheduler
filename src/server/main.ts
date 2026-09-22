@@ -8,6 +8,7 @@ import { createProductionRuntime, runtimeConfiguration } from './runtime.js';
 import { applyMigrationPayload } from './workbook/loader.js';
 import { cellBoolean, cellNumber, optionalCellText } from './workbook/sheet-values.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
+import { ReadTiming } from './integration/read-timing.js';
 export type ServerOptions = IntegrationDispatcherOptions & Readonly<{ adapter?: AppsScriptAdapterOptions }>;
 
 export type Server = Readonly<{
@@ -122,7 +123,7 @@ function runtimeTokenInfoAvailable(): boolean {
 
 export function createServer(options: ServerOptions): Server {
   const dispatcher = createIntegrationDispatcher(options);
-  const adapters = createAppsScriptAdapters(dispatcher, options.adapter);
+  const adapters = createAppsScriptAdapters(dispatcher, { ...options.adapter, timing: options.timing });
   return {
     dispatcher,
     doGet: adapters.doGet,
@@ -141,7 +142,7 @@ function runtimeAppsscriptServices(): { scriptCache?: { get(key: string): string
   return { ...(scriptCache ? { scriptCache } : {}), ...(runtime.Utilities ? { utilities: runtime.Utilities } : {}) };
 }
 
-function defaultServer(): Server {
+function defaultServer(timing?: ReadTiming): Server {
   const properties = runtimeProperties();
   const audience = properties?.getProperty('OAUTH_AUDIENCE');
   if (!audience?.trim()) throw new Error('OAUTH_AUDIENCE is not configured');
@@ -154,13 +155,13 @@ function defaultServer(): Server {
   const writeEnabled = properties?.getProperty('WRITE_ENABLED') === 'true';
   const writeLock = writeEnabled ? runtimeWriteLock() : undefined;
   const spreadsheet = (globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof createProductionRuntime>[0] } }).SpreadsheetApp?.getActiveSpreadsheet();
-  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties, { scriptCache }) : undefined;
+  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties, { scriptCache, timing }) : undefined;
   const handlers: OperationHandlers = production?.handlers ?? {
     [INTEGRATION_OPERATIONS.me]: ({ actor }: HandlerContext) => projectIdentity(actor)
   };
   // `production.users` is the Users tab decoded once for this request, so
   // authorization can never survive from an earlier request.
-  return createServer({ verifier, users: production ? new MemoryUserDirectory(production.users) : runtimeUserDirectory(), revision, writeLock, handlers });
+  return createServer({ verifier, users: production ? new MemoryUserDirectory(production.users) : runtimeUserDirectory(), revision, writeLock, handlers, timing });
 }
 
 /**
@@ -284,7 +285,19 @@ export function doGet(event: AppsScriptRequest): JsonOutput | string {
 }
 
 export function doPost(event: AppsScriptRequest): JsonOutput | string {
-  return server().doPost(event);
+  if (configuredServer) return configuredServer.doPost(event);
+  const timing = new ReadTiming();
+  let operation = 'invalid';
+  let probeId: string | undefined;
+  try {
+    const parsed: unknown = JSON.parse(event.postData?.contents ?? 'null');
+    if (parsed && typeof parsed === 'object') {
+      if ('operation' in parsed && typeof parsed.operation === 'string' && Object.values(INTEGRATION_OPERATIONS).includes(parsed.operation as typeof INTEGRATION_OPERATIONS[keyof typeof INTEGRATION_OPERATIONS])) operation = parsed.operation;
+      if ('idempotencyKey' in parsed && typeof parsed.idempotencyKey === 'string' && /^read-probe-[0-9]{13}-[a-z0-9]{8,16}$/.test(parsed.idempotencyKey)) probeId = parsed.idempotencyKey;
+    }
+  } catch { /* malformed input is reported as invalid */ }
+  try { return defaultServer(timing).doPost(event); }
+  finally { if (operation === INTEGRATION_OPERATIONS.adminSchedule || operation === INTEGRATION_OPERATIONS.adminInsights) timing.report(operation, timing.succeeded, probeId); }
 }
 
 export function unauthorizedResponse(): ApiResponse<never> {

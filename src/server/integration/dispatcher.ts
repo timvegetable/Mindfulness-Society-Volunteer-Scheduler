@@ -9,6 +9,7 @@ import {
   type UserDirectory,
   AuthenticationError
 } from './auth.js';
+import type { ReadTiming } from './read-timing.js';
 
 export const INTEGRATION_OPERATIONS = {
   me: 'session.me',
@@ -193,6 +194,7 @@ export type IntegrationDispatcherOptions = Readonly<{
   idempotencyTtlMs?: number;
   maxIdempotencyEntries?: number;
   clock?: () => string;
+  timing?: ReadTiming;
 }>;
 
 type StoredRequest = Readonly<{ fingerprint: string; storedAt: number; response?: ApiResponse<unknown> }>;
@@ -352,7 +354,7 @@ export class IntegrationDispatcher {
       }
       const payloadResult = policy.payload.safeParse(parsedRequest.payload);
       if (!payloadResult.success) return failure('INVALID_REQUEST', 'Request payload is invalid.', { issues: payloadResult.error.issues });
-      const actor = authenticateCredential(parsedRequest.credential, this.options.verifier, this.options.users);
+      const actor = authenticateCredential(parsedRequest.credential, this.options.verifier, this.options.users, this.options.timing);
       if (!policy.roles.some((role) => actor.user.roles.includes(role))) return failure('FORBIDDEN', 'Your account is not authorized for this operation.');
       enforceCenterCandidateBoundary(operation, actor, payloadResult.data);
       const expectedRevision = expectedRevisionFrom(parsedRequest.expectedRevision);
@@ -386,11 +388,13 @@ export class IntegrationDispatcher {
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
         now: this.options.clock?.() ?? new Date().toISOString()
       };
-      const data = assertSynchronous(operation, handler(context, payloadResult.data));
+      const invoke = () => assertSynchronous(operation!, handler(context, payloadResult.data));
+      const data = this.options.timing ? this.options.timing.derive(invoke) : invoke();
       let revision: number | undefined;
       if (policy.mutating && this.options.revision?.advance) revision = this.options.revision.advance(actor.user.id, operation);
       const response: ApiResponse<unknown> = revision === undefined ? { ok: true, data } : { ok: true, data, revision };
       this.requests.set(requestKey, { fingerprint: requestFingerprint, storedAt: Date.now(), response });
+      if (this.options.timing) this.options.timing.succeeded = true;
       return response;
     } catch (error) {
       if (requestKey) this.requests.delete(requestKey);

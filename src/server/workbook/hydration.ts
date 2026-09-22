@@ -13,6 +13,7 @@ export type AvailabilityHydrationSource = {
  * availability.
  */
 export function hydratedVolunteers(source: AvailabilityHydrationSource): Volunteer[] {
+  const volunteers = source.volunteers.list();
   const intervalsByVolunteer = new Map<string, RecurringAvailability[]>();
   for (const row of source.recurringAvailability?.list() ?? []) {
     const interval: RecurringAvailability = { weekday: row.weekday, start: row.start, end: row.end, timeZone: row.timeZone };
@@ -20,5 +21,5 @@ export function hydratedVolunteers(source: AvailabilityHydrationSource): Volunte
     if (existing) existing.push(interval);
     else intervalsByVolunteer.set(row.volunteerId, [interval]);
   }
-  return source.volunteers.list().map((volunteer) => ({ ...volunteer, recurringAvailability: intervalsByVolunteer.get(volunteer.id) ?? [] }));
+  return volunteers.map((volunteer) => ({ ...volunteer, recurringAvailability: intervalsByVolunteer.get(volunteer.id) ?? [] }));
 }

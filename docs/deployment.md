@@ -23,6 +23,8 @@ Then:
 5. record the current Pages artifact, pinned Apps Script deployment ID/version, and current accepted schedule revision;
 6. verify the live `WRITE_ENABLED` Script Property is false through `describeSignIn`.
 
+Before an approved server upload, run `npx clasp status` and confirm that only the reviewed `dist/apps-script/Code.js` and `appsscript.json` are tracked. `dist/bundle-evidence.json` must stay outside that upload set. Keep the prior pinned Apps Script version and Pages artifact for rollback. Server and client deployments each need their own explicit approval, snapshot, and live write-gate verification.
+
 Example local checks:
 
 ```sh
@@ -100,4 +102,3 @@ An administrator then reviews and performs the rollback:
 7. re-enable writes only under separate approval.
 
 Preserve incident artifacts and reports outside the public bundle. Never overwrite the only workbook snapshot.
-

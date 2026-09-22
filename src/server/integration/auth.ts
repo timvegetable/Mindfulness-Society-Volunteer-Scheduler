@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Role, User } from '../../shared/domain.js';
+import type { ReadTiming } from './read-timing.js';
 
 export type Clock = () => number;
 
@@ -263,17 +264,18 @@ function reject(reason: AuthenticationError['reason'], detail: string): Authenti
 export function authenticateCredential(
   credential: string | undefined,
   verifier: TokenVerifier,
-  users: UserDirectory
+  users: UserDirectory,
+  timing?: ReadTiming
 ): AuthenticatedPrincipal {
   if (!credential?.trim()) throw reject('missing', 'the request carried no credential');
   let claims: VerifiedIdentityClaims;
   try {
-    claims = verifier.verify(credential);
+    claims = timing ? timing.measure('credentialVerification', () => verifier.verify(credential)) : verifier.verify(credential);
   } catch (error) {
     throw reject('invalid', `token verification failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   const email = normalizeEmail(claims.email);
-  const user = users.findByEmail(email);
+  const user = timing ? timing.measure('authorization', () => users.findByEmail(email)) : users.findByEmail(email);
   if (!user) {
     const directorySize = users.list?.().length;
     throw reject('unknown-identity', `no Users row for ${email}${directorySize === undefined ? '' : ` (directory holds ${directorySize} row(s))`}`);

@@ -79,6 +79,8 @@ This sequence:
 
 The runtime is V8 and synchronous. Do not return promises from operation handlers. The manifest intentionally uses the current-spreadsheet, external-request, and mail scopes; adding the Advanced Sheets service or another scope is an architecture/security change, not a local optimization.
 
+The server build minifies while retaining the English-only Zod locale exclusion. `dist/bundle-evidence.json` records esbuild inputs, per-input emitted contributions, and final bytes outside the clasp upload directory. Use `node scripts/bundle-server.mjs --unminified-trial` and `node scripts/compare-server-bundles.mjs` for a synthetic, read-only bundle comparison; that benchmark does not reproduce remote Sheet or browser latency.
+
 `npm run deploy:server` and `npm run deploy` call `clasp` and can mutate the deployed project. Do not use them as build commands; follow [deployment.md](deployment.md) and use the guarded deployment script only after explicit approval.
 
 ## Code conventions
@@ -90,4 +92,3 @@ The runtime is V8 and synchronous. Do not return promises from operation handler
 - Preserve narrow explicit error codes and strict request schemas.
 - Add a dependency only when the existing platform and helpers cannot reasonably solve the problem.
 - Treat normalized availability as coverage, not stable row identity.
-

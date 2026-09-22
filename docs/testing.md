@@ -21,6 +21,7 @@ npx vitest run src/server/scheduling/scheduling.contract.test.ts
 - `*.contract.test.ts` exercises a module boundary or cross-module promise. Examples cover dispatcher failures, auth claims, workbook codecs/repositories, imports, scheduling, insights, caching, and bundle compatibility.
 - Client unit tests cover API envelope construction and failures, identity state, formatting, route snapshot freshness, and view event wiring.
 - `src/server/runtime.contract.test.ts` composes the production runtime against in-memory Sheets and Script Properties. Use it for behavior that depends on handler wiring or revision interaction.
+- `src/server/workbook/read-plans.contract.test.ts` checks exact tab resolution, request-local reuse, fresh authorization, and Insights cache hit/miss revision behavior. `src/client/read-probe.test.ts` checks the browser probe's redirect-to-404 HTML failure classification.
 - Pure domain helpers should be tested without Apps Script or a browser.
 - Deployed browser verification is evidence for production/OpenSpec tasks, not a substitute for automated regression coverage.
 
@@ -62,4 +63,3 @@ Node provides globals that Apps Script V8 may not. The server bundle audit and `
 - Pages artifact upload and deployment.
 
 It does **not** run `npm test`, `npm run check`, the server build/audit, or OpenSpec validation. Local full-suite evidence is therefore required before release; a green Pages workflow does not establish server or domain correctness.
-

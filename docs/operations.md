@@ -135,11 +135,21 @@ OpenSpec tasks 9.9 and 10.23 own the read-latency issue. Measurements on 2026-09
 | Schedule | 6966 ms | 4520 ms | 6027 ms | 2000 ms |
 | Insights | 6239 ms | 3162 ms | 4948 ms | 2000 ms |
 
-Every sample exceeded the objective and no read failed. The observed floor comes from rebuilding the production runtime and reading roughly eight required tabs sequentially through `SpreadsheetApp`; each repository decodes a tab only once per request, but the reads are not batched across tabs. The manifest currently has `spreadsheets.currentonly`, not the Advanced Sheets service. Scope changes, operation-specific repository loading, or `batchGet` are architecture/security changes and need an approved design. Do not quietly rewrite the objective.
+Every sample exceeded the objective and no read failed. At that deployed version, the observed floor came from rebuilding the production runtime and reading roughly eight tabs sequentially through `SpreadsheetApp`. Scoped reads are now in pinned server version 27. The manifest still has `spreadsheets.currentonly`, not the Advanced Sheets service. The numeric `batchGet` gate is met by the new measurement below, but enabling it still requires separate approval for the service and `spreadsheets.readonly` scope. Do not quietly rewrite the objective.
+
+The 2026-09-22 client observation added a separate failure mode: a slow `POST /exec` returned a redirect whose `/echo` handoff ended in 404 HTML, while Apps Script reported the execution as completed. The [read-latency change](../openspec/changes/meet-read-latency-objective/tasks.md) owns the deployed measurement and remaining optimization. On a signed-in administrator client, paste `scripts/browser-signed-in-read-probe.js` into DevTools and call `runSignedInReadProbe()`. It navigates the existing app, uses its exact `route-load` browser performance entries, runs two warm-ups, and seeks 40 successful fresh reads per route without accessing a credential or response body. It counts generic UI refresh failures and retains only durations and outcomes. For direct response classification, `scripts/browser-read-probe.js` accepts an in-memory credential and calls `runReadLatencyProbe({ appsScriptUrl, credential })`; its 404 HTML echo handoff classification is contract-tested. Do not save a credential or response body. Correlate the measurement window and direct probe IDs to sanitized `read-phases` lines using read-only `npx clasp logs`, and inspect the version with `npx clasp deployments`; do not copy unrelated private log lines into reports. `clasp logs` requires the linked GCP project ID in ignored local `.clasp.json` and reads Cloud logs, not the workbook. The two warm-ups are excluded. Keep every slow successful read in the warm sample unless independent execution evidence proves a cold start or upstream delay; list any such exclusion with its probe ID and reason. Browser results, including failures, decide the objective.
+
+The administrator ran that signed-in probe against pinned version 27 on 2026-09-22. These are successful fresh warm browser durations; the two warm-ups per route are excluded:
+
+| Route | total attempts | successes | measured failures | minimum | median | nearest-rank p95 | maximum |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Schedule | 60 | 40 | 18 | 3870 ms | 5599.5 ms | 7283 ms | 33492 ms |
+| Insights | 48 | 40 | 6 | 3017 ms | 4214.5 ms | 15472 ms | 17759 ms |
+
+The user's DevTools capture showed repeated `script.googleusercontent.com/macros/echo` 404 responses after roughly 15–32 seconds. The latest 100 sanitized server phase records in the run all reported successful executions: 56 Schedule records had median server phases of 2502 ms and Sheet-call time of 2339 ms (93.2% median per-request share, 14 calls each); 44 Insights records had medians of 802 ms and 571 ms (71.8% share, 4 or 10 calls). Maximum measured server phases were 3902 ms and 2666 ms respectively. This log window is not a one-to-one match with each browser attempt. The server Sheet calls justify a batch trial; the much longer client 404 failures also require a transport or platform decision if they persist after batching.
 
 ## Availability diagnostics
 
 Recurring availability is normalized by weekday and coalesces adjacent or overlapping intervals. A save may replace row IDs and reduce row count without removing a minute of coverage. Compare normalized coverage by volunteer/day/time zone, not row IDs or raw counts.
 
 Raw Sheet date/time cells are decoded in the workbook's own time zone. `describeSignIn` reports both workbook and configured scheduling zones; a mismatch is supported but must remain visible because decoding in the scheduling zone can shift historical time-only cells.
-

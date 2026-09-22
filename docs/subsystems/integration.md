@@ -23,3 +23,5 @@ Any new handler must return a deliberate projection. Do not return repository ro
 ## Runtime contract
 
 Apps Script handlers are synchronous. The server bundle cannot assume Node globals. Production constructs repositories once per request; each repository lazily reads its tab once and shares that snapshot among consumers. The composition root may translate domain errors but must preserve public code/message/details when the subsystem has already classified the failure.
+
+For published Schedule and Insights POST reads, the server logs aggregate phase milliseconds for credential verification, authorization, workbook hydration, derivation, and response construction, plus Sheet-call time and counts. `read-phases` log records contain no credential, request body, or workbook row. Browser-visible duration and outcome remain authoritative for the latency objective, because Apps Script can finish execution even when its redirect handoff returns HTML to the client.

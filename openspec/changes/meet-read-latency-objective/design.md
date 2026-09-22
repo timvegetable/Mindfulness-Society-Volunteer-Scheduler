@@ -20,27 +20,35 @@ The original change requires fresh warm Schedule and Insights reads to complete 
 
 ## Decisions
 
-### Measure before choosing the read strategy
+### Measure the browser outcome and server phases separately
 
-Add request-local phase timing and preserve client end-to-end timing. Use a production-shaped non-production workbook first, then the approved deployed probe. Measurements must identify sample eligibility and route independently.
+Add sanitized request-local timing for credential verification, authorization, workbook hydration, derivation, and response construction. The browser probe drives fresh Schedule and Insights reads, retains only duration and outcome, and treats a redirect ending in 404 HTML as a failed request even when Apps Script reports a completed execution. Run two warm-ups, then gather at least 40 successful warm reads per route. Report all attempts, failures, excluded cold starts or upstream delays, and min/median/max/nearest-rank p95 of successful eligible reads; never remove a slow success. Use clasp's read-only deployment and log inspection to correlate the version and server phases. Browser durations decide the objective.
 
 Alternative considered: immediately adopt the advanced Sheets service. Rejected because it adds deployment configuration and may not address authentication or transport costs.
 
+### Audit the bundle before changing schema or time libraries
+
+Record esbuild input contributions and emitted bytes. Trial minification while retaining the English-only Zod locale exclusion, then check exported entry points, failure envelopes, and Apps Script global compatibility. Compare startup and route timings in a production-shaped non-production setup; retain minification only without measured regression. Zod Mini is a later trial only if bundle/startup evidence still justifies a migration, and requires validation-contract parity plus a measured gain. Temporal and JSBI remain until a replacement passes date and time-zone checks.
+
 ### Define operation-specific workbook hydration plans
 
-Schedule and Insights reads declare the tabs/ranges they require rather than constructing an all-purpose store. Shared request-local memoization prevents duplicate reads. Authorization remains a required fresh input on every execution.
+Schedule and Insights reads declare their tabs/ranges rather than constructing an all-purpose store. Published Schedule requires `Users` for fresh authorization, then `SchedulingRuns`, `Assignments`, `Backups`, `Sessions`, `Volunteers`, and `Centers`. Insights requires `Users`, `SchedulingRuns`, and source revisions; a cache miss additionally requires `Volunteers`, `RecurringAvailability`, and `Assignments`. Revisions are read from Script Properties. Center workflow construction must not hydrate volunteers. Repository snapshots memoize decoded rows within one request; authorization is never cached across executions.
 
 Alternative considered: globally cache decoded workbook rows. Rejected because it can serve stale authorization or revision state and violates the architecture.
 
-### Batch independent reads behind the workbook boundary when justified
+### Gate batching on scoped-read evidence
 
-If measurements show sequential Sheet calls dominate, add a batch-read adapter inside `src/server/workbook/`, preferably through the advanced Sheets service, while keeping codecs and repositories unaware of the external API shape. Validate that all ranges belong to the configured workbook and decode them as one request snapshot.
+After scoped reads, collect a new sample set. Prepare an Advanced Sheets `spreadsheets.values.batchGet` trial only if either route still exceeds 2000 ms and multiple sequential Sheet reads account for at least half of its median server duration. Before enabling the service or adding `spreadsheets.readonly`, obtain explicit approval for that OAuth expansion; `spreadsheets.currentonly` does not authorize batchGet. Restrict the spreadsheet ID to the bound workbook and ranges to schema-declared tabs. Preserve workbook-zone date/time decoding and fail closed on configuration, missing ranges, or revision inconsistency.
+
+The 2026-09-22 scoped-read deployment met this gate: 40 successful fresh warm browser reads per route gave Schedule p95 7283 ms and Insights p95 15472 ms, with 18 and 6 measured failures respectively. The latest 100 sanitized server phase records had median Sheet-call shares of 93.2% for Schedule and 71.8% for Insights, across 14 and 4–10 sequential calls. A batchGet trial is justified for server latency. Repeated client-visible `script.googleusercontent.com` 404 handoff failures after long waits and a maximum measured server phase duration under 4 seconds indicate a separate transport reliability problem that batching may not solve. Retain the 2000 ms objective and report both effects after the trial.
 
 Alternative considered: issue direct Sheets calls from services. Rejected because raw Sheet access must remain in the workbook layer.
 
 ### Treat renegotiation as a requirements decision
 
 After reasonable scoped and batched-read work, rerun the specified sample set. If the p95 remains above 2000 ms because of the platform floor, present timings and architectural alternatives to administrators. Change the requirement only through an explicit spec amendment.
+
+An external serverless API could keep GitHub Pages and Sheets while replacing Apps Script's one-time response handoff. It would require a new server authorization and Sheets credential model, revision and write-gate migration, and a parallel deployment/rollback path. The browser failure evidence makes a small non-production API prototype reasonable before a full migration decision; it does not justify silently changing the production API or its data access.
 
 ## Risks / Trade-offs
 
@@ -51,11 +59,12 @@ After reasonable scoped and batched-read work, rerun the specified sample set. I
 
 ## Migration Plan
 
-1. Capture repeatable baseline and phase timings without changing behavior.
-2. Introduce operation-specific read plans with parity tests.
-3. Add batching only if evidence identifies Sheet round trips as the controlling cost.
-4. Deploy with write-disable and collect at least 40 successful warm samples per route.
-5. Keep the optimized path only if correctness and latency evidence pass; otherwise roll it back and take the objective decision to administrators.
+1. Pin the browser probe and server phases, then capture baseline evidence.
+2. Audit inputs/output bytes and trial minification in a non-production build.
+3. Introduce scoped reads with exact read-count and projection parity tests.
+4. Re-measure; prepare batching only when its numeric gate is met and separately approved.
+5. For each approved server or client deployment, export a snapshot, verify the live write gate, inspect clasp file status, and retain rollback versions.
+6. Collect the required deployed browser sample set and either record a pass or seek an explicit administrator specification decision.
 
 ## Open Questions
 

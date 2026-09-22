@@ -14,7 +14,7 @@ Stable opaque IDs link rows. Display names are not keys. Protected columns inclu
 
 ## Repository contract
 
-`SheetRepository.list()` performs at most one tab read in an Apps Script request and returns copies of its in-memory snapshot. `replace` and `upsert` compare the tab revision, write the complete encoded range, clear stale trailing rows, update the request snapshot, append an audit entry, then persist the next tab revision. `AuditLog` is append-only.
+`SheetRepository.list()` performs at most one tab read in an Apps Script request and returns copies of its in-memory snapshot. Runtime sheet handles resolve on first use, so unrelated tabs do not incur `getSheetByName` calls. `read-plans.ts` names the exact published Schedule and Insights tab sets; `Users` is always fresh for a new request. `replace` and `upsert` compare the tab revision, write the complete encoded range, clear stale trailing rows, update the request snapshot, append an audit entry, then persist the next tab revision. `AuditLog` is append-only.
 
 Google Sheets is not transactional. Higher-level services must stage complete results, use the script lock, and define compensation or preservation behavior for multi-tab publication. Never mutate rows while iterating toward a partially published result.
 
@@ -27,4 +27,3 @@ Decode `Date` values in the spreadsheet's time zone, not the configured scheduli
 ## Migration
 
 `validateMigrationWorkbook()` may initialize missing tabs and reports rejected rows without loading them. `loadMigrationWorkbook()` requires live `WRITE_ENABLED=true`, rejects the entire load if any row fails validation, and records the configured migration actor. `MigrationPayload.gs` is temporary private material and must not remain in an ordinary server bundle.
-

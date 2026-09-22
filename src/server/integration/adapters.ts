@@ -1,5 +1,6 @@
 import type { ApiResponse } from '../../shared/domain.js';
 import { IntegrationDispatcher } from './dispatcher.js';
+import type { ReadTiming } from './read-timing.js';
 
 export type AppsScriptRequest = Readonly<{
   parameter?: Readonly<Record<string, string | undefined>>;
@@ -20,6 +21,7 @@ export type ContentServiceLike = Readonly<{
 export type AppsScriptAdapterOptions = Readonly<{
   contentService?: ContentServiceLike;
   jsonMimeType?: string;
+  timing?: ReadTiming;
 }>;
 
 function runtimeContentService(): ContentServiceLike | undefined {
@@ -32,6 +34,11 @@ function jsonText(response: ApiResponse<unknown>): string {
 }
 
 function output(response: ApiResponse<unknown>, options: AppsScriptAdapterOptions): JsonOutput | string {
+  if (options.timing) return options.timing.measure('responseConstruction', () => rawOutput(response, options));
+  return rawOutput(response, options);
+}
+
+function rawOutput(response: ApiResponse<unknown>, options: AppsScriptAdapterOptions): JsonOutput | string {
   const contentService = options.contentService ?? runtimeContentService();
   const text = jsonText(response);
   if (!contentService) return text;

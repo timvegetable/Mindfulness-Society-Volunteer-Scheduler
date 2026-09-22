@@ -35,6 +35,7 @@ import type { AuthoritativeAvailabilityRecord, ImportedAvailabilityRecord } from
 import { SourceMappingService, type SourceMappingInput } from './imports/matching.js';
 import type { Center, CenterUser, CandidateSchedule } from './centers/models.js';
 import type { SchedulingRun } from '../shared/domain.js';
+import type { ReadTiming } from './integration/read-timing.js';
 
 export type ScriptProperties = {
   getProperty(name: string): string | null;
@@ -154,11 +155,27 @@ function auditWriter(sheet: SheetLike): (entry: AuditEntry) => void {
   ]);
 }
 
-function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, properties: ScriptProperties, definition: WorkbookTab, codec: { fromRow(row: Record<string, unknown>, context?: SheetValueContext): T; toRow(value: T): Record<string, unknown> }, audit: (entry: AuditEntry) => void, context: SheetValueContext): SheetRepository<T> {
-  const sheet = spreadsheet.getSheetByName(definition.name);
-  if (!sheet) throw new Error(`Workbook tab ${definition.name} is missing; initialize the workbook before serving requests`);
+/** Resolves only the tabs an operation actually touches, once per execution. */
+function lazySheet(spreadsheet: SpreadsheetLike, name: string): SheetLike {
+  let resolved: SheetLike | undefined;
+  const sheet = (): SheetLike => {
+    if (!resolved) resolved = spreadsheet.getSheetByName(name) ?? undefined;
+    if (!resolved) throw new Error(`Workbook tab ${name} is missing; initialize the workbook before serving requests`);
+    return resolved;
+  };
+  return {
+    getName: () => name,
+    getLastColumn: () => sheet().getLastColumn(),
+    getLastRow: () => sheet().getLastRow(),
+    getRange: (row, column, rows, columns) => sheet().getRange(row, column, rows, columns),
+    appendRow: (row) => sheet().appendRow(row)
+  };
+}
+
+function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, properties: ScriptProperties, definition: WorkbookTab, codec: { fromRow(row: Record<string, unknown>, context?: SheetValueContext): T; toRow(value: T): Record<string, unknown> }, audit: (entry: AuditEntry) => void, context: SheetValueContext, timing?: ReadTiming): SheetRepository<T> {
+  const sheet = lazySheet(spreadsheet, definition.name);
   const tracksSchedulingInput = SCHEDULING_INPUT_TABS.has(definition.name);
-  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name, tracksSchedulingInput ? () => advanceSchedulingInputRevision(properties) : undefined)), audit, context);
+  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name, tracksSchedulingInput ? () => advanceSchedulingInputRevision(properties) : undefined)), audit, context, timing ? (tab, action) => timing.hydration(tab, action) : undefined, timing ? (action) => timing.sheetCall(action) : undefined);
 }
 
 /**
@@ -175,11 +192,10 @@ export function workbookTimeZone(spreadsheet: SpreadsheetLike, properties: Scrip
   return zone || runtimeConfiguration(properties).timeZone;
 }
 
-export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: workbookTimeZone(spreadsheet, properties) }): RuntimeRepositories {
-  const auditSheet = spreadsheet.getSheetByName('AuditLog');
-  if (!auditSheet) throw new Error('Workbook tab AuditLog is missing; initialize the workbook before serving requests');
+export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: workbookTimeZone(spreadsheet, properties) }, timing?: ReadTiming): RuntimeRepositories {
+  const auditSheet = lazySheet(spreadsheet, 'AuditLog');
   const audit = auditWriter(auditSheet);
-  const make = <T extends { id: string }>(definition: WorkbookTab, codec: SheetCodec<T>): SheetRepository<T> => makeRepository(spreadsheet, properties, definition, codec, audit, context);
+  const make = <T extends { id: string }>(definition: WorkbookTab, codec: SheetCodec<T>): SheetRepository<T> => makeRepository(spreadsheet, properties, definition, codec, audit, context, timing);
   return {
     volunteers: make(tabDefinition('Volunteers'), volunteerCodec),
     recurringAvailability: make(tabDefinition('RecurringAvailability'), recurringAvailabilityCodec),
@@ -394,9 +410,9 @@ export function resolveMailer(services: AppsScriptMailServices): Mailer | undefi
   return mailApp ? { send: ({ to, subject, body }) => mailApp.sendEmail(to.join(','), subject, body) } : undefined;
 }
 
-export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache } = {}): ProductionRuntime {
+export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache; timing?: ReadTiming } = {}): ProductionRuntime {
   const configuration = runtimeConfiguration(properties);
-  const store = repositories(spreadsheet, properties);
+  const store = repositories(spreadsheet, properties, { timeZone: workbookTimeZone(spreadsheet, properties) }, options.timing);
   const administratorRecipients = listField(properties.getProperty('ADMINISTRATOR_RECIPIENTS'));
   const mailer = resolveMailer(globalThis as unknown as AppsScriptMailServices);
   const selfService = new SelfServiceService({
@@ -415,7 +431,7 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
   const endpoint = properties.getProperty('WHENISGOOD_ENDPOINT')?.trim();
   const urlFetch = (globalThis as unknown as { UrlFetchApp?: { fetch(url: string): { getResponseCode(): number; getContentText(): string } } }).UrlFetchApp;
   const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: () => response.getContentText() }; }, parserOptions: { defaultTimeZone: configuration.timeZone } }) : undefined;
-  const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: hydratedVolunteers(store), exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
+  const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: { list: () => hydratedVolunteers(store) }, exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
   // Reads report the global workbook revision for concurrency control; schedule
   // staleness is derived from the dedicated scheduling-input counter.
   const globalRevision = (): number => {

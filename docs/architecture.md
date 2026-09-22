@@ -89,6 +89,8 @@ Scheduling is a pure calculation over a normalized snapshot. Preview computes wi
 
 Insights are derived from source revisions and may be reused only when their source revision tuple matches. When cached data is absent or stale, the server regenerates it from one workbook snapshot. Import promotion similarly stages and validates a complete result before replacing authoritative availability.
 
+Published Schedule and Insights use the whole-tab read plans in `src/server/workbook/read-plans.ts`. Repository handles resolve when used, and decoded rows live only for the current request. `Users` is decoded anew before every authorization. A published Schedule read then loads runs, assignments, backups, sessions, volunteers, and centers. An Insights cache hit loads runs and source revisions; a miss additionally loads volunteers, recurring availability, and assignments. The cache never authorizes a request.
+
 ## Time model
 
 Scheduling and display use the configured IANA `TIME_ZONE` (default `America/New_York`). Raw date/time cells must be decoded in the spreadsheet's own time zone, which may differ; `workbookTimeZone()` enforces that distinction. Recurring intervals are normalized and coalesced by semantic coverage, so row IDs and row counts are not stable identities.
