@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Temporal } from '@js-temporal/polyfill';
 import { INTEGRATION_OPERATIONS, IntegrationError, type HandlerContext, type IntegrationOperation } from './integration/dispatcher.js';
-import { createProductionRuntime, repositories, runtimeConfiguration } from './runtime.js';
+import { createProductionRuntime, repositories, resolveMailer, runtimeConfiguration } from './runtime.js';
 import { InMemoryProperties, InMemorySpreadsheet } from './workbook/in-memory-sheet.js';
 
 const actor = {
@@ -411,5 +411,32 @@ describe('center attribution', () => {
     expect(listed.candidates).toHaveLength(1);
     expect(listed.candidates[0]?.centerId).toBe('center-a');
     expect(listed.candidates[0]?.centerName).toBe('Example Center');
+  });
+});
+
+describe('notification mailer resolution', () => {
+  // Every GmailApp method requires the full-mailbox https://mail.google.com/ scope, which
+  // src/server/appsscript.json does not declare, so a GmailApp mailer throws for every recipient
+  // list — valid or not — and deliverPersisted catches that into an in-memory record that nothing
+  // reads. MailApp is authorized by the already-declared script.send_mail scope, so the runtime
+  // must read MailApp.
+  it('reads MailApp, which the declared script.send_mail scope authorizes', () => {
+    const sent: Array<{ to: string; subject: string; body: string }> = [];
+    const mailer = resolveMailer({ MailApp: { sendEmail: (to, subject, body) => { sent.push({ to, subject, body }); } } });
+
+    expect(mailer).toBeDefined();
+    mailer?.send({ to: ['first@example.test', 'second@example.test'], subject: 'Cancellation', body: 'Body' });
+
+    expect(sent).toEqual([{ to: 'first@example.test,second@example.test', subject: 'Cancellation', body: 'Body' }]);
+  });
+
+  it('ignores GmailApp, whose methods the manifest cannot authorize', () => {
+    const gmailOnly = { GmailApp: { sendEmail: () => { throw new Error('GmailApp must not be used'); } } };
+
+    expect(resolveMailer(gmailOnly)).toBeUndefined();
+  });
+
+  it('reports no mailer when the runtime exposes neither mail service', () => {
+    expect(resolveMailer({})).toBeUndefined();
   });
 });

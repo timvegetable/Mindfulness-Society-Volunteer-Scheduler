@@ -30,7 +30,7 @@ import type { SheetValueContext } from './workbook/sheet-values.js';
 import { hydratedVolunteers } from './workbook/hydration.js';
 import { tabDefinition, type WorkbookTab } from './workbook/schema.js';
 import type { SpreadsheetLike, SheetLike } from './workbook/initializer.js';
-import type { RecurringAvailabilityRecord } from './self-service/types.js';
+import type { Mailer, RecurringAvailabilityRecord } from './self-service/types.js';
 import type { AuthoritativeAvailabilityRecord, ImportedAvailabilityRecord } from './imports/types.js';
 import { SourceMappingService, type SourceMappingInput } from './imports/matching.js';
 import type { Center, CenterUser, CandidateSchedule } from './centers/models.js';
@@ -372,11 +372,33 @@ function insightSourceRevision(repositories: RuntimeRepositories): InsightSource
   };
 }
 
+/**
+ * Resolve the notification mailer from the Apps Script runtime.
+ *
+ * This reads `MailApp` and deliberately not `GmailApp`. Every `GmailApp` method requires the
+ * full-mailbox `https://mail.google.com/` scope, which `src/server/appsscript.json` does not declare
+ * and should not: the web app executes as the deploying account for anonymous callers, so granting
+ * that scope would expose the deployer's entire mailbox to any code path an anonymous request can
+ * reach. `MailApp` is authorized by the already-declared
+ * `https://www.googleapis.com/auth/script.send_mail`, which grants sending only. Declaring a Gmail
+ * scope instead is not a drop-in alternative — `GmailApp.sendEmail` still throws until the broader
+ * scope is granted and the deploying account re-authorizes.
+ */
+export type AppsScriptMailServices = {
+  MailApp?: { sendEmail(to: string, subject: string, body: string): void };
+  GmailApp?: { sendEmail(to: string, subject: string, body: string): void };
+};
+
+export function resolveMailer(services: AppsScriptMailServices): Mailer | undefined {
+  const mailApp = services.MailApp;
+  return mailApp ? { send: ({ to, subject, body }) => mailApp.sendEmail(to.join(','), subject, body) } : undefined;
+}
+
 export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache } = {}): ProductionRuntime {
   const configuration = runtimeConfiguration(properties);
   const store = repositories(spreadsheet, properties);
   const administratorRecipients = listField(properties.getProperty('ADMINISTRATOR_RECIPIENTS'));
-  const mailer = (globalThis as unknown as { GmailApp?: { sendEmail(to: string, subject: string, body: string): void } }).GmailApp;
+  const mailer = resolveMailer(globalThis as unknown as AppsScriptMailServices);
   const selfService = new SelfServiceService({
     recurringAvailability: store.recurringAvailability,
     volunteers: store.volunteers,
@@ -385,7 +407,7 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     sessions: store.sessions,
     backups: store.backups,
     administratorRecipients,
-    mailer: mailer ? { send: ({ to, subject, body }) => mailer.sendEmail(to.join(','), subject, body) } : undefined,
+    mailer,
     configuredTimeZone: configuration.timeZone
   });
   const importRepository = new SheetImportRepository(store.imports, store.importedAvailability, store.recurringAvailability, store.mappings, store.volunteers);
