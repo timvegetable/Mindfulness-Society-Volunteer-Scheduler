@@ -34,7 +34,7 @@ Reports are scrubbed but remain local artifacts. They do not prove live write-ga
 
 ## Workbook snapshot
 
-Export the complete workbook before a server deploy or any production Sheet mutation. Store it outside the repository with restricted permissions and an immutable timestamp. One supported local mechanism is:
+Export the complete workbook before a server deploy or any production Sheet mutation. Store it out of version control with restricted permissions and an immutable timestamp. One supported local mechanism is:
 
 ```sh
 gdrive files export <sheet-id> <timestamped-snapshot.xlsx>

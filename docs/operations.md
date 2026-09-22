@@ -24,6 +24,8 @@ The last recorded live check, on 2026-09-19, found `WRITE_ENABLED=true` while th
 
 After the approved action, verify the property again. Re-enabling writes is a separate production mutation and requires separate review.
 
+Editor procedures must expose a no-argument entry point. The Apps Script editor's Run menu invokes a function with no arguments, so a helper declared as `fn(mode)` cannot be run from the dropdown at all and needs one wrapper per mode — the Task 5.7 procedures pair `fixtureGate_5_7(mode)` with `fixtureGateOpen_5_7()` and `fixtureGateClose_5_7()` for exactly this reason. Observed on 2026-09-22, when a reviewed procedure offered only a parameterised entry point, could not be run, and had to be rewritten before the step could proceed. Any procedure described here as run from the editor is assumed to have a no-argument wrapper.
+
 ## Revision bookkeeping
 
 Script Properties hold `TAB_REVISION_<TabName>`, `SCHEDULING_INPUT_REVISION`, and `DATA_REVISION`. `clasp` and the Sheets API do not update them. A direct Sheet write can therefore change rows while the application believes no data changed.
@@ -77,7 +79,7 @@ This procedure was exercised end to end on 2026-09-21 against the production wor
 
 A reviewed direct-write procedure needs two things the Sheet export alone cannot give: a structural check that the snapshot is a trustworthy restoration reference, and a later comparison that proves the workbook returned to its starting state.
 
-The tooling lives in `scripts/snapshot/`. It reads a snapshot through `pandas.read_excel(..., sheet_name=None, engine="calamine")` and never writes cell contents into the repository. Commands below use `<snapshot-python>` for the interpreter of the `phamily-env` conda environment, which is the only environment guaranteed to provide pandas and python-calamine; another interpreter or another Excel parser is not an acceptable substitute. `<baseline.json>`, `<snapshot.xlsx>`, and `<restored.xlsx>` must stay outside the repository with restricted permissions.
+The tooling lives in `scripts/snapshot/`. It reads a snapshot through `pandas.read_excel(..., sheet_name=None, engine="calamine")` and never writes cell contents into the repository. Commands below use `<snapshot-python>` for the interpreter of the `phamily-env` conda environment, which is the only environment guaranteed to provide pandas and python-calamine; another interpreter or another Excel parser is not an acceptable substitute. `<baseline.json>`, `<snapshot.xlsx>`, and `<restored.xlsx>` must stay out of version control with restricted permissions.
 
 Record the starting structure and build the private baseline before any mutation:
 

@@ -14,5 +14,8 @@ dist/
 # Private migration material: never commit these exports.
 migration-output/
 scrubbed_exports/
+# Task 5.7 verification artifacts: snapshots, baselines, roster-derived fixtures, and procedures.
+# Private, and kept in the working tree so agent work stays inside it.
+srikar-task-5.7/
 # Generated at deploy time from the private configuration.
 public/config.json
