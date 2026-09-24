@@ -21,3 +21,4 @@ The primary role is a navigation choice: administrator wins over center contact,
 
 API tests pin envelopes and error mapping. Identity tests pin state transitions. Route-loader tests pin cache isolation and late-response behavior. View tests use the Node-only `FakeDocument`/`FakeNode` double; extend it only for APIs the view actually touches.
 
+Schedule and Insights freshness objectives are measured from the browser's `route-load` durations, including failed reads; server phase timing is diagnostic evidence only. The active `meet-read-latency-objective` change still owns the 2000 ms nearest-rank p95 decision. The approved server batch path has no post-change production measurements yet, so it does not change the browser objective or probe rules.

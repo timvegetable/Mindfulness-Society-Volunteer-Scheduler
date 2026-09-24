@@ -52,6 +52,16 @@ describe('request-scoped sheet reads', () => {
     expect(sheet.reads).toBe(0);
   });
 
+  it('decodes a validated batch into the same request snapshot without Sheet calls', () => {
+    const { sheet, repository } = repositoryWith([volunteerRow]);
+    repository.primeRows([volunteerRow]);
+
+    expect(repository.get('vol-1')?.name).toBe('Example Volunteer');
+    expect(repository.list()).toHaveLength(1);
+    expect(sheet.reads).toBe(0);
+    expect(() => repository.primeRows([volunteerRow])).toThrow('already read');
+  });
+
   it('serves a committed upsert from the same snapshot without re-reading', () => {
     const { sheet, repository } = repositoryWith([volunteerRow]);
     const current = repository.get('vol-1');

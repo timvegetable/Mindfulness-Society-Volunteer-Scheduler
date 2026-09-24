@@ -9,6 +9,10 @@ import { applyMigrationPayload } from './workbook/loader.js';
 import { cellBoolean, cellNumber, optionalCellText } from './workbook/sheet-values.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
 import { ReadTiming } from './integration/read-timing.js';
+import { BATCH_READ_PLANS, createWorkbookBatchReader, type BatchGetValuesRequest, type WorkbookBatchReader } from './workbook/batch-read.js';
+
+// Approved batched reads still fail closed if the bound workbook or service is unavailable.
+const ADVANCED_SHEETS_READS_ENABLED = true;
 export type ServerOptions = IntegrationDispatcherOptions & Readonly<{ adapter?: AppsScriptAdapterOptions }>;
 
 export type Server = Readonly<{
@@ -121,6 +125,117 @@ function runtimeTokenInfoAvailable(): boolean {
   return runtime.UrlFetchApp !== undefined;
 }
 
+export function runtimeBatchReader(spreadsheet: Parameters<typeof createProductionRuntime>[0], enabled: boolean, sheets: unknown, timing?: ReadTiming): WorkbookBatchReader | undefined {
+  if (!enabled) return undefined;
+  const workbookId = spreadsheet.getId?.()?.trim();
+  if (!workbookId) throw new Error('The bound workbook ID is unavailable for batched reads');
+  const service = sheets as { Spreadsheets?: { Values?: { batchGet?: (spreadsheetId: string, request: BatchGetValuesRequest) => unknown } } } | undefined;
+  const values = service?.Spreadsheets?.Values;
+  if (typeof values?.batchGet !== 'function') throw new Error('The Advanced Sheets batch read service is unavailable');
+  return createWorkbookBatchReader({ boundSpreadsheetId: workbookId, service: { batchGet: (spreadsheetId, request) => {
+    const fetch = () => values.batchGet!(spreadsheetId, request);
+    return timing ? timing.sheetCall(fetch) : fetch();
+  } } });
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+function differingProjectionFields(left: unknown, right: unknown, ignoredFields: readonly string[] = []): string[] {
+  if (!left || typeof left !== 'object' || Array.isArray(left) || !right || typeof right !== 'object' || Array.isArray(right)) {
+    return stableJson(left) === stableJson(right) ? [] : ['(projection)'];
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)]);
+  return [...keys].filter((key) => !ignoredFields.includes(key) && stableJson(leftRecord[key]) !== stableJson(rightRecord[key])).sort();
+}
+
+/**
+ * Read-only editor diagnostic for checking route projection parity on the
+ * active workbook. The report includes only booleans and projection field
+ * names; row data and exception details are never returned or logged.
+ */
+export function readOnlyRouteParityReport(
+  spreadsheet: Parameters<typeof createProductionRuntime>[0],
+  properties: NonNullable<ReturnType<typeof runtimeProperties>>,
+  sheets: unknown
+): Record<string, unknown> {
+  if (properties.getProperty('WRITE_ENABLED') !== 'false') {
+    return { passed: false, stage: 'preflight', reason: 'WRITE_ENABLED must be exactly false', rowValuesIncluded: false };
+  }
+
+  let stage = 'setup';
+  try {
+    stage = 'baseline-runtime';
+    const scheduleBaseline = createProductionRuntime(spreadsheet, properties);
+    stage = 'batch-reader';
+    const scheduleBatchReader = runtimeBatchReader(spreadsheet, true, sheets);
+    if (!scheduleBatchReader) throw new Error('Batched reader is disabled');
+    stage = 'batch-runtime';
+    const scheduleBatched = createProductionRuntime(spreadsheet, properties, { batchReader: scheduleBatchReader });
+    stage = 'baseline-runtime';
+    const insightsBaseline = createProductionRuntime(spreadsheet, properties);
+    stage = 'batch-reader';
+    const insightsBatchReader = runtimeBatchReader(spreadsheet, true, sheets);
+    if (!insightsBatchReader) throw new Error('Batched reader is disabled');
+    stage = 'batch-runtime';
+    const insightsBatched = createProductionRuntime(spreadsheet, properties, { batchReader: insightsBatchReader });
+    const revisionKeys = [...new Set([
+      'DATA_REVISION',
+      'SCHEDULING_INPUT_REVISION',
+      ...BATCH_READ_PLANS.insightCacheMiss.map((tab) => `TAB_REVISION_${tab}`),
+      ...BATCH_READ_PLANS.publishedSchedule.map((tab) => `TAB_REVISION_${tab}`)
+    ])];
+    const revisions = () => revisionKeys.map((key) => properties.getProperty(key) ?? '0');
+    const before = revisions();
+    const now = new Date().toISOString();
+    const invoke = (runtime: ReturnType<typeof createProductionRuntime>, operation: typeof INTEGRATION_OPERATIONS.adminSchedule | typeof INTEGRATION_OPERATIONS.adminInsights): unknown => {
+      const handler = runtime.handlers[operation];
+      if (!handler) throw new Error(`Missing read handler for ${operation}`);
+      return handler({ actor: {} as HandlerContext['actor'], operation, idempotencyKey: 'editor-read-parity', now }, {});
+    };
+
+    stage = 'schedule';
+    const regularSchedule = invoke(scheduleBaseline, INTEGRATION_OPERATIONS.adminSchedule);
+    const batchedSchedule = invoke(scheduleBatched, INTEGRATION_OPERATIONS.adminSchedule);
+    stage = 'insights';
+    const regularInsights = invoke(insightsBaseline, INTEGRATION_OPERATIONS.adminInsights) as Record<string, unknown>;
+    const batchedInsights = invoke(insightsBatched, INTEGRATION_OPERATIONS.adminInsights) as Record<string, unknown>;
+    const revisionsStable = revisions().every((value, index) => value === before[index]);
+    const writeGateStayedDisabled = properties.getProperty('WRITE_ENABLED') === 'false';
+    const scheduleDifferences = differingProjectionFields(regularSchedule, batchedSchedule);
+    const insightsDifferences = differingProjectionFields(regularInsights, batchedInsights, ['generatedAt']);
+    const scheduleMatches = scheduleDifferences.length === 0;
+    const insightsMatch = insightsDifferences.length === 0;
+    return {
+      passed: revisionsStable && writeGateStayedDisabled && scheduleMatches && insightsMatch,
+      revisionsStable,
+      writeGateStayedDisabled,
+      schedule: { matches: scheduleMatches, differingFields: scheduleDifferences },
+      insights: { matches: insightsMatch, differingFields: insightsDifferences, ignoredFields: ['generatedAt'] },
+      rowValuesIncluded: false
+    };
+  } catch {
+    return { passed: false, stage, reason: 'Read-only parity check failed; exception details omitted', rowValuesIncluded: false };
+  }
+}
+
+/** Compare ordinary SpreadsheetApp reads with Advanced Sheets reads in the editor. */
+export function compareAdvancedReadParity(): unknown {
+  const properties = runtimeProperties();
+  const spreadsheet = activeSpreadsheet();
+  if (!properties || !spreadsheet) throw new Error('SpreadsheetApp and PropertiesService are required; run this from the bound Apps Script project');
+  const runtime = globalThis as unknown as { Sheets?: unknown };
+  return logResult('compareAdvancedReadParity', readOnlyRouteParityReport(spreadsheet, properties, runtime.Sheets));
+}
+
 export function createServer(options: ServerOptions): Server {
   const dispatcher = createIntegrationDispatcher(options);
   const adapters = createAppsScriptAdapters(dispatcher, { ...options.adapter, timing: options.timing });
@@ -155,7 +270,9 @@ function defaultServer(timing?: ReadTiming): Server {
   const writeEnabled = properties?.getProperty('WRITE_ENABLED') === 'true';
   const writeLock = writeEnabled ? runtimeWriteLock() : undefined;
   const spreadsheet = (globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof createProductionRuntime>[0] } }).SpreadsheetApp?.getActiveSpreadsheet();
-  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties, { scriptCache, timing }) : undefined;
+  const sheets = (globalThis as unknown as { Sheets?: unknown }).Sheets;
+  const batchReader = spreadsheet ? runtimeBatchReader(spreadsheet, ADVANCED_SHEETS_READS_ENABLED, sheets, timing) : undefined;
+  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties, { scriptCache, timing, batchReader }) : undefined;
   const handlers: OperationHandlers = production?.handlers ?? {
     [INTEGRATION_OPERATIONS.me]: ({ actor }: HandlerContext) => projectIdentity(actor)
   };

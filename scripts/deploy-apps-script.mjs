@@ -152,10 +152,18 @@ try {
         report.claspDeployOutput = deployed.output.slice(-300);
         if (!deployed.ok) report.issues.push(`clasp could not update the deployment, so the published URL still serves the previous version: ${deployed.output.slice(-200) || 'no output'}`);
       }
+      if (push.ok) {
+        report.productionMutation = deploymentId && report.checks.deploymentUpdated
+          ? 'Apps Script code pushed and the pinned deployment updated; write gate remained disabled'
+          : 'Apps Script source pushed; no pinned deployment was updated; write gate remained disabled';
+      }
     }
-    report.productionMutation = report.issues.length === 0 ? 'Apps Script code pushed and the pinned deployment updated; write gate remained disabled' : 'none';
   }
-  report.status = report.issues.length === 0 ? (args.execute ? 'deployed-write-disabled' : 'ready-for-administrator-review') : 'blocked';
+  report.status = report.issues.length === 0
+    ? args.execute
+      ? args['deployment-id'] ? 'deployed-write-disabled' : 'pushed-only-write-disabled'
+      : 'ready-for-administrator-review'
+    : 'blocked';
 } catch (error) {
   report.issues.push(error instanceof ConfigError ? 'configuration could not be loaded' : error.message || 'Apps Script deployment inputs could not be processed');
 }

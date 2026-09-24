@@ -36,6 +36,7 @@ import { SourceMappingService, type SourceMappingInput } from './imports/matchin
 import type { Center, CenterUser, CandidateSchedule } from './centers/models.js';
 import type { SchedulingRun } from '../shared/domain.js';
 import type { ReadTiming } from './integration/read-timing.js';
+import { BATCH_READ_PLANS, type BatchReadPlan, type BatchReadTab, type WorkbookBatchReader } from './workbook/batch-read.js';
 
 export type ScriptProperties = {
   getProperty(name: string): string | null;
@@ -410,9 +411,35 @@ export function resolveMailer(services: AppsScriptMailServices): Mailer | undefi
   return mailApp ? { send: ({ to, subject, body }) => mailApp.sendEmail(to.join(','), subject, body) } : undefined;
 }
 
-export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache; timing?: ReadTiming } = {}): ProductionRuntime {
+export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache; timing?: ReadTiming; batchReader?: WorkbookBatchReader } = {}): ProductionRuntime {
   const configuration = runtimeConfiguration(properties);
   const store = repositories(spreadsheet, properties, { timeZone: workbookTimeZone(spreadsheet, properties) }, options.timing);
+  const batchedRepositories = {
+    SchedulingRuns: store.schedulingRuns,
+    Assignments: store.assignments,
+    Backups: store.backups,
+    Sessions: store.sessions,
+    Volunteers: store.volunteers,
+    Centers: store.centers,
+    RecurringAvailability: store.recurringAvailability
+  } satisfies Record<BatchReadTab, { primeRows(rows: readonly (readonly unknown[])[]): void }>;
+  const primedTabs = new Set<BatchReadTab>();
+  const primeBatch = (plan: BatchReadPlan): void => {
+    if (!options.batchReader) return;
+    const rowsByTab = options.batchReader.read(plan);
+    for (const tab of BATCH_READ_PLANS[plan]) {
+      if (primedTabs.has(tab)) continue;
+      const rows = rowsByTab.get(tab);
+      if (!rows) throw new IntegrationError('UNAVAILABLE', `Batch read omitted ${tab}`);
+      batchedRepositories[tab].primeRows(rows);
+      primedTabs.add(tab);
+    }
+  };
+  const batchRevisionKeys = ['DATA_REVISION', 'SCHEDULING_INPUT_REVISION', ...BATCH_READ_PLANS.insightCacheMiss.map((tab) => `TAB_REVISION_${tab}`), ...BATCH_READ_PLANS.publishedSchedule.map((tab) => `TAB_REVISION_${tab}`)];
+  const revisionSnapshot = (): string[] => batchRevisionKeys.map((key) => properties.getProperty(key) ?? '0');
+  const assertBatchStable = (before: readonly string[]): void => {
+    if (revisionSnapshot().some((value, index) => value !== before[index])) throw new IntegrationError('STALE_REVISION', 'Workbook changed during the batched read');
+  };
   const administratorRecipients = listField(properties.getProperty('ADMINISTRATOR_RECIPIENTS'));
   const mailer = resolveMailer(globalThis as unknown as AppsScriptMailServices);
   const selfService = new SelfServiceService({
@@ -500,8 +527,12 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       return serviceData(selfService.cancelAssignedOccurrence({ id: actor.user.id, volunteerId: actor.user.volunteerId, roles: actor.user.roles, active: actor.user.active }, { ...value, expectedRevision: store.assignments.revision().number, expectedExceptionRevision: store.exceptions.revision().number }));
     },
     [INTEGRATION_OPERATIONS.adminSchedule]: ({ now: requestNow }) => {
+      const before = options.batchReader ? revisionSnapshot() : undefined;
+      primeBatch('publishedSchedule');
       const run = latestCompletedRun(store.schedulingRuns.list());
-      return scheduleProjection(store, { assignments: store.assignments.list(), backups: store.backups.list(), outputRevision: run?.outputRevision ?? 0 }, { globalRevision: globalRevision(), schedulingInput: schedulingInputRevision(properties), run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
+      const projection = scheduleProjection(store, { assignments: store.assignments.list(), backups: store.backups.list(), outputRevision: run?.outputRevision ?? 0 }, { globalRevision: globalRevision(), schedulingInput: schedulingInputRevision(properties), run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
+      if (before) assertBatchStable(before);
+      return projection;
     },
     // Read-only: the deterministic scheduler runs in memory against this
     // request's snapshot and writes no Sheet row, run record, audit entry, or revision.
@@ -573,10 +604,21 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       };
     },
     [INTEGRATION_OPERATIONS.adminInsights]: () => {
+      const before = options.batchReader ? revisionSnapshot() : undefined;
+      primeBatch('insightCacheHit');
       const current = insights.read(insightSourceRevision(store));
-      return projectInsightRead(current ?? insights.regenerate(insightSnapshot()));
+      if (!current) primeBatch('insightCacheMiss');
+      const projection = projectInsightRead(current ?? insights.regenerate(insightSnapshot()));
+      if (before) assertBatchStable(before);
+      return projection;
     },
-    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => projectInsightRead(insights.refresh(insightSnapshot())),
+    [INTEGRATION_OPERATIONS.adminInsightsRefresh]: () => {
+      const before = options.batchReader ? revisionSnapshot() : undefined;
+      primeBatch('insightCacheMiss');
+      const projection = projectInsightRead(insights.refresh(insightSnapshot()));
+      if (before) assertBatchStable(before);
+      return projection;
+    },
     [INTEGRATION_OPERATIONS.centerCandidate]: ({ actor }) => withCenterWorkflowErrors(() => {
       const centerCaller = caller(actor);
       const candidates = centerWorkflow.schedule.list(centerCaller).map((candidate) => ({

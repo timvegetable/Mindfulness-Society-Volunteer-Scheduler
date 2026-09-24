@@ -48,6 +48,10 @@ Confirm the export exists, opens, and contains all tabs. Do not commit it or pla
 
 Build first, verify `dist/apps-script/Code.js` and `appsscript.json`, and ensure no `MigrationPayload.gs` remains. `.clasp.json` must point at the reviewed `dist/apps-script` directory.
 
+The approved Schedule/Insights batch path declares the Sheets v4 advanced service and requests `spreadsheets.readonly`. Before rolling out that path, verify the Sheets API is enabled in the linked GCP project and have the deploying owner authorize the added scope. That scope grants read access to every spreadsheet the deployer can access, although runtime requests are restricted to schema-derived ranges in the active workbook. Owner authorization, source upload, and pinned deployment are distinct release steps; the local manifest alone does not activate the live deployment.
+
+After uploading the reviewed bundle but before pinning its deployment, run `compareAdvancedReadParity()` from the bound Apps Script editor. It refuses unless the live `WRITE_ENABLED` property is exactly `false`. The diagnostic compares ordinary `SpreadsheetApp` Schedule/Insights projections with the batch path on separate request-local runtimes, omits only the nondeterministic Insights `generatedAt` field, and logs only match results and differing field names. Review both parity results before deployment; a passing local contract test is not a substitute for this live workbook check.
+
 After explicit deployment approval, use the guarded script:
 
 ```sh
@@ -60,7 +64,7 @@ node scripts/deploy-apps-script.mjs \
   --confirm DEPLOY_APPS_SCRIPT_WITH_WRITES_DISABLED
 ```
 
-The script requires local `writeEnabled=false`, confirms the clasp root, uses `clasp push --force`, checks clasp's success text, and updates the pinned deployment when an ID is supplied. It still cannot verify the live Script Property. Updating a separate new deployment does not move the URL already configured in the client.
+The script requires local `writeEnabled=false`, confirms the clasp root, uses `clasp push --force`, and checks clasp's success text. With `--deployment-id`, it updates that pinned deployment and reports `deployed-write-disabled`; without an ID, it reports `pushed-only-write-disabled` and states that no pinned deployment changed. A source push alone leaves the published URL on its prior version. The report cannot verify the live Script Property. Updating a separate new deployment does not move the URL already configured in the client.
 
 Verify while writes remain disabled:
 

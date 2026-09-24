@@ -77,7 +77,7 @@ This sequence:
 3. exposes Apps Script entry points as top-level functions;
 4. copies `src/server/appsscript.json` into the distribution.
 
-The runtime is V8 and synchronous. Do not return promises from operation handlers. The manifest intentionally uses the current-spreadsheet, external-request, and mail scopes; adding the Advanced Sheets service or another scope is an architecture/security change, not a local optimization.
+The runtime is V8 and synchronous. Do not return promises from operation handlers. The approved Schedule/Insights read trial enables the Sheets v4 advanced service and adds `spreadsheets.readonly` alongside the existing current-spreadsheet, external-request, and mail scopes. This scope expands the deploying user's read authority beyond the bound workbook; see [security](security.md) and [deployment](deployment.md) before changing or deploying the manifest.
 
 The server build minifies while retaining the English-only Zod locale exclusion. `dist/bundle-evidence.json` records esbuild inputs, per-input emitted contributions, and final bytes outside the clasp upload directory. Use `node scripts/bundle-server.mjs --unminified-trial` and `node scripts/compare-server-bundles.mjs` for a synthetic, read-only bundle comparison; that benchmark does not reproduce remote Sheet or browser latency.
 

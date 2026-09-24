@@ -117,6 +117,13 @@ export class SheetRepository<T extends { id: string }> implements RevisionedRepo
 
   constructor(private readonly sheet: SheetLike, private readonly headers: readonly string[], private readonly codec: SheetCodec<T>, private readonly revisionStore: RevisionStore, private readonly auditWriter?: (entry: AuditEntry) => void, private readonly context: SheetValueContext = {}, private readonly onRead?: <R>(tab: string, action: () => R) => R, private readonly onSheetCall?: <R>(action: () => R) => R) {}
 
+  /** Hydrate a read-only route from one validated workbook batch before list(). */
+  primeRows(rows: readonly (readonly unknown[])[]): void {
+    if (this.snapshot !== undefined) throw new Error(`Workbook tab ${this.sheet.getName()} was already read in this request`);
+    const decode = (): T[] => rows.map((row) => this.codec.fromRow(this.recordFromRow([...row]), { ...this.context, numericDateTimeSerials: true }));
+    this.snapshot = this.onRead ? this.onRead(this.sheet.getName(), decode) : decode();
+  }
+
   /**
    * Decodes the tab once per request: `get`, `upsert`, and every consumer of
    * `list()` share this snapshot, and a successful write replaces it. Rows are

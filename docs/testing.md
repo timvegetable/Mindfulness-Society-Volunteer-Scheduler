@@ -22,6 +22,8 @@ npx vitest run src/server/scheduling/scheduling.contract.test.ts
 - Client unit tests cover API envelope construction and failures, identity state, formatting, route snapshot freshness, and view event wiring.
 - `src/server/runtime.contract.test.ts` composes the production runtime against in-memory Sheets and Script Properties. Use it for behavior that depends on handler wiring or revision interaction.
 - `src/server/workbook/read-plans.contract.test.ts` checks exact tab resolution, request-local reuse, fresh authorization, and Insights cache hit/miss revision behavior. `src/client/read-probe.test.ts` checks the browser probe's redirect-to-404 HTML failure classification.
+- `src/server/workbook/batch-read.contract.test.ts` checks allowlisted ranges, response identity/order/shape, request-local batch extension, and spreadsheet-zone serial decoding. `src/server/batch-runtime.contract.test.ts` checks handler-triggered batch access, Schedule parity, Insights cache-hit/miss plans, authorization, and revision changes during the read. `repository.contract.test.ts` checks that primed rows use the ordinary repository snapshot without further Sheet calls.
+- `readOnlyRouteParityReport` in `src/server/main.ts` tests the editor-only live-workbook parity check. It refuses unless `WRITE_ENABLED` is exactly false and its report contains no cell values; run the Apps Script editor wrapper `compareAdvancedReadParity()` only after the new scope is authorized. Contract coverage does not replace that live workbook comparison.
 - Pure domain helpers should be tested without Apps Script or a browser.
 - Deployed browser verification is evidence for production/OpenSpec tasks, not a substitute for automated regression coverage.
 

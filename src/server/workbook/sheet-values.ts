@@ -15,10 +15,12 @@ import { Temporal } from '@js-temporal/polyfill';
 /** Zone used when a decode happens outside a configured runtime (tests, tooling). */
 export const DEFAULT_SHEET_TIME_ZONE = 'America/New_York';
 
-export type SheetValueContext = { timeZone?: string };
+export type SheetValueContext = { timeZone?: string; numericDateTimeSerials?: boolean };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CLOCK_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const SHEETS_EPOCH = Temporal.PlainDate.from('1899-12-30');
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function instantOf(value: Date, context?: SheetValueContext): Temporal.ZonedDateTime {
   const zone = context?.timeZone?.trim() || DEFAULT_SHEET_TIME_ZONE;
@@ -33,6 +35,38 @@ function clockFromFraction(value: number): string {
   const hour = Math.floor(minutes / 60).toString().padStart(2, '0');
   const minute = (minutes % 60).toString().padStart(2, '0');
   return `${hour}:${minute}`;
+}
+
+/**
+ * The Sheets Values API returns date/time cells as serial numbers when asked
+ * for UNFORMATTED_VALUE. Their integer part is a civil day from 1899-12-30 and
+ * their fraction is a wall-clock time in the spreadsheet's zone. Keep that
+ * distinction explicit: date-only and time-only cells are not UTC timestamps.
+ */
+function plainDateTimeFromSerial(value: number): Temporal.PlainDateTime | undefined {
+  if (!Number.isFinite(value)) return undefined;
+  try {
+    const days = Math.floor(value);
+    let milliseconds = Math.round((value - days) * MILLISECONDS_PER_DAY);
+    let adjustedDays = days;
+    if (milliseconds >= MILLISECONDS_PER_DAY) {
+      adjustedDays += 1;
+      milliseconds = 0;
+    }
+    return SHEETS_EPOCH.add({ days: adjustedDays }).toPlainDateTime().add({ milliseconds });
+  } catch {
+    // Out-of-calendar serials stay raw so the row schema rejects them, as it
+    // does other malformed values, instead of leaking a Temporal exception.
+    return undefined;
+  }
+}
+
+function instantFromSerial(value: number, context?: SheetValueContext): string | undefined {
+  const plainDateTime = plainDateTimeFromSerial(value);
+  if (!plainDateTime) return undefined;
+  const zone = context?.timeZone?.trim() || DEFAULT_SHEET_TIME_ZONE;
+  const instant = plainDateTime.toZonedDateTime(zone, { disambiguation: 'compatible' }).toInstant();
+  return new Date(instant.epochMilliseconds).toISOString();
 }
 
 export function cellText(value: unknown): string {
@@ -62,6 +96,10 @@ export function cellBoolean(value: unknown, fallback = false): boolean {
 /** Decodes a date cell to `YYYY-MM-DD` in the configured zone. */
 export function cellDate(value: unknown, context?: SheetValueContext): string {
   if (isUsableDate(value)) return instantOf(value, context).toPlainDate().toString();
+  if (context?.numericDateTimeSerials && typeof value === 'number') {
+    const dateTime = plainDateTimeFromSerial(value);
+    if (dateTime) return dateTime.toPlainDate().toString();
+  }
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (DATE_PATTERN.test(trimmed)) return trimmed;
@@ -83,6 +121,7 @@ export function cellClock(value: unknown, context?: SheetValueContext): string {
 /** Decodes a date-time cell to an ISO 8601 instant. */
 export function cellInstant(value: unknown, context?: SheetValueContext): string {
   if (isUsableDate(value)) return value.toISOString();
+  if (context?.numericDateTimeSerials && typeof value === 'number') return instantFromSerial(value, context) ?? cellText(value);
   return cellText(value);
 }
 
