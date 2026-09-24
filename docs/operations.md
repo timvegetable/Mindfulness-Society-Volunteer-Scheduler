@@ -4,17 +4,9 @@ Production is not a normal development target. Do not mutate the workbook, Scrip
 
 ## Live write gate
 
-State-changing API operations are available only when the Apps Script Script Property `WRITE_ENABLED` is exactly `true`. When false, the runtime omits the write lock; the dispatcher returns `UNAVAILABLE` for mutations.
+Operations classified as mutating by the dispatcher are available only when the live Apps Script `WRITE_ENABLED` property is exactly `true`; otherwise they return `UNAVAILABLE`. This is not a blanket guarantee for every side effect: import preview is currently misclassified as read-only despite persisting staged runs, and migration validation invokes initialization. See [integration limitations](subsystems/integration.md#request-contract) and [diagnostics](#diagnostics) before treating an operation as safe.
 
-The `writeEnabled` field in `production.local.json` is a deployment-check input, not a remote control and not evidence of the live property. Deployment reports repeat that local assumption. They cannot read or set the live Script Property.
-
-The same caution applies to every other Script Property, because the local file is only a deployment input. On 2026-09-21 the live `WRITE_ENABLED` was `true` while the local config said `false`, and the live `ADMINISTRATOR_RECIPIENTS` held a single address where the local config lists two — so a notification flow can be configured differently in production than the repository implies. Read the live property before reasoning about production behaviour; do not infer it from the local file.
-
-Write `ADMINISTRATOR_RECIPIENTS` as a JSON array of addresses, or as a comma-separated list. `listField` in `src/server/runtime.ts` accepts both, but it only treats a JSON *array* as structured: any other valid JSON falls through to the comma split, so a property holding `null` or `{"a":1}` resolves to the literal recipient `"null"` or `'{"a":1}'`. The application then hands that to `GmailApp`, which throws, and the failure is recorded only in memory. A malformed recipient property therefore looks identical to a working one from outside.
-
-Notification email has not delivered since the notification path was deployed, for a reason independent of the recipient property: the runtime read a mail service the manifest does not authorize, so every send threw regardless of the recipient list. Observed 2026-09-22, when a reviewed editor probe in the bound project reported a correctly-resolved recipient, an available mailer, and `sent: false` with a permission error. The scope rule and which service is authorized belong to [security.md](security.md); the defect and its fix are task 10.27. Because the delivery status is written only to an in-memory record, that throw left no log line, no sheet row, and no audit entry, so a correct-looking `ADMINISTRATOR_RECIPIENTS` value proves nothing about delivery. Verify delivery by observing the message arrive, never by reading the property. The fix is implemented and undeployed, so delivery stays blocked until the next server deployment, and this note is an observation of the deployed version rather than of the repository.
-
-The last recorded live check, on 2026-09-19, found `WRITE_ENABLED=true` while the local production config said false. Treat that as a hazard, not as current state. Before any production mutation or server deployment:
+`production.local.json` and deployment reports describe local inputs, not live Script Properties. Historical checks found local/live disagreement. The latest recorded check in the [read-latency evidence](../openspec/changes/meet-read-latency-objective/tasks.md) was `WRITE_ENABLED=false` during the 2026-09-24 version-28 release; that dated observation is not proof of the present gate. Before any production mutation or server deployment:
 
 1. Export a workbook snapshot.
 2. Open the bound Apps Script project with the administrator-owned account.
@@ -24,7 +16,15 @@ The last recorded live check, on 2026-09-19, found `WRITE_ENABLED=true` while th
 
 After the approved action, verify the property again. Re-enabling writes is a separate production mutation and requires separate review.
 
-Editor procedures must expose a no-argument entry point. The Apps Script editor's Run menu invokes a function with no arguments, so a helper declared as `fn(mode)` cannot be run from the dropdown at all and needs one wrapper per mode — the Task 5.7 procedures pair `fixtureGate_5_7(mode)` with `fixtureGateOpen_5_7()` and `fixtureGateClose_5_7()` for exactly this reason. Observed on 2026-09-22, when a reviewed procedure offered only a parameterised entry point, could not be run, and had to be rewritten before the step could proceed. Any procedure described here as run from the editor is assumed to have a no-argument wrapper.
+Editor-run procedures need no-argument entrypoints; provide a separate wrapper for each mode rather than expecting the Run menu to supply arguments.
+
+## Notification operations
+
+The runtime uses `MailApp`; its scope boundary is documented in [security](security.md#deployment-surface). The fix was deployed in Apps Script version 26 on 2026-09-22. A direct mail probe delivered successfully, but application-flow delivery remains unobserved in [task 10.27](../openspec/changes/volunteer-session-scheduling/tasks.md#10-follow-ups-recorded-during-production-verification), where the transport failure blocked the controlled test. Do not describe the fix as undeployed or treat a probe as end-to-end acceptance.
+
+Notification triggers, in-memory status and the missing administrator retry surface are documented in [self-service](subsystems/self-service.md#cancellation-and-notification). Observe actual delivery; recipient configuration alone proves nothing. `ADMINISTRATOR_RECIPIENTS` accepts a JSON array or comma-separated addresses. Other valid JSON values fall through to comma splitting, so validate the resolved addresses before a controlled test.
+
+The controlled test's fixture rows and recipient override were restored on 2026-09-22, with zero operational difference against the baseline (task 10.28). This is historical restoration evidence, not a fresh inspection of production.
 
 ## Revision bookkeeping
 
@@ -53,7 +53,7 @@ What the counters are, so the arithmetic is not improvised:
 - Writing any of the four scheduling-input tabs (`Volunteers`, `RecurringAvailability`, `AvailabilityExceptions`, `Sessions`) also increments `SCHEDULING_INPUT_REVISION` by one. See `src/server/runtime.ts`.
 - `DATA_REVISION` increments by exactly one per mutating operation that the dispatcher admits. See `src/server/main.ts` and `src/server/integration/dispatcher.ts`.
 - `changedAt` and `changedBy` are synthesised when the property is read, so they are not durable state and need no reconciliation.
-- No read-only API exposes `TAB_REVISION_*`. The authenticated API reports `DATA_REVISION` as `revision`, `SCHEDULING_INPUT_REVISION` as `inputRevision`, and the latest completed run's output revision as `scheduleRevision`. `describeSignIn` reports only `WRITE_ENABLED`. The remaining values are read by the owner in the Apps Script editor under Project Settings → Script Properties.
+- No read-only API exposes `TAB_REVISION_*`. The authenticated API reports `DATA_REVISION` as `revision`, `SCHEDULING_INPUT_REVISION` as `inputRevision`, and the latest completed run's output revision as `scheduleRevision`. Of these gate/revision values, `describeSignIn` reports only `WRITE_ENABLED`. The remaining values are read by the owner in the Apps Script editor under Project Settings → Script Properties.
 
 For each direct-write batch:
 
@@ -71,7 +71,7 @@ For each direct-write batch:
 Two consequences are intended, and acceptance evidence must state them rather than claim the projections are unchanged:
 
 1. The published schedule reports `stale` when the latest completed run's input revision differs from `SCHEDULING_INPUT_REVISION`. Record that verdict, and the run's own input revision, before the batch, and compare it afterwards. A monotonic bump can only make the schedule stale, never current, so a schedule that was already stale is restored to the identical verdict; a schedule that was current is left stale and that difference must be disclosed, or cleared by an approved publish, which creates a new schedule output revision.
-2. `TAB_REVISION_Volunteers`, `TAB_REVISION_RecurringAvailability`, and `TAB_REVISION_Assignments` compose the insight cache key. Bumping them does not regenerate insights: the stored dataset is marked stale with the changed-revision reasons, and the next `admin.insights.read` serves that dataset labelled stale instead of deriving a new one. That state is short-lived. The dataset is an accelerator cached for `CACHE_TTL_SECONDS` (300 seconds) in `src/server/insights/cache-repository.ts`, and a read whose entry has expired returns nothing stored and regenerates from the current rows, so an explicit `admin.insights.refresh` is only needed to correct a dataset inside that five-minute window. Read the view and confirm rather than assuming either way.
+2. The latest completed schedule output plus `TAB_REVISION_Volunteers`, `TAB_REVISION_RecurringAvailability`, and `TAB_REVISION_Assignments` form the Insights source revision tuple. Bumping them does not regenerate insights: the stored dataset is marked stale with the changed-revision reasons, and the next `admin.insights.read` serves that dataset labelled stale instead of deriving a new one. That state is short-lived. The dataset is an accelerator cached for `CACHE_TTL_SECONDS` (300 seconds) in `src/server/insights/cache-repository.ts`, and a read whose entry has expired returns nothing stored and regenerates from the current rows, so an explicit `admin.insights.refresh` is only needed to correct a dataset inside that five-minute window. Read the view and confirm rather than assuming either way.
 
 This procedure was exercised end to end on 2026-09-21 against the production workbook: a tagged fixture set was inserted, the counters advanced by exactly one per batch, the acceptance flow ran, and the fixtures were removed again. The restored workbook compared with the pre-insert baseline as zero difference across every operational tab by stable identifier, the append-only audit rows were preserved, every counter had moved only upward with untouched tabs unchanged, and the published schedule kept the same `stale` verdict it had before the window.
 
@@ -79,7 +79,7 @@ This procedure was exercised end to end on 2026-09-21 against the production wor
 
 A reviewed direct-write procedure needs two things the Sheet export alone cannot give: a structural check that the snapshot is a trustworthy restoration reference, and a later comparison that proves the workbook returned to its starting state.
 
-The tooling lives in `scripts/snapshot/`. It reads a snapshot through `pandas.read_excel(..., sheet_name=None, engine="calamine")` and never writes cell contents into the repository. Commands below use `<snapshot-python>` for the interpreter of the `phamily-env` conda environment, which is the only environment guaranteed to provide pandas and python-calamine; another interpreter or another Excel parser is not an acceptable substitute. `<baseline.json>`, `<snapshot.xlsx>`, and `<restored.xlsx>` must stay out of version control with restricted permissions.
+The tooling lives in `scripts/snapshot/`. It reads a snapshot through `pandas.read_excel(..., sheet_name=None, engine="calamine")` and never writes cell contents into the repository. Commands below use `<snapshot-python>` for the interpreter of the `phamily-env` conda environment, which is the only environment guaranteed to provide pandas and python-calamine; another interpreter or another Excel parser is not an acceptable substitute. `<baseline.json>`, `<snapshot.xlsx>`, and `<restored.xlsx>` must stay in gitignored directories inside the working tree (for example `migration-output/`) with restricted permissions.
 
 Record the starting structure and build the private baseline before any mutation:
 
@@ -103,7 +103,7 @@ Deliberate behaviour, and why:
 1. `revision`, `scheduleRevision`, `inputRevision`, and `outputRevision` are ignored. Restoration advances revisions monotonically and never resets a counter to a snapshot value.
 2. Bookkeeping columns (`createdAt`, `updatedAt`, `startedAt`, `completedAt`, `promotedAt`, `importedAt`, `timestamp`, `cancelledAt`, and provenance such as `source`, `actorId`, `promotedBy`, `updatedBy`, `createdBy`) are reported as notes rather than failures, because a restore rewrites them. `--strict-bookkeeping` promotes those notes to failures.
 3. `AuditLog` is append-only: its growth is reported but its contents are never diffed.
-4. `Settings` is compared as a multiset, because its `key` is not unique. `initializeWorkbook` appends a `workbookSchemaVersion` row whenever the first matching row's value differs from the current schema version, so the tab can hold repeated keys; the effective version is the first matching row.
+4. `Settings` is compared as a multiset, because its `key` is not unique. `initializeWorkbook` appends a `workbookSchemaVersion` row whenever the first matching row's value differs from the current schema version, so the tab can hold repeated keys; the current reader uses the first matching row. This is the defect tracked by original task 10.24, not a recommended version-resolution rule.
 5. `--fixture-tag` drops every row containing the tag from both sides, so uniquely tagged acceptance fixtures do not have to be restored byte-for-byte.
 
 The tool ships with its own check, which needs no snapshot and touches no production data:
@@ -119,36 +119,35 @@ Before believing a zero-difference result, confirm the machinery itself is sound
 Safe/read-only tools include:
 
 - `describeSignIn()` in the Apps Script editor: logs resolved audience, write gate, scheduling settings, workbook/configured time zones, and readable Users rows. Its output contains private account information; do not paste it into committed files.
-- `checkWorkbookSchema()` in the editor: checks schema shape without loading migration data.
-- `validateMigrationWorkbook()` in the editor: validates the embedded migration payload without applying it.
+- `checkWorkbookSchema()` in the editor: compares the first matching Settings version with the expected version; it does not validate all tab headers or protections. See [workbook limitations](subsystems/workbook.md#schema).
 - `node scripts/probe-service.mjs --config production.local.json`: sends an unauthenticated, non-mutating request to distinguish public reachability, platform sign-in interception, script errors, and old/current bundle behavior.
 - `node scripts/deployment-check.mjs ...`: examines local config and artifacts only; it does not verify live properties or deployed behavior.
 
+`validateMigrationWorkbook()` is **not read-only**: `applyMigrationPayload(..., { apply: false })` still invokes `initializeWorkbook`, which can create tabs, change headers/protections and append Settings rows before payload validation. Use the production-mutation procedure for this editor command; the payload-only dry-run label does not authorize initialization.
+
 The Apps Script endpoint must be published as `Anyone`; `Anyone with Google account` is not sufficient for the cookieless cross-origin transport. A healthy unauthenticated probe reaches the application and returns its JSON `UNAUTHORIZED`/`FORBIDDEN` envelope.
 
-## Current performance observation
+## Performance and transport evidence
 
-The active [`meet-read-latency-objective` change](../openspec/changes/meet-read-latency-objective/tasks.md) owns the read-latency issue. Measurements on 2026-09-20 used 42 warm samples per route:
+The [read-latency task record](../openspec/changes/meet-read-latency-objective/tasks.md) is the canonical dated release/measurement history. The 2000 ms warm nearest-rank p95 objective remains unmet pending qualifying post-batch browser evidence; successful server execution is not browser success.
 
-| Route | warm p95 | minimum | median | objective |
-| --- | ---: | ---: | ---: | ---: |
-| Schedule | 6966 ms | 4520 ms | 6027 ms | 2000 ms |
-| Insights | 6239 ms | 3162 ms | 4948 ms | 2000 ms |
+| Recorded milestone | Outcome |
+| --- | --- |
+| 2026-09-20 baseline | Both routes exceeded the objective; detailed distributions remain in the task record. |
+| 2026-09-22 scoped reads, version 27 | Schedule/Insights p95 7283/15472 ms; 18/6 measured failures while collecting 40 successes per route. Failures included 404 HTML echo handoffs. |
+| 2026-09-24 batched reads, version 28 | Live editor parity and stable revisions passed with writes disabled; a browser POST/echo/bodyless-GET redirect loop still ended in `INVALID_REQUEST`. No qualifying post-batch 40-success-per-route measurement is recorded. |
 
-Every sample exceeded the objective and no read failed. At that deployed version, the observed floor came from rebuilding the production runtime and reading roughly eight tabs sequentially through `SpreadsheetApp`. Scoped reads are in pinned server version 27. The 2026-09-22 measurements below also met the numeric `batchGet` gate. On 2026-09-23, the user approved the Advanced Sheets read trial and `spreadsheets.readonly`; the local source flag is enabled, the manifest declares Sheets v4 and the added scope, and the linked GCP project reports the Sheets API enabled. The deploying owner authorized the scope, and the batched implementation is in pinned server version 28 as of 2026-09-24. The adapter restricts its own calls to the active workbook and schema-derived ranges, while the OAuth scope itself grants the deploying user read access to other spreadsheets they can access. The live editor parity check on 2026-09-24 reported Schedule and Insights parity true, stable revisions, and the write gate disabled. The 2000 ms objective remains in force pending post-batch browser evidence and an explicit administrator decision.
+The later bodyless GET explains the missing-envelope error; it does not show that the original POST was malformed. The exact Google-side cause remains unproven. Retain no one-time echo URLs/keys or private response bodies. Architecture describes the implemented batch path; [deployment](deployment.md) owns its release/consent procedure.
 
-On 2026-09-24, a signed-in administrator's Schedule read showed a response-transport loop in one browser fetch: POST `/exec` redirected to GET `/echo`, which later redirected back to GET `/exec`; this alternation repeated before a final JSON `INVALID_REQUEST` listed missing `operation` and `idempotencyKey`. The initial POST completed in about 5.6 seconds; the first echo GET took about 27.4 seconds before redirecting. The bodyless GET `/exec` is routed to `doGet` and explains the final missing-field error; it is part of the same fetch, not an unrelated probe. The Apps Script execution logs for the same window show successful batched Schedule reads with three Sheet calls and about 1.5–1.85 seconds of derivation, so the failure occurs after the route handler completes. Google documents that ContentService responses redirect to a one-time `script.googleusercontent.com` URL and that clients must follow redirects ([Content Service redirects](https://developers.google.com/apps-script/guides/content#redirects)); this repeated bounce is not explained by local server code. The browser client already follows redirects, and no safe code-only fix is established. The one-time echo URL/key and account details are intentionally omitted. The 40-success-per-route post-batch browser measurement remains open; tasks 4.3 and 4.4 in the [active change](../openspec/changes/meet-read-latency-objective/tasks.md) remain unchecked.
+### Browser probes
 
-The 2026-09-22 client observation added a separate failure mode: a slow `POST /exec` returned a redirect whose `/echo` handoff ended in 404 HTML, while Apps Script reported the execution as completed. The [read-latency change](../openspec/changes/meet-read-latency-objective/tasks.md) owns the deployed measurement and remaining optimization. On a signed-in administrator client, paste `scripts/browser-signed-in-read-probe.js` into DevTools and call `runSignedInReadProbe()`. It navigates the existing app, uses its exact `route-load` browser performance entries, runs two warm-ups, and seeks 40 successful fresh reads per route without accessing a credential or response body. It counts generic UI refresh failures and retains only durations and outcomes. For direct response classification, `scripts/browser-read-probe.js` accepts an in-memory credential and calls `runReadLatencyProbe({ appsScriptUrl, credential })`; its 404 HTML echo handoff classification is contract-tested. Do not save a credential or response body. Correlate the measurement window and direct probe IDs to sanitized `read-phases` lines using read-only `npx clasp logs`, and inspect the version with `npx clasp deployments`; do not copy unrelated private log lines into reports. `clasp logs` requires the linked GCP project ID in ignored local `.clasp.json` and reads Cloud logs, not the workbook. The two warm-ups are excluded. Keep every slow successful read in the warm sample unless independent execution evidence proves a cold start or upstream delay; list any such exclusion with its probe ID and reason. Browser results, including failures, decide the objective.
+On a signed-in administrator client, paste `scripts/browser-signed-in-read-probe.js` into DevTools and call `runSignedInReadProbe()`. It uses the application's `route-load` entries, runs two warmups, and seeks 40 successful fresh reads per route while preserving failures and recording only durations/outcomes. For direct response classification, `scripts/browser-read-probe.js` accepts an in-memory credential through `runReadLatencyProbe({ appsScriptUrl, credential })`. Do not save credentials or response bodies.
 
-The administrator ran that signed-in probe against pinned version 27 on 2026-09-22. These are successful fresh warm browser durations; the two warm-ups per route are excluded:
+Correlate the measurement window and direct probe IDs with sanitized `read-phases` lines using read-only `npx clasp logs`; inspect the pinned version with `npx clasp deployments`. Logs require the linked GCP project ID in ignored `.clasp.json`. Exclude the two warmups, keep slow successful reads unless independent evidence establishes an allowed cold-start/upstream exclusion, and report every exclusion and failure. The existing probe seeks 40 successes; the proposed Worker acceptance window is a separate future contract.
 
-| Route | total attempts | successes | measured failures | minimum | median | nearest-rank p95 | maximum |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Schedule | 60 | 40 | 18 | 3870 ms | 5599.5 ms | 7283 ms | 33492 ms |
-| Insights | 48 | 40 | 6 | 3017 ms | 4214.5 ms | 15472 ms | 17759 ms |
+### Local experiment and proposed migration
 
-The user's DevTools capture showed repeated `script.googleusercontent.com/macros/echo` 404 responses after roughly 15–32 seconds. The latest 100 sanitized server phase records in the run all reported successful executions: 56 Schedule records had median server phases of 2502 ms and Sheet-call time of 2339 ms (93.2% median per-request share, 14 calls each); 44 Insights records had medians of 802 ms and 571 ms (71.8% share, 4 or 10 calls). Maximum measured server phases were 3902 ms and 2666 ms respectively. This log window is not a one-to-one match with each browser attempt. The server Sheet calls justify a batch trial; the much longer client 404 failures also require a transport or platform decision if they persist after batching.
+The `codex/read-api-prototype` branch at `a47b274` records a synthetic localhost Node experiment: two warmups and 40/40 successes per route, zero redirects, Schedule/Insights p95 6.2/5.9 ms. Its evidence lives in that branch's read-latency tasks, not master's production evidence. It does not test real Google identity verification, live Sheets, WAN behavior or Worker CPU. The [six-change roadmap](../openspec/changes/validate-worker-backend-feasibility/design.md#sequence-and-ownership) is proposed work; production remains Apps Script until separately approved releases establish otherwise.
 
 ## Availability diagnostics
 

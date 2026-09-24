@@ -38,10 +38,10 @@ node scripts/render-public-config.mjs --config production.local.json --output pu
    npm run build
    ```
 
-6. If task/spec state changed, update `openspec/changes/volunteer-session-scheduling/tasks.md` with evidence and run:
+6. If task/spec state changed, update the owning `openspec/changes/<change-name>/tasks.md` with evidence and run:
 
    ```sh
-   openspec validate volunteer-session-scheduling --strict
+   openspec validate <change-name> --strict
    ```
 
 Do not push or deploy as part of this loop unless the user separately approves that action.
@@ -92,3 +92,11 @@ The server build minifies while retaining the English-only Zod locale exclusion.
 - Preserve narrow explicit error codes and strict request schemas.
 - Add a dependency only when the existing platform and helpers cannot reasonably solve the problem.
 - Treat normalized availability as coverage, not stable row identity.
+
+## Durable context and planned work
+
+Use Mnemosyne for concise durable preferences, hazards and pointers. Read current behavior in the owning document from [the documentation map](../README.md#documentation); read pending work and dated acceptance evidence in the owning OpenSpec task list. Historical memories, local configuration and generated reports never establish live production state. Consolidate stale memory snapshots instead of copying test counts, deployment commands, private identifiers or operational transcripts into memory.
+
+The proposed backend migration starts with [Worker feasibility](../openspec/changes/validate-worker-backend-feasibility/design.md), whose design owns the six-change dependency roadmap. The loopback prototype remains on `codex/read-api-prototype`; its commands/files are not assumed present on master. None of the Worker proposals describe an implemented production backend.
+
+Keep generated private artifacts in gitignored directories inside this working tree, such as `migration-output/` and `scrubbed_exports/`; outside version control does not mean outside the working directory.

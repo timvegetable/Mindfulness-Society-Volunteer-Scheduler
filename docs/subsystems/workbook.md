@@ -2,7 +2,7 @@
 
 ## Ownership
 
-`schema.ts` is the versioned tab/column definition. `initializer.ts` creates/checks tabs and protected columns. `sheet-values.ts` normalizes raw Sheet types. `codecs.ts` maps rows to validated domain values. `repository.ts` provides request-scoped snapshots, optimistic writes, audit append, and revision storage. `batch-read.ts` builds and validates allowlisted Schedule/Insights Values API reads. `loader.ts` validates and applies reviewed migration payloads.
+`schema.ts` is the versioned tab/column definition. `initializer.ts` creates/checks tab headers and applies protections, with the limitations below. `sheet-values.ts` normalizes raw Sheet types. `codecs.ts` maps rows to validated domain values. `repository.ts` provides request-scoped snapshots, optimistic writes, audit append, and revision storage. `batch-read.ts` builds and validates allowlisted Schedule/Insights Values API reads. `loader.ts` validates and applies reviewed migration payloads.
 
 Raw `SpreadsheetApp` values must not escape this layer.
 
@@ -10,7 +10,9 @@ Raw `SpreadsheetApp` values must not escape this layer.
 
 Schema version 3 defines `Volunteers`, `RecurringAvailability`, `AvailabilityExceptions`, `Sessions`, `Assignments`, `Backups`, `SchedulingRuns`, `Imports`, `ImportMappings`, `ImportedAvailability`, `Users`, `Settings`, append-only `AuditLog`, `Centers`, and `CandidateSchedules`.
 
-Stable opaque IDs link rows. Display names are not keys. Protected columns include IDs, ownership/role fields, revisions, timestamps, and scheduling-critical fields. Adding or changing a tab/column requires coordinated schema, codec, initializer/migration, runtime, tests, and documentation changes.
+Stable opaque IDs link rows. Display names are not keys. The schema declares protected IDs, ownership/role fields, revisions, timestamps and scheduling-critical fields. The initializer currently protects only the header range, not these data columns (original task 10.25); inspect actual protections before relying on them. Adding or changing a tab/column requires coordinated schema, codec, initializer/migration, runtime, tests, and documentation changes.
+
+`readSchemaVersion` returns the first matching Settings key. With duplicate historical version rows, repeated initialization can append another current-version row while still reporting the old version (original task 10.24). `checkWorkbookSchema()` checks that version only, not all headers/protections. `validateMigrationWorkbook()` also initializes before payload validation, even with `apply: false`; see [operational precautions](../operations.md#diagnostics). The [portable-state change](../../openspec/changes/make-workbook-state-portable/tasks.md) incorporates these repairs without marking them complete.
 
 ## Repository contract
 

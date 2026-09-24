@@ -11,10 +11,10 @@ npm ci
 npm test
 npm run check
 npm run build
-openspec validate volunteer-session-scheduling --strict
+openspec validate <change-name> --strict
 ```
 
-Then:
+Validate each affected change by substituting its name above. Then:
 
 1. review `git status` and exclude private/unrelated files;
 2. validate `production.local.json` and render `public/config.json`;
@@ -36,7 +36,7 @@ Reports are scrubbed but remain local artifacts. They do not prove live write-ga
 
 ## Workbook snapshot
 
-Export the complete workbook before a server deploy or any production Sheet mutation. Store it out of version control with restricted permissions and an immutable timestamp. One supported local mechanism is:
+Export the complete workbook before a server deploy or any production Sheet mutation. Store it in a gitignored directory inside the working tree with restricted permissions and an immutable timestamp. One supported local mechanism is:
 
 ```sh
 gdrive files export <sheet-id> <timestamped-snapshot.xlsx>
@@ -76,7 +76,7 @@ Then browser-check sign-in, role isolation, read routes, preview behavior, stale
 
 ## GitHub Pages client
 
-The Pages workflow is `workflow_dispatch` only and deploys the checked-out ref. After explicit push approval, push the reviewed commit. After separate explicit client-deployment approval, dispatch `.github/workflows/pages.yml` for that ref.
+The checked-in `.github/workflows/pages.yml` triggers on both `push` (without a branch filter) and `workflow_dispatch`. A push can therefore initiate a production Pages deployment; it is not a publish-free review step. Before pushing, inspect the actual workflow and ensure authorization covers the resulting deployment, or first prepare a separately reviewed workflow change that separates validation and release. Manual dispatch is also a deployment and requires its own approval. This documentation does not change the workflow.
 
 The workflow renders public config from `SCHEDULING_PRIVATE_CONFIG_JSON`, builds `dist/client`, runs the fail-closed deployment check, and uploads the Pages artifact. It does not run tests, typecheck, lint, server build, or OpenSpec validation; those must already be green locally.
 

@@ -17,7 +17,7 @@ Protected Google Sheet tabs + Apps Script Script Properties (revisions/counters)
 - The client only sends named operations (`src/client/api.ts`); it never supplies Sheet names, ranges, roles, or ownership.
 - The server (`src/server/integration/dispatcher.ts`) validates the envelope and payload (Zod), verifies the Google ID credential, enforces role policy, serializes mutations under a script lock, and checks optimistic concurrency via the global `DATA_REVISION`.
 - Roles come from the `Users` tab: `volunteer` (own records only), `center-contact` (own centers, cannot confirm sessions), `administrator` (aggregate/admin operations). Every operation is authorized server-side.
-- Scheduling is a pure calculation over a normalized workbook snapshot. Preview writes nothing; publication writes a complete assignment/backup/run output under locks.
+- Scheduling is a pure calculation over a normalized workbook snapshot. Scheduling preview writes nothing; publication writes a complete assignment/backup/run output under locks.
 - See [`docs/architecture.md`](docs/architecture.md) before changing application boundaries, persistence, authorization, revisions, or server operations.
 
 ## Repository layout
@@ -35,6 +35,8 @@ public/        Static assets; config.json is generated for deployment, not commi
 ```
 
 Key rules: TypeScript `strict` with `noUncheckedIndexedAccess`; `src/shared/` stays environment-neutral; all Sheet parsing lives in `src/server/workbook/`; recurring availability is semantic interval coverage, not stable row identity.
+
+The [backend migration roadmap](openspec/changes/validate-worker-backend-feasibility/design.md) defines proposed Worker work and its six prerequisite-gated changes. It has not replaced the deployed Apps Script backend.
 
 ## Prerequisites
 

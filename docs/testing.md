@@ -56,7 +56,7 @@ Node provides globals that Apps Script V8 may not. The server bundle audit and `
 
 ## What CI checks
 
-`.github/workflows/pages.yml` is a manually dispatched deployment workflow. It currently runs:
+`.github/workflows/pages.yml` is a deployment workflow triggered by both push and manual dispatch; see [deployment](deployment.md#github-pages-client) for the release implications. It currently runs:
 
 - `npm ci`;
 - private-to-public config rendering;

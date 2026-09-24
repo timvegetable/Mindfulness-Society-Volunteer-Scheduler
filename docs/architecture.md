@@ -66,7 +66,9 @@ When an account has multiple roles, the client primary-role projection prefers a
 
 `GET` is read-only. The client normally uses cookieless `POST` with `Content-Type: text/plain;charset=utf-8` to avoid a browser preflight and follows Apps Script's echo redirect.
 
-All current mutation helpers supply `expectedRevision`. The policy field records that requirement, but the dispatcher currently does not reject an omitted value solely from that field; it only validates and compares a value that is present. Do not treat `OperationPolicy.expectedRevision` as enforcement until the dispatcher has a regression-tested presence check.
+The [integration contract](subsystems/integration.md#request-contract) records the request-local duplicate map and import-preview misclassification; neither durable replay nor universal write gating is currently guaranteed.
+
+All current helpers for operations classified as mutating supply `expectedRevision`. The policy field records that requirement, but the dispatcher currently does not reject an omitted value solely from that field; it only validates and compares a value that is present. Do not treat `OperationPolicy.expectedRevision` as enforcement until the dispatcher has a regression-tested presence check.
 
 ## Persistence and revisions
 
@@ -87,7 +89,7 @@ Direct Sheets API or manual cell writes bypass these counters and the applicatio
 
 Scheduling is a pure calculation over a normalized snapshot. Preview computes without writes. Publication requires the reviewed global revision, runs under locks, writes a complete assignment/backup/run output, and attempts to restore the prior assignment and backup rows if a later write fails. Only locked center sessions and confirmed classes that have not started are schedulable.
 
-Insights are derived from source revisions and may be reused only when their source revision tuple matches. When cached data is absent or stale, the server regenerates it from one workbook snapshot. Import promotion similarly stages and validates a complete result before replacing authoritative availability.
+Insights carry a source revision tuple. An unchanged tuple reuses the cached dataset; changed sources mark a retained dataset stale until refresh or expiry. Missing/expired data is regenerated from a workbook snapshot. See [Insights cache semantics](subsystems/imports-and-insights.md#availability-insights). Import promotion similarly stages and validates a complete result before replacing authoritative availability.
 
 Published Schedule and Insights use the read plans in `src/server/workbook/read-plans.ts`. Repository handles resolve when used, and decoded rows live only for the current request. `Users` is decoded anew through `SpreadsheetApp` before every authorization and is excluded from the Advanced Sheets plans. After authorization, the approved source path uses `Sheets.Spreadsheets.Values.batchGet` for schema-derived ranges bound to the active workbook ID. Schedule reads runs, assignments, backups, sessions, volunteers, and centers in one batch. An Insights cache hit first reads runs; a miss or refresh extends that same request-local snapshot with volunteers, recurring availability, and assignments. Responses are checked against the requested workbook and ranges, then decoded by the existing workbook codecs. The cache never authorizes a request.
 
@@ -96,3 +98,7 @@ The local Apps Script manifest enables the Sheets v4 advanced service and reques
 ## Time model
 
 Scheduling and display use the configured IANA `TIME_ZONE` (default `America/New_York`). Raw date/time cells must be decoded in the spreadsheet's own time zone, which may differ; `workbookTimeZone()` enforces that distinction. Recurring intervals are normalized and coalesced by semantic coverage, so row IDs and row counts are not stable identities.
+
+## Proposed backend migration
+
+The [Worker feasibility design](../openspec/changes/validate-worker-backend-feasibility/design.md) owns the proposed six-change roadmap and prerequisite gates. These are planning artifacts, not implemented architecture: production still uses Apps Script and Script Properties. The synthetic Node prototype on `codex/read-api-prototype` establishes local transport evidence only; see [operations evidence](operations.md#local-experiment-and-proposed-migration).

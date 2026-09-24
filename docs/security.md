@@ -39,7 +39,7 @@ Neither browser route snapshots nor server caches may become authority.
 - Browser snapshots are memory-only, keyed by authenticated email, primary role, and route, and cleared when identity changes.
 - Token caches store verified claims only within credential expiry and still require a fresh Users lookup for authorization.
 - Insight caches are revision-keyed derived data, not permissions.
-- Every mutation resubmits the credential and is re-authorized, revision-checked, and locked on the server.
+- Declared API mutations resubmit the credential and use server authorization, supplied-revision checks and a lock. Known enforcement gaps (missing revision presence checks and misclassified import staging) are recorded in [integration](subsystems/integration.md#request-contract); do not infer stronger protection from the policy flags.
 
 ## Sheet-write hazards
 
