@@ -1,8 +1,8 @@
 ## 1. Baseline and Experiment Contract
 
-- [ ] 1.1 Record the current master/prototype commits, reusable fixtures/probes, and an actual-effect inventory of all 16 operations (role, ranges, persistence, locks, revisions, external I/O); identify import preview staging explicitly.
-- [ ] 1.2 Pin synthetic fixture dimensions and semantic expected outputs for representative and larger workloads, including preview computation, multi-role/denied users, stale Insights and temporal/blank-cell edge cases.
-- [ ] 1.3 Record staging resource/identity prerequisites and dated Cloudflare/Google quota, CPU and billing constraints; define resource headroom and paced-load acceptance thresholds before measurement.
+- [x] 1.1 Record the current master/prototype commits, reusable fixtures/probes, and an actual-effect inventory of all 16 operations (role, ranges, persistence, locks, revisions, external I/O); identify import preview staging explicitly. — evidence: `evidence/experiment-contract.md` §1 (16-row inventory with revisions and lock conditions; import-preview hidden `Imports`/audit write recorded; prototype assets and reuse decisions)
+- [x] 1.2 Pin synthetic fixture dimensions and semantic expected outputs for representative and larger workloads, including preview computation, multi-role/denied users, stale Insights and temporal/blank-cell edge cases. — evidence: `evidence/experiment-contract.md` §1.2 (fixture tables, pinned volunteer/Users mixes, four stale-Insights variants, mutation-denial expectations, fixture digest rule)
+- [x] 1.3 Record staging resource/identity prerequisites and dated Cloudflare/Google quota, CPU and billing constraints; define resource headroom and paced-load acceptance thresholds before measurement. — evidence: `evidence/experiment-contract.md` §1.3 and `evidence/platform-limits-2026-09-24.md` (dated limits, derived quota ceiling, read-budget pacing, predeclared thresholds)
 
 ## 2. Local Worker Vertical Slice
 
