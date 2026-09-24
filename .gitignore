@@ -19,3 +19,4 @@ scrubbed_exports/
 srikar-task-5.7/
 # Generated at deploy time from the private configuration.
 public/config.json
+plan.md
