@@ -20,3 +20,6 @@ srikar-task-5.7/
 # Generated at deploy time from the private configuration.
 public/config.json
 plan.md
+# Staging credentials, workbook snapshots, measurement reports and raw traces.
+# Never commit: the staging manifest records paths, not values.
+staging-local/

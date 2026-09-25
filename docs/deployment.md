@@ -76,9 +76,9 @@ Then browser-check sign-in, role isolation, read routes, preview behavior, stale
 
 ## GitHub Pages client
 
-The checked-in `.github/workflows/pages.yml` triggers on both `push` (without a branch filter) and `workflow_dispatch`. A push can therefore initiate a production Pages deployment; it is not a publish-free review step. Before pushing, inspect the actual workflow and ensure authorization covers the resulting deployment, or first prepare a separately reviewed workflow change that separates validation and release. Manual dispatch is also a deployment and requires its own approval. This documentation does not change the workflow.
+Validation and release are separate workflows. `.github/workflows/validate.yml` runs on every push and pull request and deploys nothing. The checked-in `.github/workflows/pages.yml` triggers only on `workflow_dispatch`, so a push no longer initiates a Pages deployment. Manual dispatch is a deployment and requires its own approval. Before pushing, still inspect both workflows: an added trigger or a new job would change this property, and authorization must cover whatever a push actually runs.
 
-The workflow renders public config from `SCHEDULING_PRIVATE_CONFIG_JSON`, builds `dist/client`, runs the fail-closed deployment check, and uploads the Pages artifact. It does not run tests, typecheck, lint, server build, or OpenSpec validation; those must already be green locally.
+The Pages workflow renders public config from `SCHEDULING_PRIVATE_CONFIG_JSON`, builds `dist/client`, runs the fail-closed deployment check, and uploads the Pages artifact. It does not run tests, typecheck, lint, the server build, or OpenSpec validation; the validation workflow covers the test, typecheck, lint and build gates, and strict OpenSpec validation stays a local gate. Those must be green locally before a release is approved.
 
 Verify the deployed page loads the intended hashed client asset and safe `config.json`, signs in with intended test roles, reaches the pinned Apps Script URL, and renders no private configuration or cross-role data.
 

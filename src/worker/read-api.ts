@@ -44,6 +44,12 @@ export type ReadApiOptions = Readonly<{
   origins: readonly string[];
   dispatch: ReadDispatch;
   maxRequestBytes?: number;
+  /**
+   * Extra response headers, evaluated after the dispatcher returns. The staging
+   * slice uses it to publish the request's Sheets read count and snapshot digest
+   * so a measurement run records what actually happened.
+   */
+  responseHeaders?: () => Record<string, string>;
 }>;
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -214,7 +220,7 @@ export function createReadApi(options: ReadApiOptions): ReadApi {
 
     try {
       const response = await options.dispatch(input);
-      return jsonResponse(response, 200, headers);
+      return jsonResponse(response, 200, { ...headers, ...options.responseHeaders?.() });
     } catch {
       // The caller learns only that the service failed; configuration and
       // credential details stay out of the response.

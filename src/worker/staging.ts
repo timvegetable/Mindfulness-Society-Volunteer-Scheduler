@@ -50,6 +50,8 @@ export type StagingServiceStats = Readonly<{
   sheetsReads: number;
   requests: number;
   denied: number;
+  /** Digest of the rows this request read; recorded with every measured result. */
+  digest: string | undefined;
 }>;
 
 /** One-slot cache of assembled clients, keyed by the resolved identity configuration. */
@@ -110,6 +112,7 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
   let requests = 0;
   let denied = 0;
   let sheetsReads = 0;
+  let digest: string | undefined;
 
   const injectedTransport = options.fetch !== undefined || options.nowMs !== undefined;
   const cache = options.dependencyCache ?? (injectedTransport ? privateCache() : isolateDependencyCache);
@@ -135,7 +138,7 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         if (sheets) sheetsReads += sheets.readCount();
       }
     },
-    stats: () => ({ sheetsReads, requests, denied })
+    stats: () => ({ sheetsReads, requests, denied, digest })
   };
 
   async function serve(input: unknown, onSheetsClient: (client: ReturnType<typeof createSheetsReadClient>) => void): Promise<ApiResponse<unknown>> {
@@ -267,7 +270,10 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         }
       }
 
-      // 6. The existing synchronous runtime, over the fetched snapshot.
+      // 6. The existing synchronous runtime, over the fetched snapshot. The
+      //    digest is recorded on the response so a measurement run can prove
+      //    which rows produced a result without trusting the operator.
+      digest = await snapshot.digest();
       const dispatcher: IntegrationDispatcher = createIntegrationDispatcher({
         verifier: { verify: () => claims },
         users: new MemoryUserDirectory(users),

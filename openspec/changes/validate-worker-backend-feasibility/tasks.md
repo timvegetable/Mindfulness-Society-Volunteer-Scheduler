@@ -15,7 +15,7 @@
 
 ## 3. Staging Measurement
 
-- [ ] 3.1 Prepare a reviewable staging setup/deployment manifest, secret-handling instructions and rollback; inspect Pages push triggers and separate validation from deployment before any approved push.
+- [x] 3.1 Prepare a reviewable staging setup/deployment manifest, secret-handling instructions and rollback; inspect Pages push triggers and separate validation from deployment before any approved push. — evidence: `evidence/staging-manifest.md`; `scripts/staging/{measure-worker.mjs,browser-probe.html,browser-probe.js}`; `.github/workflows/validate.yml` (new) and `pages.yml` (manual only); `.gitignore` covers `staging-local/`; `wrangler.jsonc` staging bindings; mandatory release review recorded in `execution-record.md`
 - [ ] 3.2 After specific resource/deployment authorization, provision the synthetic workbook/read-only service identity and deploy staging; verify no production resource is referenced.
 - [ ] 3.3 Run authenticated real-browser direct-response/CORS probes with all attempts retained; record sanitized outcomes and distinguish them from prototype loopback timings.
 - [ ] 3.4 Measure actual cold/warm Worker CPU, wall time, derivation/serialization, Sheet-call counts, larger-fixture preview and paced concurrency; record failures and resource headroom.
@@ -26,4 +26,5 @@
 - [ ] 4.1 Run focused tests, npm test, npm run check, npm run build plus the Worker build, and openspec validate validate-worker-backend-feasibility --strict; record results without marking production latency satisfied.
 - [ ] 4.2 Record a dated go/conditional-go/no-go verdict with topology, fixture sizes, measured evidence, unresolved conditions and links to the six-change roadmap; resolve conditions before unlocking production-dependent work.
 - [ ] 4.3 Update development/testing/security documentation for the implemented staging workflow and cross-link relevant evidence to meet-read-latency-objective without completing its production acceptance tasks.
+  - Workflow split recorded for the documentation task: `.github/workflows/validate.yml` is new and `.github/workflows/pages.yml` is now manual-only; `docs/testing.md` ("What CI checks") and `docs/deployment.md` ("GitHub Pages client") were corrected in this change, so 4.3 should re-read them against the workflows rather than repeat the edit.
   - Follow-up discovered during milestone 4 review (measured evidence: `AuthenticationError.detail` at `src/server/integration/auth.ts` includes "(directory holds N row(s))", which `mapUnknownError` copies into the `details.detail` of the `UNAUTHORIZED` envelope returned to a caller holding a valid ID token; `dispatcher.contract.test.ts` pins the same detail on the Apps Script path). Record it in `docs/security.md` with the exact field, its contents, the valid-token precondition, and an explicit accept-or-remove decision; do not change the shared envelope as part of this change.

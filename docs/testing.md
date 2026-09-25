@@ -56,12 +56,9 @@ Node provides globals that Apps Script V8 may not. The server bundle audit and `
 
 ## What CI checks
 
-`.github/workflows/pages.yml` is a deployment workflow triggered by both push and manual dispatch; see [deployment](deployment.md#github-pages-client) for the release implications. It currently runs:
+Two workflows split validation from release:
 
-- `npm ci`;
-- private-to-public config rendering;
-- `npm run build:client`;
-- the fail-closed client deployment check;
-- Pages artifact upload and deployment.
+- `.github/workflows/validate.yml` runs on every push and pull request and deploys nothing: `npm ci`, `npm run check`, `npm test`, `npm run test:worker`, `npm run build`, and the Worker dry-run build (`npm run build:worker`). It needs no secret.
+- `.github/workflows/pages.yml` publishes the client and runs only on manual dispatch, so a push is not a deployment. It runs `npm ci`, private-to-public config rendering, `npm run build:client`, the fail-closed client deployment check, and the Pages artifact upload and deployment.
 
-It does **not** run `npm test`, `npm run check`, the server build/audit, or OpenSpec validation. Local full-suite evidence is therefore required before release; a green Pages workflow does not establish server or domain correctness.
+`validate.yml` still does **not** run strict OpenSpec validation, which stays a local planning gate, and it does not deploy. Local full-suite evidence is therefore still required before release; a green validation workflow does not establish server or domain correctness.

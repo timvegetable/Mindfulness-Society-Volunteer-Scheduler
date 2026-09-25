@@ -19,11 +19,24 @@
   },
   "env": {
     "staging": {
-      // Named environment: `wrangler deploy --env staging`. Secrets are supplied
-      // with `wrangler secret put --env staging`, never committed here, and the
-      // allowlist must be replaced with the real staging origin before deployment.
+      // Named environment: `wrangler deploy --env staging`. Every binding the
+      // slice needs is listed here so a deploy cannot silently omit one; each
+      // REPLACE_ value is a placeholder that fails validation, which makes the
+      // endpoint refuse (503) instead of serving with guessed configuration.
+      // Secrets are supplied with `wrangler secret put --env staging`.
       "vars": {
-        "STAGING_ALLOWED_ORIGINS": ""
+        "STAGING_ALLOWED_ORIGINS": "REPLACE_WITH_THE_STAGING_ORIGIN",
+        "STAGING_OAUTH_AUDIENCE": "REPLACE_WITH_THE_STAGING_OAUTH_CLIENT_ID",
+        "STAGING_WORKBOOK_ID": "REPLACE_WITH_THE_STAGING_SPREADSHEET_ID",
+        "STAGING_WORKBOOK_TIME_ZONE": "REPLACE_WITH_THE_SPREADSHEET_TIME_ZONE",
+        "STAGING_TIME_ZONE": "America/Chicago",
+        "STAGING_DISPLAY_INCREMENT_MINUTES": "30",
+        "STAGING_OPERATING_HOURS_START": "09:00",
+        "STAGING_OPERATING_HOURS_END": "21:00",
+        "STAGING_DATA_REVISION": "REPLACE_WITH_THE_FIXTURE_REVISION",
+        "STAGING_SCHEDULING_INPUT_REVISION": "REPLACE_WITH_THE_FIXTURE_INPUT_REVISION",
+        "STAGING_TAB_REVISIONS": "REPLACE_WITH_A_JSON_OBJECT_OF_TAB_REVISIONS",
+        "GOOGLE_SERVICE_ACCOUNT_EMAIL": "REPLACE_WITH_THE_READ_ONLY_SERVICE_ACCOUNT"
       }
     }
   }

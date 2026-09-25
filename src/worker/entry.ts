@@ -1,7 +1,7 @@
 import { failure } from '../server/integration/request-policy.js';
 import { allowedOrigins, type StagingBindings } from './config.js';
-import { createStagingDispatch } from './dispatch.js';
 import { READ_API_MAX_REQUEST_BYTES, createReadApi } from './read-api.js';
+import { createStagingReadService } from './staging.js';
 
 /**
  * Worker entry point for the feasibility slice.
@@ -14,10 +14,19 @@ import { READ_API_MAX_REQUEST_BYTES, createReadApi } from './read-api.js';
 export default {
   async fetch(request: Request, env: StagingBindings = {}): Promise<Response> {
     try {
+      // One service per request, so its counters describe this request only.
+      const service = createStagingReadService(env);
       const api = createReadApi({
         origins: allowedOrigins(env),
-        dispatch: createStagingDispatch(env),
-        maxRequestBytes: READ_API_MAX_REQUEST_BYTES
+        dispatch: (input) => service.handle(input),
+        maxRequestBytes: READ_API_MAX_REQUEST_BYTES,
+        responseHeaders: () => {
+          const stats = service.stats();
+          return {
+            'X-Staging-Sheets-Reads': String(stats.sheetsReads),
+            ...(stats.digest === undefined ? {} : { 'X-Staging-Snapshot-Digest': stats.digest })
+          };
+        }
       });
       return await api.fetch(request);
     } catch {

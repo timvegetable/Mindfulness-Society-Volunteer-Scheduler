@@ -15,8 +15,8 @@ action. Longer sanitized reports are linked, not copied.
 | 1. Experiment contract | 1.1–1.3 | complete, verified | `2791323` |
 | 2. Worker boundary | 2.1–2.3 | complete, verified | `5dcd384` |
 | 3. Authentication | 2.4 | complete, verified | `3dc8667` |
-| 4. Workbook integration and parity | 2.5–2.6 | implementing | — |
-| 5. Release readiness | 3.1 | pending | — |
+| 4. Workbook integration and parity | 2.5–2.6 | complete, verified | `591b76d` |
+| 5. Release readiness | 3.1 | implementing | — |
 | 6. Measurement and verdict | 3.2–4.3 | blocked on provisioning/deployment approval | — |
 
 ## Decisions
@@ -145,6 +145,7 @@ action. Longer sanitized reports are linked, not copied.
 | 3 (recheck) | second fresh read-only security verifier | 7 fixed/partially fixed, 3 minor new | All three accepted and fixed |
 | 4 | fresh read-only agent (one-agent workflow run) | 0 blocker, 0 major, 9 minor | All nine accepted; eight fixed, one recorded as a 4.3 follow-up |
 | 4 (recheck) | second fresh read-only agent | 4 fixed, 4 partially fixed, 1 not fixed (the 4.3 follow-up), 2 minor new | All accepted; residuals and both new findings fixed |
+| 5 (mandatory release gate) | fresh read-only release reviewer | 2 blocker, 4 major, 5 minor | All eleven accepted and fixed |
 
 Milestone 1 findings and how each was resolved:
 
@@ -442,6 +443,67 @@ Milestone 4 recheck residuals, all fixed:
     with the digest from the request path.
 60. **New — the short-row fixture diverged from the legacy path on volunteer
     timestamps.** Fixed by making the omitted cells blank in both renderings.
+
+## Milestone 5 evidence (Release readiness, task 3.1)
+
+* `evidence/staging-manifest.md` — resource isolation, the complete binding set,
+  provisioning, deployment, rollback, the Pages trigger analysis, the
+  measurement tooling and a pre-deployment checklist.
+* `scripts/staging/measure-worker.mjs` (+ `.d.mts`) — the paced harness: staging
+  target guard, read budget, cold/warm phases, the contract's failure taxonomy,
+  Worker-reported read counts and snapshot digest, achieved rates and observed
+  concurrency, and an append-only attempt log.
+* `scripts/staging/browser-probe.{html,js}` — real-browser transport and wall-time
+  probe with four requests in flight and a staging-host guard.
+* `.github/workflows/validate.yml` (new, push and PR, deploys nothing) and
+  `.github/workflows/pages.yml` (manual dispatch only); `.gitignore` now covers
+  `staging-local/`; `wrangler.jsonc` lists every staging binding as a
+  fail-closed placeholder; `docs/testing.md` and `docs/deployment.md` corrected.
+* Commands and outcomes: `npm test` 35 files / 207 tests; `npm run test:worker`
+  6 files / 99 tests; `npm run check` clean; `npm run build` passes including the
+  Apps Script bundle audit; `npm run build:worker` 1300.65 KiB / 237.01 KiB gzip;
+  `openspec validate --strict` valid; `git check-ignore staging-local/…` matches;
+  the harness `--plan` path validates a manifest and sends nothing.
+
+Milestone 5 findings and how each was resolved (mandatory release gate):
+
+61. **Blocker — the deployment procedure could not execute.** `wrangler.jsonc`
+    supplied only the origin binding for `env.staging`, so a documented deploy
+    would have produced an endpoint refusing every request. Every binding is now
+    present as a `REPLACE_…` placeholder that fails validation, so a deploy
+    cannot omit one and a surviving placeholder refuses rather than guesses.
+62. **Blocker — the documented rollback was wrong.** `wrangler versions deploy`
+    without a version spec does not roll back; the manifest now names the version
+    id, uses `wrangler versions list` to find it, and states that only
+    `wrangler delete` disables serving.
+63. **Major — the harness could not produce the numbers the contract requires.**
+    Added cold/warm separation with a sufficiency flag, the contract's seven-way
+    failure taxonomy, Worker-reported Sheets reads and snapshot digest (published
+    as response headers and consumed by the harness), achieved requests and reads
+    per minute, observed maximum in-flight concurrency, and an append-only
+    attempt log so an aborted run keeps its evidence.
+64. **Major — the browser probe was sequential** and so could never satisfy the
+    ≥ 3-in-flight wall-time rule, and it did not record the point of presence.
+    It now drives four requests in flight and records `cf-ray`.
+65. **Major — the workflow split left two canonical docs false.** `docs/testing.md`
+    and `docs/deployment.md` now describe the validation workflow and the
+    manual-only Pages workflow, and tasks.md records the re-read for 4.3.
+66. **Major — neither tool refused a production target.** The harness requires a
+    staging-shaped `*.workers.dev` host unless a host is named with
+    `--allow-host`, and the probe refuses anything that is not a
+    staging-shaped host.
+67. **Minor — `GOOGLE_SERVICE_ACCOUNT_EMAIL` was listed as a plain variable but
+    set as a secret.** The table now marks it and says why.
+68. **Minor — the fixture-loading identity was unspecified.** The manifest names
+    the mechanism, its scope, and when its access is removed.
+69. **Minor — the deployment procedure omitted the snapshot step and secret
+    ordering.** Added as step 0 and an explicit pre-serve requirement, plus a
+    post-deploy verification step.
+70. **Minor — the path guard only checked for `..`.** Report and credential paths
+    are now resolved and must stay inside `staging-local/`, with tests for an
+    absolute path and a traversal path.
+71. **Minor — the recorded test counts were stale.** Corrected to the measured
+    counts in the manifest and this record.
 
 ## Blockers and open questions
 

@@ -70,3 +70,15 @@ describe('staging Worker entry point', () => {
     }
   });
 });
+
+describe('staging response headers', () => {
+  it('publishes the request read count and snapshot digest for measurement', async () => {
+    // The staging vars in wrangler.jsonc are placeholders, so this request is
+    // refused before any read; the counters still describe this request only.
+    const response = await post({ operation: INTEGRATION_OPERATIONS.me, payload: {}, idempotencyKey: 'entry-probe-headers' }, { Origin: ALLOWED_ORIGIN });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-staging-sheets-reads')).toBe('0');
+    expect(response.headers.get('x-staging-snapshot-digest')).toBeNull();
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+});

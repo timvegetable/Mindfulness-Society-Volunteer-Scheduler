@@ -1,7 +1,9 @@
 name: Deploy GitHub Pages client
 
+# Publishing the client is a deliberate action with its own approval. It used to
+# run on every push to any branch, which made any push a deployment; validation
+# now lives in validate.yml and this workflow is manual only.
 on:
-  push:
   workflow_dispatch:
 
 permissions:
