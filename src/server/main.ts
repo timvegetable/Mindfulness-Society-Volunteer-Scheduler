@@ -9,6 +9,7 @@ import { applyMigrationPayload } from './workbook/loader.js';
 import { cellBoolean, cellNumber, optionalCellText } from './workbook/sheet-values.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
 import { ReadTiming } from './integration/read-timing.js';
+import { differingProjectionFields } from './integration/projection-diff.js';
 import { BATCH_READ_PLANS, createWorkbookBatchReader, type BatchGetValuesRequest, type WorkbookBatchReader } from './workbook/batch-read.js';
 
 // Approved batched reads still fail closed if the bound workbook or service is unavailable.
@@ -136,25 +137,6 @@ export function runtimeBatchReader(spreadsheet: Parameters<typeof createProducti
     const fetch = () => values.batchGet!(spreadsheetId, request);
     return timing ? timing.sheetCall(fetch) : fetch();
   } } });
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'undefined';
-}
-
-function differingProjectionFields(left: unknown, right: unknown, ignoredFields: readonly string[] = []): string[] {
-  if (!left || typeof left !== 'object' || Array.isArray(left) || !right || typeof right !== 'object' || Array.isArray(right)) {
-    return stableJson(left) === stableJson(right) ? [] : ['(projection)'];
-  }
-  const leftRecord = left as Record<string, unknown>;
-  const rightRecord = right as Record<string, unknown>;
-  const keys = new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)]);
-  return [...keys].filter((key) => !ignoredFields.includes(key) && stableJson(leftRecord[key]) !== stableJson(rightRecord[key])).sort();
 }
 
 /**

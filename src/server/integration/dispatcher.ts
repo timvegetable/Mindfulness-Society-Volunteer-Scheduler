@@ -1,127 +1,37 @@
-import { z } from 'zod';
-import { ApiRequestSchema, type ApiResponse, type ErrorCode, type Role } from '../../shared/domain.js';
-import { RepositoryError } from '../workbook/repository.js';
-import { utf8ByteLength } from '../../shared/utf8.js';
-import {
-  authenticateCredential,
-  type AuthenticatedPrincipal,
-  type TokenVerifier,
-  type UserDirectory,
-  AuthenticationError
-} from './auth.js';
+import type { ApiResponse } from '../../shared/domain.js';
+import { authenticateCredential, type AuthenticatedPrincipal, type TokenVerifier, type UserDirectory } from './auth.js';
 import type { ReadTiming } from './read-timing.js';
+import {
+  DEFAULT_MAX_PAYLOAD_BYTES,
+  IntegrationError,
+  enforceCenterCandidateBoundary,
+  expectedRevisionFrom,
+  failure,
+  mapUnknownError,
+  operationPolicy,
+  validateRequestEnvelope,
+  type IntegrationOperation
+} from './request-policy.js';
 
-export const INTEGRATION_OPERATIONS = {
-  me: 'session.me',
-  volunteerDashboard: 'volunteer.dashboard',
-  recurringAvailabilityUpdate: 'volunteer.availability.recurring.update',
-  availabilityExceptionCreate: 'volunteer.availability.exception.create',
-  assignmentCancel: 'volunteer.assignment.cancel',
-  adminSchedule: 'admin.schedule.read',
-  adminSchedulePreview: 'admin.schedule.preview',
-  adminScheduleRerun: 'admin.schedule.rerun',
-  adminImportPreview: 'admin.import.whenIsGood.preview',
-  adminImportPromote: 'admin.import.whenIsGood.promote',
-  adminImportMappingUpsert: 'admin.import.mapping.upsert',
-  adminInsights: 'admin.insights.read',
-  adminInsightsRefresh: 'admin.insights.refresh',
-  centerCandidate: 'center.candidate.read',
-  centerCandidateUpdate: 'center.candidate.update',
-  adminCenterCandidateConfirm: 'admin.center.candidate.confirm'
-} as const;
-
-export type IntegrationOperation = (typeof INTEGRATION_OPERATIONS)[keyof typeof INTEGRATION_OPERATIONS];
-export const ALLOWED_INTEGRATION_OPERATIONS: ReadonlySet<string> = new Set(Object.values(INTEGRATION_OPERATIONS));
-
-export type OperationPolicy = Readonly<{
-  roles: readonly Role[];
-  mutating: boolean;
-  expectedRevision: boolean;
-  readOnly: boolean;
-  payload: z.ZodType<unknown>;
-}>;
-
-const emptyPayload = z.object({}).strict();
-const id = z.string().min(1).max(200);
-const text = z.string().max(500);
-const importCode = z.string().min(1).max(200);
-const interval = z.object({
-  start: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
-  end: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
-  timeZone: z.string().min(1).max(100).regex(/^[A-Za-z0-9_+./-]+$/)
-}).strict().superRefine((value, context) => {
-  if (value.start >= value.end) context.addIssue({ code: 'custom', path: ['end'], message: 'end must be after start' });
-});
-const recurringInterval = interval.extend({ weekday: z.number().int().min(1).max(7) }).strict();
-const exceptionPayload = z.object({
-  id: id.optional(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  kind: z.enum(['unavailable', 'available']),
-  interval,
-  reason: text.optional()
-}).strict();
-const candidatePayload = z.object({
-  candidateId: id.optional(),
-  id: id.optional(),
-  centerId: id.optional(),
-  weekday: z.number().int().min(1).max(7).optional(),
-  start: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
-  end: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
-  timeZone: z.string().min(1).max(100).regex(/^[A-Za-z0-9_+./-]+$/).optional(),
-  requestedStaffCount: z.number().int().min(0).max(2).optional(),
-  status: z.enum(['draft', 'submitted', 'confirmed', 'rejected']).optional(),
-  intervals: z.array(recurringInterval).max(100).optional()
-}).strict().superRefine((value, context) => {
-  if (value.start !== undefined && value.end !== undefined && value.start >= value.end) {
-    context.addIssue({ code: 'custom', path: ['end'], message: 'end must be after start' });
-  }
-});
-
-const sourceMappingPayload = z.object({
-  sourceParticipantId: z.string().min(1).max(200).optional(),
-  sourceEmail: z.string().email().max(200).optional(),
-  sourceName: z.string().min(1).max(200).optional(),
-  volunteerId: id
-}).strict().superRefine((value, context) => {
-  if (!value.sourceParticipantId && !value.sourceEmail && !value.sourceName) {
-    context.addIssue({ code: 'custom', path: ['sourceParticipantId'], message: 'At least one source identity field is required' });
-  }
-});
-
-export const OPERATION_POLICIES: Readonly<Record<IntegrationOperation, OperationPolicy>> = {
-  [INTEGRATION_OPERATIONS.me]: { roles: ['volunteer', 'administrator', 'center-contact'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.volunteerDashboard]: { roles: ['volunteer'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.recurringAvailabilityUpdate]: { roles: ['volunteer'], mutating: true, expectedRevision: true, readOnly: false, payload: z.object({ intervals: z.array(recurringInterval).max(100) }).strict() },
-  [INTEGRATION_OPERATIONS.availabilityExceptionCreate]: { roles: ['volunteer'], mutating: true, expectedRevision: true, readOnly: false, payload: exceptionPayload },
-  [INTEGRATION_OPERATIONS.assignmentCancel]: { roles: ['volunteer'], mutating: true, expectedRevision: true, readOnly: false, payload: z.object({ assignmentId: id, reason: text.optional() }).strict() },
-  [INTEGRATION_OPERATIONS.adminSchedule]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.adminSchedulePreview]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.adminScheduleRerun]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.adminImportPreview]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: z.object({ resultsCode: importCode }).strict() },
-  [INTEGRATION_OPERATIONS.adminImportPromote]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: z.object({ resultsCode: importCode }).strict() },
-  [INTEGRATION_OPERATIONS.adminImportMappingUpsert]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: sourceMappingPayload },
-  [INTEGRATION_OPERATIONS.adminInsights]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.adminInsightsRefresh]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.centerCandidate]: { roles: ['administrator', 'center-contact'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.centerCandidateUpdate]: { roles: ['administrator', 'center-contact'], mutating: true, expectedRevision: true, readOnly: false, payload: candidatePayload },
-  [INTEGRATION_OPERATIONS.adminCenterCandidateConfirm]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: z.object({ candidateId: id }).strict() }
-};
-
-export type IntegrationErrorDetails = Record<string, unknown>;
-
-export class IntegrationError extends Error {
-  readonly code: ErrorCode;
-  readonly details?: IntegrationErrorDetails;
-  readonly retryable: boolean;
-
-  constructor(code: ErrorCode, message: string, details?: IntegrationErrorDetails, retryable = false) {
-    super(message);
-    this.name = 'IntegrationError';
-    this.code = code;
-    this.details = details;
-    this.retryable = retryable;
-  }
-}
+export {
+  ALLOWED_INTEGRATION_OPERATIONS,
+  DEFAULT_MAX_PAYLOAD_BYTES,
+  INTEGRATION_OPERATIONS,
+  IntegrationError,
+  OPERATION_POLICIES,
+  enforceCenterCandidateBoundary,
+  expectedRevisionFrom,
+  failure,
+  fingerprint,
+  isAllowedOperation,
+  mapUnknownError,
+  operationPolicy,
+  payloadBytes,
+  rejectDangerousKeys,
+  stableValue,
+  validateRequestEnvelope
+} from './request-policy.js';
+export type { EnvelopeValidation, IntegrationErrorDetails, OperationPolicy, ValidatedRequest } from './request-policy.js';
 
 export type RevisionSource = {
   current(): number;
@@ -199,53 +109,8 @@ export type IntegrationDispatcherOptions = Readonly<{
 
 type StoredRequest = Readonly<{ fingerprint: string; storedAt: number; response?: ApiResponse<unknown> }>;
 
-const DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_IDEMPOTENCY_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_IDEMPOTENCY_ENTRIES = 1000;
-const DANGEROUS_KEYS = new Set(['sheet', 'sheetname', 'range', 'a1range', 'spreadsheetid', 'gid', 'formula', 'query', 'sql']);
-const REQUEST_KEYS = new Set(['operation', 'payload', 'idempotencyKey', 'expectedRevision', 'credential']);
-
-function failure(code: ErrorCode, message: string, details?: IntegrationErrorDetails): ApiResponse<never> {
-  const error: { code: ErrorCode; message: string; details?: IntegrationErrorDetails } = { code, message };
-  if (details !== undefined) error.details = details;
-  return { ok: false, error };
-}
-
-function payloadBytes(value: unknown): number {
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) return Number.POSITIVE_INFINITY;
-  return utf8ByteLength(encoded);
-}
-
-function stableValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
-    return Object.fromEntries(entries.map(([key, child]) => [key, stableValue(child)]));
-  }
-  return value;
-}
-
-function fingerprint(value: unknown): string {
-  return JSON.stringify(stableValue(value));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function rejectDangerousKeys(value: unknown, depth = 0): void {
-  if (depth > 12) throw new IntegrationError('INVALID_REQUEST', 'Request payload is nested too deeply.');
-  if (Array.isArray(value)) {
-    for (const item of value) rejectDangerousKeys(item, depth + 1);
-    return;
-  }
-  if (!isRecord(value)) return;
-  for (const [key, child] of Object.entries(value)) {
-    if (DANGEROUS_KEYS.has(key.toLowerCase())) throw new IntegrationError('INVALID_REQUEST', `Payload field ${key} is not supported.`);
-    rejectDangerousKeys(child, depth + 1);
-  }
-}
 
 /**
  * Apps Script web apps cannot return a Promise: a handler that yields one makes
@@ -258,48 +123,6 @@ function assertSynchronous(operation: IntegrationOperation, value: unknown): unk
     throw new IntegrationError('INTERNAL_ERROR', `Operation ${operation} returned a Promise; Apps Script handlers must complete synchronously.`);
   }
   return value;
-}
-
-function mapUnknownError(error: unknown): IntegrationError {
-  if (error instanceof IntegrationError) return error;
-  if (error instanceof RepositoryError) return new IntegrationError(error.code, error.message, undefined, error.code === 'CONFLICT');
-  if (error instanceof AuthenticationError) {
-    // The caller is the account being rejected, so naming the reason is what lets
-    // an operator diagnose a misconfigured deployment without server log access.
-    const details: IntegrationErrorDetails = { reason: error.reason };
-    if (error.detail !== undefined) details.detail = error.detail;
-    return new IntegrationError('UNAUTHORIZED', 'Authentication is required.', details);
-  }
-  if (error instanceof z.ZodError) return new IntegrationError('INVALID_REQUEST', 'Request validation failed.', { issues: error.issues });
-  return new IntegrationError('INTERNAL_ERROR', 'The scheduling service could not complete the request.', undefined, true);
-}
-
-function isAllowedOperation(value: string): value is IntegrationOperation {
-  return ALLOWED_INTEGRATION_OPERATIONS.has(value);
-}
-
-function assertRequestKeys(value: Record<string, unknown>): void {
-  for (const key of Object.keys(value)) {
-    if (!REQUEST_KEYS.has(key)) throw new IntegrationError('INVALID_REQUEST', `Request field ${key} is not supported.`);
-  }
-}
-
-function expectedRevisionFrom(value: unknown): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new IntegrationError('INVALID_REQUEST', 'expectedRevision must be a non-negative integer.');
-  }
-  return value;
-}
-
-function enforceCenterCandidateBoundary(operation: IntegrationOperation, actor: AuthenticatedPrincipal, payload: unknown): void {
-  if (operation !== INTEGRATION_OPERATIONS.centerCandidateUpdate || actor.user.roles.includes('administrator')) return;
-  if (!actor.user.roles.includes('center-contact')) throw new IntegrationError('FORBIDDEN', 'Center-contact access is required.');
-  if (!isRecord(payload)) return;
-  if (payload.status === 'confirmed') throw new IntegrationError('FORBIDDEN', 'Only administrators can confirm a candidate schedule.');
-  if (typeof payload.centerId === 'string' && !actor.user.centerIds?.includes(payload.centerId)) {
-    throw new IntegrationError('FORBIDDEN', 'The candidate must belong to your center.');
-  }
 }
 
 export class IntegrationDispatcher {
@@ -334,33 +157,24 @@ export class IntegrationDispatcher {
 
   dispatch(input: unknown, options: Readonly<{ readOnly?: boolean }> = {}): ApiResponse<unknown> {
     this.pruneIdempotency(Date.now());
-    let operation: IntegrationOperation | undefined;
-    let lockAcquired = false;
     let requestKey: string | undefined;
+    let lockAcquired = false;
     try {
-      if (payloadBytes(input) > (this.options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES)) {
-        return failure('PAYLOAD_TOO_LARGE', 'The request payload is too large.');
-      }
-      if (!isRecord(input)) return failure('INVALID_REQUEST', 'Request must be a JSON object.');
-      assertRequestKeys(input);
-      rejectDangerousKeys(input.payload);
-      const parsedRequest = ApiRequestSchema.strict().parse(input);
-      if (!isAllowedOperation(parsedRequest.operation)) return failure('INVALID_REQUEST', 'That operation is not available.');
-      operation = parsedRequest.operation;
-      const policy = OPERATION_POLICIES[operation];
-      if (options.readOnly && !policy.readOnly) return failure('FORBIDDEN', 'This operation is not available through a read-only request.');
-      if (parsedRequest.payload === null || typeof parsedRequest.payload !== 'object' || Array.isArray(parsedRequest.payload)) {
-        return failure('INVALID_REQUEST', 'Request payload must be an object.');
-      }
-      const payloadResult = policy.payload.safeParse(parsedRequest.payload);
-      if (!payloadResult.success) return failure('INVALID_REQUEST', 'Request payload is invalid.', { issues: payloadResult.error.issues });
-      const actor = authenticateCredential(parsedRequest.credential, this.options.verifier, this.options.users, this.options.timing);
+      const validation = validateRequestEnvelope(input, {
+        ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+        maxPayloadBytes: this.options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES
+      });
+      if (!validation.ok) return validation.response;
+      const { operation, policy, payload, idempotencyKey, credential, requestFingerprint } = validation.value;
+      // The caller is authenticated after the envelope is validated, so an
+      // unauthorized request cannot probe which payload shapes are accepted for
+      // an operation it may not use.
+      const actor = authenticateCredential(credential, this.options.verifier, this.options.users, this.options.timing);
       if (!policy.roles.some((role) => actor.user.roles.includes(role))) return failure('FORBIDDEN', 'Your account is not authorized for this operation.');
-      enforceCenterCandidateBoundary(operation, actor, payloadResult.data);
-      const expectedRevision = expectedRevisionFrom(parsedRequest.expectedRevision);
+      enforceCenterCandidateBoundary(operation, actor, payload);
+      const expectedRevision = expectedRevisionFrom(validation.value.expectedRevision);
       if (policy.mutating && (!this.options.revision || !this.options.writeLock)) return failure('UNAVAILABLE', 'State-changing operations are not configured.');
-      requestKey = `${actor.user.id}:${operation}:${parsedRequest.idempotencyKey}`;
-      const requestFingerprint = fingerprint({ operation, payload: payloadResult.data, expectedRevision });
+      requestKey = `${actor.user.id}:${operation}:${idempotencyKey}`;
       const existingRequest = this.requests.get(requestKey);
       if (existingRequest) {
         if (existingRequest.fingerprint !== requestFingerprint) return failure('CONFLICT', 'The idempotency key was already used for a different request.');
@@ -384,11 +198,11 @@ export class IntegrationDispatcher {
       const context: HandlerContext = {
         actor,
         operation,
-        idempotencyKey: parsedRequest.idempotencyKey,
+        idempotencyKey,
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
         now: this.options.clock?.() ?? new Date().toISOString()
       };
-      const invoke = () => assertSynchronous(operation!, handler(context, payloadResult.data));
+      const invoke = () => assertSynchronous(operation, handler(context, payload));
       const data = this.options.timing ? this.options.timing.derive(invoke) : invoke();
       let revision: number | undefined;
       if (policy.mutating && this.options.revision?.advance) revision = this.options.revision.advance(actor.user.id, operation);
@@ -414,7 +228,7 @@ export class IntegrationDispatcher {
   }
 
   isOperationMutating(operation: string): boolean {
-    return isAllowedOperation(operation) && OPERATION_POLICIES[operation].mutating;
+    return operationPolicy(operation)?.mutating ?? false;
   }
 }
 
@@ -422,6 +236,4 @@ export function createIntegrationDispatcher(options: IntegrationDispatcherOption
   return new IntegrationDispatcher(options);
 }
 
-export function operationPolicy(operation: string): OperationPolicy | undefined {
-  return isAllowedOperation(operation) ? OPERATION_POLICIES[operation] : undefined;
-}
+export type { IntegrationOperation };

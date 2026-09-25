@@ -49,8 +49,14 @@ function now(): string {
 }
 
 function auditId(): string {
-  const cryptoApi = typeof globalThis.crypto === 'object' ? globalThis.crypto : undefined;
-  if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
+  // Kept as a `typeof globalThis.crypto` guard for the same reason as
+  // `utf8ByteLength`: the bundle audit proves the global is only touched when
+  // present, and the cast is type-level only, because the Workers type program
+  // declares `crypto` as a `const` and would not accept `globalThis.crypto`.
+  if (typeof (globalThis as { crypto?: unknown }).crypto === 'object') {
+    const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+    if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
+  }
   return `audit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 

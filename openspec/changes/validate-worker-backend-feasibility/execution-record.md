@@ -12,8 +12,8 @@ action. Longer sanitized reports are linked, not copied.
 
 | Milestone | Tasks | State | Commit |
 | --- | --- | --- | --- |
-| 1. Experiment contract | 1.1–1.3 | implementing | — |
-| 2. Worker boundary | 2.1–2.3 | pending | — |
+| 1. Experiment contract | 1.1–1.3 | complete, verified | `2791323` |
+| 2. Worker boundary | 2.1–2.3 | implementing | — |
 | 3. Authentication | 2.4 | pending | — |
 | 4. Workbook integration and parity | 2.5–2.6 | pending | — |
 | 5. Release readiness | 3.1 | pending | — |
@@ -42,8 +42,80 @@ action. Longer sanitized reports are linked, not copied.
 * **2026-09-24 — no production state portability.** Revisions and configuration
   for staging are immutable Worker configuration, per the design; portable state
   belongs to `make-workbook-state-portable`.
+* **2026-09-24 — new dependencies, justified (task 2.1).** Three pinned
+  devDependencies: `wrangler@4.139.0` (Worker build and dry-run validation),
+  `@cloudflare/workers-types@5.20260924.1` (runtime types for the isolated Worker
+  type program), and `@cloudflare/vitest-pool-workers@0.12.21` (Worker-native tests
+  in workerd). `0.12.21` is the newest release in that line compatible with the
+  repository's pinned `vitest@^3.2.4`; `0.13.0` and later require vitest 4, which
+  would churn the whole existing suite for no feasibility benefit. No runtime
+  dependency was added, and `nodejs_compat` is not enabled.
+* **2026-09-24 — compatibility date.** `wrangler.jsonc` pins
+  `compatibility_date: 2026-03-10`, the newest date the pinned local workerd
+  (1.20260310.x, via `@cloudflare/vitest-pool-workers@0.12.21`) implements;
+  pinning a later date made the Worker-native tests silently fall back to an
+  older runtime, which would have made local evidence diverge from the deployed
+  configuration.
+* **2026-09-24 — Worker runtime isolation is enforced by three checks, not one.**
+  `tsconfig.worker.json` checks Worker *source* against Workers types only (test
+  files excluded, because a test runner pulls Node's types in), and
+  `tsconfig.worker-tests.json` checks the tests separately. Because
+  `@cloudflare/workers-types` itself declares `Buffer` and `process` as `any` for
+  the nodejs_compat surface, the type program alone cannot catch those two, so
+  ESLint additionally restricts Node built-in imports and the `process`, `Buffer`,
+  `require`, `__dirname`, `__filename`, `global` and `setImmediate` globals inside
+  `src/worker`. A probe file using `node:fs`, `process` and `Buffer` was added and
+  removed: ESLint reported three errors and the check passed again afterwards.
+  Known limitation: `@cloudflare/vitest-pool-workers` enables several
+  `enable_nodejs_*` compatibility flags for the Vitest runner itself, so the test
+  runtime is slightly more permissive than the deployed Worker; the ESLint rule and
+  the isolated type program are what close that gap.
+* **2026-09-24 — shared request policy, one copy.** The operation registry,
+  payload schemas, envelope rejection rules and failure envelopes moved from
+  `dispatcher.ts` into `request-policy.ts`; the dispatcher re-exports the previous
+  surface so no importer changed, and it now validates through
+  `validateRequestEnvelope`. The Worker consumes the same module, so the transport
+  cannot drift from the dispatcher's rules. The reviewer compared all nine
+  rejection paths against `git show HEAD:…dispatcher.ts` and found no envelope
+  change.
+* **2026-09-24 — production code touched twice, type-level only.** `utf8.ts` and
+  `workbook/repository.ts` keep their `typeof globalThis.X === ...` guards — the
+  Apps Script bundle audit proves those guards — but cast through `unknown`
+  because the Workers type program declares `TextEncoder` as a class and `crypto`
+  as a `const`, which TypeScript does not project onto `globalThis`. Runtime
+  behaviour is unchanged; the bundle audit still passes.
+* **2026-09-24 — bounded body read.** The transport reads the request body through
+  a stream with a hard byte cap rather than buffering it, so an oversized body is
+  refused while it is still arriving.
+* **2026-09-24 — the operation allowlist is load-bearing.** Nine of the sixteen
+  operations are policy-mutating, but `admin.import.whenIsGood.preview` is
+  registered read-only while its handler writes an `Imports` row. For that
+  operation the three-operation transport allowlist is the only barrier, so
+  `read-api.ts` documents that adding an operation requires re-checking its actual
+  effects first.
 
-## Evidence
+## Milestone 2 evidence (Worker boundary, tasks 2.1–2.3)
+
+* `wrangler.jsonc`, `tsconfig.worker.json`, `tsconfig.worker-tests.json`,
+  `vitest.worker.config.ts`, `package.json` scripts `build:worker`, `test:worker`,
+  `typecheck:worker`; the root `tsconfig.json` excludes `src/worker` and the Node
+  vitest config excludes `src/worker/**`, so both suites keep their own runtime and
+  globals.
+* `src/server/integration/request-policy.ts` and `projection-diff.ts` — extracted
+  seams; `src/worker/{config,read-api,dispatch,entry}.ts` — staging slice.
+* Commands and outcomes at this commit: `npm test` 34 files / 194 tests;
+  `npm run test:worker` 4 files / 38 tests in workerd; `npm run check` clean
+  (the Node program, both Worker programs, and eslint with the Worker boundary
+  rules); `npm run build` passes including the Apps Script bundle audit;
+  `npm run build:worker` bundles to 795.54 KiB (125.22 KiB gzip) against the
+  64 MiB limit; `openspec validate validate-worker-backend-feasibility --strict`
+  valid.
+* Environment note: the DSH file sandbox cannot create `~/.config/.wrangler`, so
+  `build:worker` was run with `XDG_CONFIG_HOME` pointed inside the workspace. The
+  committed script is unchanged and needs no such override on a normal machine or
+  in CI.
+
+## Milestone 1 evidence (Experiment contract, tasks 1.1–1.3)
 
 * `evidence/experiment-contract.md` — tasks 1.1–1.3: 16-operation effect
   inventory with revisions and lock conditions (including the import-preview
@@ -67,6 +139,8 @@ action. Longer sanitized reports are linked, not copied.
 | 1 | fresh read-only agent (one-agent workflow run) | 1 blocker, 6 major, 6 minor | All accepted after independent re-check; document rewritten |
 | 1 (recheck) | second fresh read-only agent, given the findings verbatim | 10 resolved, 2 partially resolved, 2 major + 8 minor new | All new findings accepted after independent re-check; document corrected again |
 | 1 (edit check) | third fresh read-only agent, scoped to the post-recheck edits | 4 checks passed, 2 checks failed with 1 major + 4 minor | All accepted and fixed; measurement protocol re-derived independently by the verifier |
+| 2 | fresh read-only agent (one-agent workflow run) | 0 blocker, 0 major, 5 minor | All five accepted and fixed; the reviewer reproduced every claimed test number |
+| 2 (recheck) | second fresh read-only agent, given findings 27–31 verbatim | 5 fixed, 4 minor new | All four accepted and fixed; the reviewer independently reproduced the workerd version and the lint boundary |
 
 Milestone 1 findings and how each was resolved:
 
@@ -180,6 +254,55 @@ more issues, all fixed:
 26. **Minor — the subrequest ceiling named no instrument.** The Worker-side counter
     now covers every outgoing `fetch`, reported per cold/warm phase.
 
+Milestone 2 findings and how each was resolved:
+
+27. **Minor — the dependency justification was wrong.** `0.12.21`, not `0.12.0`, is
+    the newest `@cloudflare/vitest-pool-workers` compatible with `vitest@^3.2.4`
+    (0.13.0+ requires vitest 4). The pin was raised to `0.12.21`, which also moved
+    the local workerd to 1.20260310.x and let the compatibility date move from
+    2026-01-03 to 2026-03-10.
+28. **Minor — the Worker type program was not actually isolated.** It included the
+    Worker test files, whose runner types pull `@types/node` into the program, so a
+    Node-only global in Worker source could pass `npm run check`. Split into
+    `tsconfig.worker.json` (source, Workers types only, test files excluded) and
+    `tsconfig.worker-tests.json` (tests), and verified by probe that Node globals
+    are now rejected: `@cloudflare/workers-types` declares `Buffer` and `process`
+    as `any`, so ESLint additionally restricts Node built-in imports and those
+    globals inside `src/worker`. The probe produced three ESLint errors.
+29. **Minor — the fail-closed misconfiguration path was untested.** Added an entry
+    test that calls the Worker with an invalid allowlist binding and asserts a
+    bounded 503 `UNAVAILABLE` envelope that names neither the binding nor the value.
+30. **Minor — a non-serializable dispatch result produced an empty 200 body.**
+    `read-api.ts` now serializes through a guard that always emits the application
+    envelope, with a test covering `undefined`, a function and a `BigInt`.
+31. **Minor — a misleading comment and an unrecorded nuance.** The comment now names
+    the nine policy-mutating operations, and the load-bearing role of the transport
+    allowlist for the read-only-but-writing import-preview operation is recorded
+    both in `read-api.ts` and above.
+
+Milestone 2 recheck (a fresh agent given findings 27–31 verbatim) confirmed all
+five fixed, reproduced the environment independently, and raised four more, all
+fixed:
+
+32. **Minor — the serialization guard proved only stringify-ability, not envelope
+    shape.** A result that serializes to `{}`, `null` or `42` would still be served
+    as if it were an `ApiResponse`. The guard now requires an object with a boolean
+    `ok`, and the test covers `undefined`, a function, a `BigInt`, `null`, a number,
+    a `Map`, a `Symbol` and a cyclic object.
+33. **Minor — `clearImmediate` escaped both guards.** `@cloudflare/workers-types`
+    declares it, and it was absent from the restricted-globals list, so a
+    Node-only global could pass the check and throw in workerd. Added, and the
+    entry point now wraps `api.fetch` as well as configuration, so an unexpected
+    transport throw still returns the bounded envelope instead of a platform error
+    page.
+34. **Minor — the lint boundary was narrower than the Worker program.** The shared
+    `src/shared` and `src/server` modules the Worker compiles were not linted for
+    Node globals. The rule now covers `src/worker`, `src/shared` and `src/server`
+    (test files excluded), and a `--stdin` probe confirmed it rejects `process` and
+    `clearImmediate` in a shared module while leaving test files alone.
+35. **Minor — `vitest.worker.config.ts` was covered by no check.** It is now in the
+    root TypeScript program, and the lint step also covers the three root config
+    files.
 
 ## Blockers and open questions
 

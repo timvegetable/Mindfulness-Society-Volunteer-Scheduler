@@ -7,8 +7,11 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "node scripts/bundle-server.mjs && node scripts/audit-server-bundle.mjs && node scripts/expose-appsscript.mjs && cp src/server/appsscript.json dist/apps-script/appsscript.json",
-    "check": "tsc --noEmit && eslint src --max-warnings=0",
+    "build:worker": "wrangler deploy --dry-run --outdir dist/worker --config wrangler.jsonc --env=\"\"",
+    "check": "tsc --noEmit && npm run typecheck:worker && eslint src vite.config.ts vitest.config.ts vitest.worker.config.ts --max-warnings=0",
+    "typecheck:worker": "tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.worker-tests.json",
     "test": "vitest run",
+    "test:worker": "vitest run --config vitest.worker.config.ts",
     "deploy:client": "npm run build:client",
     "deploy:server": "npm run build:server && clasp push --rootDir dist/apps-script",
     "deploy": "npm run build && npm run deploy:server"
@@ -18,6 +21,8 @@
     "zod": "^4.1.5"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.12.21",
+    "@cloudflare/workers-types": "5.20260924.1",
     "@eslint/js": "^9.35.0",
     "@google/clasp": "^3.0.6-alpha",
     "@types/google-apps-script": "^1.0.99",
@@ -27,6 +32,7 @@
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.42.0",
     "vite": "^7.1.4",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "4.139.0"
   }
 }

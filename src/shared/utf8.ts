@@ -5,7 +5,15 @@
  * surrogates as the replacement character, matching TextEncoder semantics.
  */
 export function utf8ByteLength(value: string): number {
-  if (typeof globalThis.TextEncoder === 'function') return new globalThis.TextEncoder().encode(value).byteLength;
+  // The probe stays a `typeof globalThis.TextEncoder` guard so the Apps Script
+  // bundle audit can still prove the global is only touched when present; the
+  // cast is type-level only, because the Workers type program declares
+  // `TextEncoder` as a class rather than a `var` and would not accept
+  // `globalThis.TextEncoder` otherwise.
+  if (typeof (globalThis as { TextEncoder?: unknown }).TextEncoder === 'function') {
+    const encoder = (globalThis as unknown as { TextEncoder: new () => { encode(input: string): { byteLength: number } } }).TextEncoder;
+    return new encoder().encode(value).byteLength;
+  }
 
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {

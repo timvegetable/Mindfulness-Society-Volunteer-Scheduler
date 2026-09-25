@@ -1,0 +1,14 @@
+{
+  // Worker test program. It is separate from tsconfig.worker.json because the
+  // test runner's own types bring Node globals in; that is acceptable in a test
+  // file, but it must not be what makes Worker source type-check. Test files are
+  // additionally barred from importing Node built-ins by ESLint, and the Worker
+  // runtime itself is exercised in workerd by `npm run test:worker`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"]
+  },
+  "include": ["src/worker/**/*.test.ts"],
+  "exclude": []
+}

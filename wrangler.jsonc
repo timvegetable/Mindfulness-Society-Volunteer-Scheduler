@@ -1,0 +1,30 @@
+{
+  // Staging Worker for the read-only feasibility slice. It has no route and no
+  // custom domain: deploying it cannot change production routing, which still
+  // serves the static client from GitHub Pages and the API from Apps Script.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "volunteer-scheduling-staging",
+  "main": "src/worker/entry.ts",
+  // Pinned to the newest compatibility date the pinned local toolchain's workerd
+  // implements, so `npm run test:worker` exercises the same runtime behaviour the
+  // deployed Worker is pinned to instead of silently falling back.
+  "compatibility_date": "2026-03-10",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "vars": {
+    // Local development and Worker-native tests only. The deployed origin
+    // allowlist is set per environment by the staging manifest (task 3.1); an
+    // empty list denies every request that sends an Origin header.
+    "STAGING_ALLOWED_ORIGINS": "http://localhost:8788"
+  },
+  "env": {
+    "staging": {
+      // Named environment: `wrangler deploy --env staging`. Secrets are supplied
+      // with `wrangler secret put --env staging`, never committed here, and the
+      // allowlist must be replaced with the real staging origin before deployment.
+      "vars": {
+        "STAGING_ALLOWED_ORIGINS": ""
+      }
+    }
+  }
+}

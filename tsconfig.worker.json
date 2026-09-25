@@ -1,0 +1,15 @@
+{
+  // Worker runtime types are isolated from the Apps Script and Node programs so
+  // the existing bundle audit and Node tests keep their own globals. Only the
+  // Worker source is checked here, against Workers types alone: test files are
+  // excluded because importing a test runner pulls Node's types in and would let
+  // a Node-only global in Worker source pass `npm run check` and fail in workerd.
+  // The tests are type-checked by tsconfig.worker-tests.json.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src/worker"],
+  "exclude": ["src/worker/**/*.test.ts"]
+}
