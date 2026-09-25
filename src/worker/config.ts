@@ -8,7 +8,11 @@
  * rather than serve data under the wrong zone, revision or origin allowlist.
  */
 
+import { WORKBOOK_TABS } from '../server/workbook/schema.js';
+
 export type StagingBindings = Readonly<Record<string, unknown>>;
+
+const WORKBOOK_TAB_NAMES: ReadonlySet<string> = new Set(WORKBOOK_TABS.map((tab) => tab.name));
 
 export class StagingConfigurationError extends Error {
   readonly variable: string;
@@ -108,5 +112,83 @@ export function googleIdentityConfiguration(bindings: StagingBindings): GoogleId
     audience: requiredBinding(bindings, 'STAGING_OAUTH_AUDIENCE'),
     clientEmail: requiredBinding(bindings, 'GOOGLE_SERVICE_ACCOUNT_EMAIL'),
     privateKeyPem: normalizePrivateKey(requiredBinding(bindings, PRIVATE_KEY_VARIABLE))
+  };
+}
+
+export type WorkbookConfiguration = Readonly<{
+  spreadsheetId: string;
+  /** Zone the workbook's date and time cells are anchored to; never the display zone. */
+  workbookTimeZone: string;
+  /** Frozen staging configuration, presented to the runtime as Script Properties. */
+  properties: ScriptProperties;
+}>;
+
+/** Properties the runtime reads. Only these are exposed; everything else is absent. */
+export type ScriptProperties = Readonly<{
+  getProperty(name: string): string | null;
+  setProperty(name: string, value: string): void;
+}>;
+
+const REQUIRED_WORKBOOK_VARIABLES = ['STAGING_WORKBOOK_ID', 'STAGING_WORKBOOK_TIME_ZONE', 'STAGING_DATA_REVISION', 'STAGING_SCHEDULING_INPUT_REVISION', 'STAGING_TAB_REVISIONS'] as const;
+
+function nonNegativeInteger(variable: string, value: string): number {
+  if (!/^\d+$/.test(value.trim())) throw new StagingConfigurationError(variable, `${variable} must be a non-negative integer.`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new StagingConfigurationError(variable, `${variable} must be a safe non-negative integer.`);
+  return parsed;
+}
+
+function tabRevisions(value: string): Record<string, number> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new StagingConfigurationError('STAGING_TAB_REVISIONS', 'STAGING_TAB_REVISIONS must be a JSON object of tab name to revision.');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new StagingConfigurationError('STAGING_TAB_REVISIONS', 'STAGING_TAB_REVISIONS must be a JSON object of tab name to revision.');
+  }
+  const revisions: Record<string, number> = {};
+  for (const [tab, revision] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!WORKBOOK_TAB_NAMES.has(tab)) throw new StagingConfigurationError('STAGING_TAB_REVISIONS', `STAGING_TAB_REVISIONS names an unknown tab: ${tab}`);
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) {
+      throw new StagingConfigurationError('STAGING_TAB_REVISIONS', `STAGING_TAB_REVISIONS must give ${tab} a non-negative integer revision.`);
+    }
+    revisions[tab] = revision;
+  }
+  return revisions;
+}
+
+/**
+ * Immutable staging workbook configuration.
+ *
+ * The feasibility slice keeps no portable state: the workbook id, its time zone
+ * and every revision counter are deployment configuration fixed before
+ * measurement, and the runtime sees them through a read-only Script Properties
+ * facade. A write attempt throws rather than pretending to persist.
+ */
+export function workbookConfiguration(bindings: StagingBindings): WorkbookConfiguration {
+  for (const variable of REQUIRED_WORKBOOK_VARIABLES) requiredBinding(bindings, variable);
+  const revisions = tabRevisions(requiredBinding(bindings, 'STAGING_TAB_REVISIONS'));
+  const values = new Map<string, string>([
+    ['TIME_ZONE', optionalBinding(bindings, 'STAGING_TIME_ZONE') ?? 'America/New_York'],
+    ['DISPLAY_INCREMENT_MINUTES', optionalBinding(bindings, 'STAGING_DISPLAY_INCREMENT_MINUTES') ?? '30'],
+    ['OPERATING_HOURS_START', optionalBinding(bindings, 'STAGING_OPERATING_HOURS_START') ?? '09:00'],
+    ['OPERATING_HOURS_END', optionalBinding(bindings, 'STAGING_OPERATING_HOURS_END') ?? '21:00'],
+    ['DATA_REVISION', String(nonNegativeInteger('STAGING_DATA_REVISION', requiredBinding(bindings, 'STAGING_DATA_REVISION')))],
+    ['SCHEDULING_INPUT_REVISION', String(nonNegativeInteger('STAGING_SCHEDULING_INPUT_REVISION', requiredBinding(bindings, 'STAGING_SCHEDULING_INPUT_REVISION')))],
+    // The slice serves reads only; the flag is pinned so nothing downstream can
+    // conclude that writes are enabled.
+    ['WRITE_ENABLED', 'false']
+  ]);
+  for (const [tab, revision] of Object.entries(revisions)) values.set(`TAB_REVISION_${tab}`, String(revision));
+
+  return {
+    spreadsheetId: requiredBinding(bindings, 'STAGING_WORKBOOK_ID'),
+    workbookTimeZone: requiredBinding(bindings, 'STAGING_WORKBOOK_TIME_ZONE'),
+    properties: {
+      getProperty: (name) => values.get(name) ?? null,
+      setProperty: () => { throw new StagingConfigurationError('STAGING_TAB_REVISIONS', 'Staging configuration is immutable; the slice serves reads only.'); }
+    }
   };
 }

@@ -1,12 +1,12 @@
 import { READ_PLANS } from './read-plans.js';
-import { tabDefinition, type WorkbookTab } from './schema.js';
+import { tabDefinition, type WorkbookTabName } from './schema.js';
 
 /**
  * Data ranges eligible for Advanced Sheets reads. The Users tab deliberately
  * stays on the SpreadsheetApp path so a batch read cannot happen before the
  * dispatcher's fresh authorization lookup.
  */
-function withoutUsers<const T extends readonly WorkbookTab['name'][]>(tabs: T): Exclude<T[number], 'Users'>[] {
+function withoutUsers<const T extends readonly WorkbookTabName[]>(tabs: T): Exclude<T[number], 'Users'>[] {
   return tabs.filter((tab) => tab !== 'Users') as Exclude<T[number], 'Users'>[];
 }
 
@@ -58,7 +58,11 @@ function columnLetters(number: number): string {
   return result;
 }
 
-function requestedRange(tab: BatchReadTab): string {
+/**
+ * The schema-derived range for one tab. Exported because the Worker fetches the
+ * same ranges over REST and must not re-derive them.
+ */
+export function requestedRange(tab: WorkbookTabName): string {
   const endColumn = columnLetters(tabDefinition(tab).columns.length);
   const quotedTab = `'${tab.replaceAll("'", "''")}'`;
   return `${quotedTab}!A2:${endColumn}`;
@@ -89,14 +93,14 @@ function validateBoundSpreadsheetId(value: unknown): string {
   return value.trim();
 }
 
-function cellValue(value: unknown, tab: BatchReadTab): unknown {
+function cellValue(value: unknown, tab: WorkbookTabName): unknown {
   if (value === null) return '';
   if (typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   throw new WorkbookBatchReadError(`The batched read for ${tab} contained a malformed cell`);
 }
 
-function normalizeMatrix(value: unknown, tab: BatchReadTab, schemaWidth: number, returnedWidth: number, rangeRows?: number): readonly (readonly unknown[])[] {
+function normalizeMatrix(value: unknown, tab: WorkbookTabName, schemaWidth: number, returnedWidth: number, rangeRows?: number): readonly (readonly unknown[])[] {
   if (value === undefined) return Object.freeze([]);
   if (!Array.isArray(value)) throw new WorkbookBatchReadError(`The batched read for ${tab} contained malformed rows`);
   if (rangeRows !== undefined && value.length > rangeRows) throw new WorkbookBatchReadError(`The batched read for ${tab} exceeded its returned range`);
@@ -112,7 +116,12 @@ function normalizeMatrix(value: unknown, tab: BatchReadTab, schemaWidth: number,
   return Object.freeze(rows);
 }
 
-function rowsFromResponse(response: unknown, spreadsheetId: string, requestedTabs: readonly BatchReadTab[]): Map<BatchReadTab, readonly (readonly unknown[])[]> {
+/**
+ * Validates a `values:batchGet` payload against the requested workbook and tabs
+ * and normalises every cell. Shared by the Apps Script Advanced Sheets path and
+ * the Worker's REST path so both accept exactly the same responses.
+ */
+export function parseBatchGetResponse<T extends WorkbookTabName>(response: unknown, spreadsheetId: string, requestedTabs: readonly T[]): Map<T, readonly (readonly unknown[])[]> {
   if (!response || typeof response !== 'object') throw new WorkbookBatchReadError('Google Sheets returned a malformed batch response');
   const result = response as { spreadsheetId?: unknown; valueRanges?: unknown };
   if (result.spreadsheetId !== spreadsheetId) throw new WorkbookBatchReadError('Google Sheets returned a response for a different workbook');
@@ -120,7 +129,7 @@ function rowsFromResponse(response: unknown, spreadsheetId: string, requestedTab
     throw new WorkbookBatchReadError('Google Sheets returned an incomplete batch response');
   }
 
-  const output = new Map<BatchReadTab, readonly (readonly unknown[])[]>();
+  const output = new Map<T, readonly (readonly unknown[])[]>();
   result.valueRanges.forEach((rawRange, index) => {
     const tab = requestedTabs[index];
     if (!tab || !rawRange || typeof rawRange !== 'object') throw new WorkbookBatchReadError('Google Sheets returned a malformed value range');
@@ -142,6 +151,16 @@ function rowsFromResponse(response: unknown, spreadsheetId: string, requestedTab
     output.set(tab, normalizeMatrix(rangeResult.values, tab, width, parsedRange.endColumn, rangeRows));
   });
   return output;
+}
+
+/** Builds the `values:batchGet` request for a set of schema-allowlisted tabs. */
+export function batchGetRequestForTabs<T extends WorkbookTabName>(tabs: readonly T[]): BatchGetValuesRequest {
+  return {
+    ranges: tabs.map(requestedRange),
+    majorDimension: 'ROWS',
+    valueRenderOption: 'UNFORMATTED_VALUE',
+    dateTimeRenderOption: 'SERIAL_NUMBER'
+  };
 }
 
 /**
@@ -167,13 +186,8 @@ export function createWorkbookBatchReader(options: {
       const planTabs = BATCH_READ_PLANS[plan] as readonly BatchReadTab[];
       const missingTabs = planTabs.filter((tab) => !snapshots.has(tab));
       if (missingTabs.length > 0) {
-        const request: BatchGetValuesRequest = {
-          ranges: missingTabs.map(requestedRange),
-          majorDimension: 'ROWS',
-          valueRenderOption: 'UNFORMATTED_VALUE',
-          dateTimeRenderOption: 'SERIAL_NUMBER'
-        };
-        const freshRows = rowsFromResponse(options.service.batchGet(spreadsheetId, request), spreadsheetId, missingTabs);
+        const request = batchGetRequestForTabs(missingTabs);
+        const freshRows = parseBatchGetResponse(options.service.batchGet(spreadsheetId, request), spreadsheetId, missingTabs);
         for (const [tab, rows] of freshRows) snapshots.set(tab, rows);
       }
       return new Map(snapshots) as BatchReadRows;

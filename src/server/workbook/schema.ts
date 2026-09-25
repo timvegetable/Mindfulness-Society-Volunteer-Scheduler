@@ -7,7 +7,7 @@ export type WorkbookTab = {
   appendOnly?: boolean;
 };
 
-export const WORKBOOK_TABS: readonly WorkbookTab[] = [
+export const WORKBOOK_TABS = [
   { name: 'Volunteers', columns: ['id', 'name', 'email', 'lifecycleStatus', 'interviewStatus', 'readinessRank', 'revision', 'source', 'createdAt', 'updatedAt'], protectedColumns: ['id', 'revision', 'createdAt', 'updatedAt'] },
   { name: 'RecurringAvailability', columns: ['id', 'volunteerId', 'weekday', 'start', 'end', 'timeZone', 'revision', 'source', 'updatedAt'], protectedColumns: ['id', 'volunteerId', 'revision', 'updatedAt'] },
   { name: 'AvailabilityExceptions', columns: ['id', 'volunteerId', 'date', 'kind', 'start', 'end', 'timeZone', 'reason', 'revision', 'updatedAt'], protectedColumns: ['id', 'volunteerId', 'revision', 'updatedAt'] },
@@ -23,7 +23,10 @@ export const WORKBOOK_TABS: readonly WorkbookTab[] = [
   { name: 'AuditLog', columns: ['id', 'entity', 'entityId', 'action', 'source', 'actorId', 'timestamp', 'before', 'after'], protectedColumns: ['id', 'timestamp'], appendOnly: true },
   { name: 'Centers', columns: ['id', 'name', 'active', 'revision', 'createdAt', 'updatedAt'], protectedColumns: ['id', 'revision', 'createdAt', 'updatedAt'] },
   { name: 'CandidateSchedules', columns: ['id', 'centerId', 'weekday', 'start', 'end', 'timeZone', 'requestedStaffCount', 'status', 'createdBy', 'revision', 'createdAt', 'updatedAt'], protectedColumns: ['id', 'centerId', 'createdBy', 'revision', 'createdAt', 'updatedAt'] }
-] as const;
+] as const satisfies readonly WorkbookTab[];
+
+/** Every tab name the schema defines; a wider `string` would defeat the allowlist. */
+export type WorkbookTabName = (typeof WORKBOOK_TABS)[number]['name'];
 
 export const WORKBOOK_SCHEMA = {
   version: WORKBOOK_SCHEMA_VERSION,

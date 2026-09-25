@@ -14,8 +14,8 @@ action. Longer sanitized reports are linked, not copied.
 | --- | --- | --- | --- |
 | 1. Experiment contract | 1.1–1.3 | complete, verified | `2791323` |
 | 2. Worker boundary | 2.1–2.3 | complete, verified | `5dcd384` |
-| 3. Authentication | 2.4 | implementing | — |
-| 4. Workbook integration and parity | 2.5–2.6 | pending | — |
+| 3. Authentication | 2.4 | complete, verified | `3dc8667` |
+| 4. Workbook integration and parity | 2.5–2.6 | implementing | — |
 | 5. Release readiness | 3.1 | pending | — |
 | 6. Measurement and verdict | 3.2–4.3 | blocked on provisioning/deployment approval | — |
 
@@ -143,6 +143,8 @@ action. Longer sanitized reports are linked, not copied.
 | 2 (recheck) | second fresh read-only agent, given findings 27–31 verbatim | 5 fixed, 4 minor new | All four accepted and fixed; the reviewer independently reproduced the workerd version and the lint boundary |
 | 3 (mandatory auth gate) | fresh read-only security verifier | 0 blocker, 2 major, 5 minor | All seven accepted and fixed; two majors were real cache defects |
 | 3 (recheck) | second fresh read-only security verifier | 7 fixed/partially fixed, 3 minor new | All three accepted and fixed |
+| 4 | fresh read-only agent (one-agent workflow run) | 0 blocker, 0 major, 9 minor | All nine accepted; eight fixed, one recorded as a 4.3 follow-up |
+| 4 (recheck) | second fresh read-only agent | 4 fixed, 4 partially fixed, 1 not fixed (the 4.3 follow-up), 2 minor new | All accepted; residuals and both new findings fixed |
 
 Milestone 1 findings and how each was resolved:
 
@@ -369,6 +371,77 @@ Milestone 3 recheck raised three more, all fixed:
     client could be observed by another dispatcher. The key is now structural
     (`JSON.stringify`), and a dispatcher that injects a transport or clock gets a
     private cache unless it explicitly asks for the shared one.
+
+## Milestone 4 evidence (Workbook integration and parity, tasks 2.5–2.6)
+
+* `src/worker/workbook/sheets.ts` — the Sheets v4 REST boundary: schema-derived
+  ranges only, shared response validation, no caller-supplied range or rendering
+  option; `src/worker/workbook/snapshot.ts` — the read-only replay surface, where
+  an unfetched tab is absent rather than empty and every mutator throws;
+  `src/worker/staging.ts` — the composition, one runtime per request.
+* `src/server/workbook/batch-read.ts` exports `requestedRange`,
+  `batchGetRequestForTabs` and `parseBatchGetResponse` so both runtimes accept
+  exactly the same payloads; `WorkbookTabName` keeps the tab allowlist closed.
+* Commands and outcomes: `npm test` 34 files / 194 tests; `npm run test:worker`
+  6 files / 98 tests in workerd; `npm run check` clean; `npm run build` passes
+  including the Apps Script bundle audit; `npm run build:worker` 1300.46 KiB /
+  236.82 KiB gzip; `openspec validate validate-worker-backend-feasibility
+  --strict` valid.
+* Mutation checks run during review: forcing the snapshot decode zone to UTC
+  fails four Worker tests (including the workbook-zone variant), and breaking
+  `centerUserCodec`'s `volunteerId`/`centerIds` parsing fails the identity
+  differential — so the parity tests are not vacuous.
+
+Milestone 4 findings and how each was resolved:
+
+46. **Minor — the snapshot digest claimed SHA-256 but was a 32-bit FNV-1a over
+    only the fetched tabs.** It is now a real SHA-256 over every schema tab with
+    absent tabs marked, and it is computed by the harness rather than on every
+    routed request, because nothing on the routed path recorded it and it cost
+    CPU against the 5 ms threshold.
+47. **Minor — the DST transition was not exercised through the Worker.** Added a
+    session on 2026-11-01 whose ambiguous 01:30 local time is asserted together
+    with its decoded instant, plus a post-transition differential run.
+48. **Minor — the malformed-row variant had no coverage.** Added a variant with a
+    non-numeric revision on a *session* (so the coercion is visible in the served
+    projection as `revision: 0` with the row retained) and an unknown session kind
+    that must never be schedulable.
+49. **Minor — the omitted-trailing-cells row was not modelled or asserted.** One
+    volunteer now has genuinely blank `source`/`updatedAt`, its REST row stops at
+    the last populated cell, and the padding is exercised through the shared
+    validator.
+50. **Minor — `session.me` was asserted against literals.** It is now compared
+    with the existing runtime for all four roles.
+51. **Minor — the read-only guarantee was only partly tested.** Every mutator, the
+    partial-plan batch reader and the immutable properties facade now have
+    assertions that fail if a throw is removed.
+52. **Minor — exporting the helpers widened the tab allowlist to `string`.** A
+    closed `WorkbookTabName` union restores the compile-time check; an
+    out-of-schema name now fails to compile.
+53. **Minor — two runtimes were built per request.** One runtime now serves both
+    the authorization read and the handlers, with the fetched map filled after
+    authorization.
+54. **Minor — the `UNAUTHORIZED` envelope discloses the Users row count.** Shared,
+    pre-existing behaviour reachable only with a valid ID token. Recorded as an
+    explicit follow-up under task 4.3 with its measured evidence rather than
+    changed here, because the Apps Script path pins the same detail.
+
+Milestone 4 recheck residuals, all fixed:
+
+55. **Partial — the digest was still a function of the fetched subset and was
+    unreachable on the routed path.** Removed from the request path; the harness
+    computes it over a fully primed snapshot.
+56. **Partial — the DST case could not fail if the decode zone were dropped.**
+    Added a workbook-zone variant (workbook Chicago, scheduling New York) that
+    fails when the snapshot zone is ignored; verified by mutation.
+57. **Partial — the short row truncated populated cells.** The row is now
+    faithfully short, with the blank cells genuinely blank in both renderings.
+58. **Partial — `setProperty` was unasserted.** The immutable properties facade is
+    now asserted directly.
+59. **New — the per-request digest was stale after a failed request.** Removed
+    with the digest from the request path.
+60. **New — the short-row fixture diverged from the legacy path on volunteer
+    timestamps.** Fixed by making the omitted cells blank in both renderings.
 
 ## Blockers and open questions
 

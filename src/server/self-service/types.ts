@@ -84,8 +84,12 @@ export const systemClock: Clock = { now: () => new Date().toISOString() };
 
 class DefaultIdGenerator implements IdGenerator {
   next(prefix: string): string {
-    const cryptoApi = typeof globalThis.crypto === 'object' ? globalThis.crypto : undefined;
-    if (cryptoApi?.randomUUID) return `${prefix}-${cryptoApi.randomUUID()}`;
+    // Same guarded probe as the workbook audit ids: the cast is type-level only
+    // so the Apps Script bundle audit still sees a guarded globalThis.crypto.
+    if (typeof (globalThis as { crypto?: unknown }).crypto === 'object') {
+      const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+      if (cryptoApi?.randomUUID) return `${prefix}-${cryptoApi.randomUUID()}`;
+    }
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 }

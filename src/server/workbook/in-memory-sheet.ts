@@ -26,7 +26,7 @@ export class InMemorySheet {
 }
 
 export class InMemorySpreadsheet {
-  private readonly sheets = new Map(WORKBOOK_TABS.map((tab) => [tab.name, new InMemorySheet(tab.name, tab.columns)]));
+  private readonly sheets: Map<string, InMemorySheet> = new Map(WORKBOOK_TABS.map((tab) => [tab.name as string, new InMemorySheet(tab.name, tab.columns)]));
   constructor(private readonly timeZone = 'America/New_York') {}
   getSpreadsheetTimeZone(): string { return this.timeZone; }
   getSheetByName(name: string): InMemorySheet | null { return this.sheets.get(name) ?? null; }
