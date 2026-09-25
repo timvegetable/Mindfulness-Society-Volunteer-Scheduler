@@ -16,7 +16,7 @@ export default {
     try {
       const api = createReadApi({
         origins: allowedOrigins(env),
-        dispatch: createStagingDispatch(),
+        dispatch: createStagingDispatch(env),
         maxRequestBytes: READ_API_MAX_REQUEST_BYTES
       });
       return await api.fetch(request);

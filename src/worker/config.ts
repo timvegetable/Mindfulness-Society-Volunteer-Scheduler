@@ -70,3 +70,43 @@ export function allowedOrigins(bindings: StagingBindings): readonly string[] {
   }
   return origins;
 }
+
+export type GoogleIdentityConfiguration = Readonly<{
+  /** OAuth client id the ID tokens must be issued for. */
+  audience: string;
+  /** Service-account address used as the JWT assertion issuer. */
+  clientEmail: string;
+  /** PKCS#8 private key for the service account, as a PEM block. */
+  privateKeyPem: string;
+}>;
+
+const PRIVATE_KEY_VARIABLE = 'GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY';
+
+/**
+ * A secret pasted through a dashboard or CLI often arrives with escaped
+ * newlines. Normalising here keeps every consumer working with a real PEM, and
+ * no error ever echoes the key material.
+ */
+function normalizePrivateKey(value: string): string {
+  const unescaped = value.includes('\\n') && !value.includes('\n') ? value.replace(/\\n/g, '\n') : value;
+  // Trimmed *after* unescaping so the same key supplied either way normalises to
+  // the same bytes.
+  const pem = unescaped.trim();
+  if (!pem.includes('-----BEGIN PRIVATE KEY-----') || !pem.includes('-----END PRIVATE KEY-----')) {
+    throw new StagingConfigurationError(PRIVATE_KEY_VARIABLE, `${PRIVATE_KEY_VARIABLE} is not a PKCS#8 PEM private key.`);
+  }
+  return pem;
+}
+
+/**
+ * Identity configuration for the staging slice. The audience is the OAuth web
+ * client id the browser signs in with; the service account is a *different*
+ * credential used only for server-to-server Sheets reads.
+ */
+export function googleIdentityConfiguration(bindings: StagingBindings): GoogleIdentityConfiguration {
+  return {
+    audience: requiredBinding(bindings, 'STAGING_OAUTH_AUDIENCE'),
+    clientEmail: requiredBinding(bindings, 'GOOGLE_SERVICE_ACCOUNT_EMAIL'),
+    privateKeyPem: normalizePrivateKey(requiredBinding(bindings, PRIVATE_KEY_VARIABLE))
+  };
+}

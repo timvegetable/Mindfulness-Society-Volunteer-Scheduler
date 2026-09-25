@@ -13,8 +13,8 @@ action. Longer sanitized reports are linked, not copied.
 | Milestone | Tasks | State | Commit |
 | --- | --- | --- | --- |
 | 1. Experiment contract | 1.1–1.3 | complete, verified | `2791323` |
-| 2. Worker boundary | 2.1–2.3 | implementing | — |
-| 3. Authentication | 2.4 | pending | — |
+| 2. Worker boundary | 2.1–2.3 | complete, verified | `5dcd384` |
+| 3. Authentication | 2.4 | implementing | — |
 | 4. Workbook integration and parity | 2.5–2.6 | pending | — |
 | 5. Release readiness | 3.1 | pending | — |
 | 6. Measurement and verdict | 3.2–4.3 | blocked on provisioning/deployment approval | — |
@@ -141,6 +141,8 @@ action. Longer sanitized reports are linked, not copied.
 | 1 (edit check) | third fresh read-only agent, scoped to the post-recheck edits | 4 checks passed, 2 checks failed with 1 major + 4 minor | All accepted and fixed; measurement protocol re-derived independently by the verifier |
 | 2 | fresh read-only agent (one-agent workflow run) | 0 blocker, 0 major, 5 minor | All five accepted and fixed; the reviewer reproduced every claimed test number |
 | 2 (recheck) | second fresh read-only agent, given findings 27–31 verbatim | 5 fixed, 4 minor new | All four accepted and fixed; the reviewer independently reproduced the workerd version and the lint boundary |
+| 3 (mandatory auth gate) | fresh read-only security verifier | 0 blocker, 2 major, 5 minor | All seven accepted and fixed; two majors were real cache defects |
+| 3 (recheck) | second fresh read-only security verifier | 7 fixed/partially fixed, 3 minor new | All three accepted and fixed |
 
 Milestone 1 findings and how each was resolved:
 
@@ -303,6 +305,70 @@ fixed:
 35. **Minor — `vitest.worker.config.ts` was covered by no check.** It is now in the
     root TypeScript program, and the lint step also covers the three root config
     files.
+
+## Milestone 3 evidence (Authentication, task 2.4)
+
+* `src/worker/google/{jwt,jwks,id-token,service-account,index}.ts` — RS256
+  verification against Google's published key set, the JWT-bearer assertion and
+  token exchange, and the two separate expiring caches; `dispatch.ts` verifies
+  the ID token in the real request path before refusing, so the modules are wired
+  and in the bundle rather than dead code.
+* Commands and outcomes: `npm test` 34 files / 194 tests; `npm run test:worker`
+  5 files / 79 tests in workerd with real key generation and real signatures;
+  `npm run check` clean; `npm run build` passes including the Apps Script bundle
+  audit; `npm run build:worker` 819.81 KiB / 130.87 KiB gzip; `openspec validate
+  validate-worker-backend-feasibility --strict` valid.
+
+Milestone 3 findings and how each was resolved (mandatory authentication gate):
+
+36. **Major — the "expiring caches" were per request.** `createStagingDispatch`
+    and `createGoogleDependencies` ran on every request, so no key set or access
+    token survived a request: every credential-bearing request refetched the key
+    set, and every future Sheets read would have exchanged a token. The assembled
+    clients are now memoized for the isolate under a structural configuration key,
+    with the isolate cache exported so a test can exercise the real sharing
+    behaviour while injecting a transport.
+37. **Major — the rotation bound was not concurrency-safe.** `lastLoadAt` was
+    stamped only after a successful load and loads were not de-duplicated, so ten
+    concurrent unknown-`kid` requests caused ten outbound fetches. One in-flight
+    load is now shared by all callers and the window is stamped at attempt start;
+    measured 10 concurrent → 1 reload.
+38. **Minor — an invalid `expires_in` was silently replaced by an hour.** A
+    present-but-invalid lifetime now fails the exchange, and a missing lifetime is
+    treated as short-lived rather than long-lived, so an already-dead token is
+    never cached.
+39. **Minor — a token without `kid` only tried the first key, and one
+    unimportable entry aborted every token resolving to it.** The store now
+    returns all candidates for a kid-less token and skips entries that fail to
+    import.
+40. **Minor — a key-endpoint outage was reported as a bad credential.** Key-set
+    failures are now classified as `unavailable` and answered with `UNAVAILABLE`,
+    so a client does not discard a valid session during a Google incident.
+41. **Minor — comments asserted properties the code did not implement.** The
+    claim validator is now built per verification with a signature flag that only
+    the preceding check can set, so removing that check fails closed; the
+    "stays in the log" claim is now true (rejections log a fixed reason
+    server-side), and log output was checked to contain no credential, key,
+    assertion or token.
+42. **Minor — missing coverage.** Added: concurrent cold-cache load de-duplication,
+    concurrent unknown-`kid` single reload, kid-less and unimportable entries,
+    invalid and missing lifetimes, outage classification, configuration isolation,
+    credential never echoed, and retired-key expiry.
+
+Milestone 3 recheck raised three more, all fixed:
+
+43. **Minor — unknown/retired `kid` was misclassified as an outage** by the
+    finding-40 fix. `SigningKeyError` now carries an explicit `unavailable` flag
+    set only by key-set failures; a forged or retired key id is `UNAUTHORIZED`
+    again, with a test asserting it.
+44. **Minor — the cold/expired path bypassed the retry window**, so a failing key
+    endpoint still cost one outbound fetch per request. The same window now bounds
+    it: one attempt per window, failing closed without using a stale key.
+45. **Minor — the cache key joined fields with a delimiter** and ignored injected
+    transports, so two configurations could in principle collide and an injected
+    client could be observed by another dispatcher. The key is now structural
+    (`JSON.stringify`), and a dispatcher that injects a transport or clock gets a
+    private cache unless it explicitly asks for the shared one.
 
 ## Blockers and open questions
 
