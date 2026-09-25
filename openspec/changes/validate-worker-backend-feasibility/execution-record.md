@@ -16,8 +16,8 @@ action. Longer sanitized reports are linked, not copied.
 | 2. Worker boundary | 2.1–2.3 | complete, verified | `5dcd384` |
 | 3. Authentication | 2.4 | complete, verified | `3dc8667` |
 | 4. Workbook integration and parity | 2.5–2.6 | complete, verified | `591b76d` |
-| 5. Release readiness | 3.1 | implementing | — |
-| 6. Measurement and verdict | 3.2–4.3 | blocked on provisioning/deployment approval | — |
+| 5. Release readiness | 3.1 | complete, verified | `c5eab07` |
+| 6. Measurement and verdict | 3.2–4.3 | **blocked on provisioning/deployment approval** — checkpoint written | — |
 
 ## Decisions
 
@@ -514,7 +514,15 @@ Milestone 5 findings and how each was resolved (mandatory release gate):
 * Pages currently deploys on every push (`.github/workflows/pages.yml`), so no
   push may happen until task 3.1 separates validation from deployment.
 
+## Milestone 6 checkpoint
+
+`evidence/milestone-6-checkpoint.md` records the state, the concrete approval
+request (resources and one deployment), the resume instructions and the known
+limitations. Tasks 3.2–4.3 remain unchecked: no threshold has been evaluated and
+no number in this change is a measurement of the deployed topology.
+
 ## Next action
 
-Run the milestone-1 verifier against the frozen experiment-contract document,
-resolve its findings, mark 1.1–1.3 with evidence, and commit milestone 1.
+Await approval for the resources and the staging deployment described in
+`evidence/staging-manifest.md`; on approval, resume at its pre-deployment
+checklist and then run the milestone-6 measurement tasks.
