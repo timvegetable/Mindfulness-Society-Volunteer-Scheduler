@@ -73,9 +73,8 @@ checkpoint requests none of them implicitly.
    `execution-record.md` (decisions, evidence, review dispositions).
 2. Confirm the working tree is clean and the five milestone commits above are
    present (plus `dae580f`, the pre-existing commit that stopped tracking
-   `plan.md`). The milestone 6 checkpoint and record edits are the uncommitted
-   work that should have been committed first; if the tree is not clean, inspect
-   it rather than discarding it.
+   `plan.md`, and `514d8fc`, which committed this checkpoint and the record
+   corrections). If the tree is not clean, inspect it rather than discarding it.
 3. Re-run `npm test`, `npm run test:worker`, `npm run check`, `npm run build` and
    `npm run build:worker` to confirm the local gates still hold at the resumed
    commit.
