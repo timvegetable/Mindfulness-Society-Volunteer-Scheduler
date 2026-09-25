@@ -521,6 +521,26 @@ request (resources and one deployment), the resume instructions and the known
 limitations. Tasks 3.2–4.3 remain unchecked: no threshold has been evaluated and
 no number in this change is a measurement of the deployed topology.
 
+## Tooling limitation: the j-space ship gate could not be closed
+
+The independent delivery reviews are recorded in this change
+(`evidence/final-delivery-review.md`, `-2.md`, `-3.md`, `-4.md`, `-5.md`); the
+third, fourth and fifth all accepted the delivered state, and the fifth
+acceptance is recorded in the j-space controller against the current report.
+
+The controller's `check --stage ship` still blocks, and the block is bookkeeping
+rather than substance. Each accepted review requires a fresh report whenever any
+pinned artifact changes, and each report or agent retirement changes the
+integration scope and demands another report. One-shot verifier agents cannot
+sustain that cycle: they cannot consume the context broadcast that a report
+creates for them, and retiring one invalidates the acceptance it just recorded.
+Closing it would require either a long-lived registered reviewer or running the
+reviewer's own pulse on its behalf, which the controller explicitly forbids and
+this record will not fake.
+
+The substantive gate is met: three independent read-only reviewers reproduced
+every command, verified the goal clause by clause, and accepted the delivery.
+
 ## Next action
 
 Await approval for the resources and the staging deployment described in
