@@ -40,8 +40,10 @@ export async function checkEndpoint({ execUrl, origin }) {
   const cases = [];
   const record = async (name, expectation, run) => {
     const started = Date.now();
+    let requestedUrl = execUrl;
     try {
-      const { status, headers, body, redirected, url } = await run();
+      const { status, headers, body, redirected, url, requested } = await run();
+      requestedUrl = requested ?? execUrl;
       cases.push({
         name,
         expectation,
@@ -51,7 +53,8 @@ export async function checkEndpoint({ execUrl, origin }) {
         cacheControl: headers.get('cache-control'),
         allowOrigin: headers.get('access-control-allow-origin'),
         redirected,
-        sameUrl: url === execUrl,
+        // No redirect: the response URL is the URL that was requested.
+        sameUrl: url === requestedUrl,
         durationMs: Date.now() - started
       });
     } catch (error) {
@@ -59,21 +62,25 @@ export async function checkEndpoint({ execUrl, origin }) {
     }
   };
 
-  const post = async (payload, extraHeaders = {}) => {
-    const response = await fetch(execUrl, {
+  const post = async (payload, extraHeaders = {}, target = execUrl) => {
+    const response = await fetch(target, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8', ...extraHeaders },
       body: JSON.stringify(payload),
       redirect: 'follow'
     });
-    return { status: response.status, headers: response.headers, body: await response.json().catch(() => undefined), redirected: response.redirected, url: response.url };
+    return { status: response.status, headers: response.headers, body: await response.json().catch(() => undefined), redirected: response.redirected, url: response.url, requested: target };
   };
 
   await record('unauthenticated served read', 'UNAUTHORIZED', () => post(envelope({ operation: SERVED })));
   await record('unlisted origin', 'FORBIDDEN https 403', () => post(envelope({ operation: SERVED }), { Origin: otherOrigin }));
   await record('allowlisted origin', 'UNAUTHORIZED with CORS header', () => post(envelope({ operation: SERVED }), { Origin: origin }));
   await record('mutation', 'FORBIDDEN', () => post(envelope({ operation: MUTATION })));
-  await record('unknown operation', 'INVALID_REQUEST', () => post(envelope({ operation: 'admin.not.a.real.operation' })));
+  // The transport allowlist answers first, so an operation this endpoint does not
+  // serve is refused before any envelope or payload rule is consulted.
+  await record('unregistered operation', 'FORBIDDEN', () => post(envelope({ operation: 'admin.not.a.real.operation' })));
+  await record('registered but unserved operation', 'FORBIDDEN', () => post(envelope({ operation: 'volunteer.dashboard' })));
+  await record('malformed envelope on a served read', 'INVALID_REQUEST', () => post({ operation: SERVED, payload: {}, idempotencyKey: 'short' }));
   await record('wrong method', '405', async () => {
     const response = await fetch(execUrl, { method: 'GET' });
     return { status: response.status, headers: response.headers, body: await response.json().catch(() => undefined), redirected: response.redirected, url: response.url };
@@ -84,8 +91,9 @@ export async function checkEndpoint({ execUrl, origin }) {
   });
   await record('oversized body', '413', () => post({ operation: SERVED, payload: { filler: 'x'.repeat(70 * 1024) }, idempotencyKey: `verify-oversized-${Date.now()}` }));
   await record('unknown route', '404', async () => {
-    const response = await fetch(new URL('/not-the-exec-path', execUrl), { method: 'POST', body: '{}', headers: { 'Content-Type': 'text/plain' } });
-    return { status: response.status, headers: response.headers, body: await response.json().catch(() => undefined), redirected: response.redirected, url: response.url };
+    const target = new URL('/not-the-exec-path', execUrl).toString();
+    const response = await fetch(target, { method: 'POST', body: '{}', headers: { 'Content-Type': 'text/plain' } });
+    return { status: response.status, headers: response.headers, body: await response.json().catch(() => undefined), redirected: response.redirected, url: response.url, requested: target };
   });
 
   return cases;
