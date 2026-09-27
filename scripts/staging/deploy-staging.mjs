@@ -99,9 +99,9 @@ async function main() {
   if (tokenPresent) token = (await readFile(resolve(options.tokenFile), 'utf8')).trim();
 
   const steps = [
+    `wrangler deploy --env ${options.environment}${options.workbook === undefined ? '' : ` --var STAGING_WORKBOOK_ID:${options.workbook}`}`,
     'wrangler secret put GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY --env ' + options.environment,
-    'wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL --env ' + options.environment,
-    `wrangler deploy --env ${options.environment}${options.workbook === undefined ? '' : ` --var STAGING_WORKBOOK_ID:${options.workbook}`}`
+    'wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL --env ' + options.environment
   ];
   if (options.plan || !options.confirm) {
     console.log(JSON.stringify({ accountId: ACCOUNT_ID, environment: options.environment, tokenFile: options.tokenFile, tokenPresent, keyPath: options.key, serviceAccountEmail: serviceAccount.clientEmail, workbookOverride: options.workbook ?? null, steps, writes: true }, null, 2));
@@ -112,26 +112,14 @@ async function main() {
     return;
   }
 
+  // Code first, then secrets. Cloudflare refuses a secret whose name the deployed
+  // version already binds as a plain variable (error 10053), so a change of
+  // binding kind only takes effect if the deploy clears the variable first.
   const environment = { token };
-  const privateKey = wrangler(['secret', 'put', 'GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY', '--env', options.environment], environment, { stdin: serviceAccount.privateKey });
-  if (privateKey.status !== 0) {
-    console.error('Setting GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY failed.');
-    console.error((privateKey.stderr || privateKey.stdout).slice(-600));
-    process.exitCode = 1;
-    return;
-  }
-  const email = wrangler(['secret', 'put', 'GOOGLE_SERVICE_ACCOUNT_EMAIL', '--env', options.environment], environment, { stdin: serviceAccount.clientEmail });
-  if (email.status !== 0) {
-    console.error('Setting GOOGLE_SERVICE_ACCOUNT_EMAIL failed.');
-    console.error((email.stderr || email.stdout).slice(-600));
-    process.exitCode = 1;
-    return;
-  }
-
   const deployArgs = ['deploy', '--env', options.environment];
   if (options.workbook !== undefined) deployArgs.push('--var', `STAGING_WORKBOOK_ID:${options.workbook}`);
   const deploy = wrangler(deployArgs, environment);
-  const url = deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
+  let url = deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
   if (deploy.status !== 0 || url === undefined) {
     console.error('The deploy failed.');
     // The tail is enough to diagnose and contains no secret.
@@ -139,6 +127,19 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+
+  for (const [name, value] of [['GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY', serviceAccount.privateKey], ['GOOGLE_SERVICE_ACCOUNT_EMAIL', serviceAccount.clientEmail]]) {
+    const result = wrangler(['secret', 'put', name, '--env', options.environment], environment, { stdin: value });
+    if (result.status !== 0) {
+      console.error(`Setting ${name} failed.`);
+      console.error((result.stderr || result.stdout).slice(-600));
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  // A secret upload creates a new version; re-read the URL in case it changed.
+  url = url ?? deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
 
   const report = {
     deployedAt: new Date().toISOString(),

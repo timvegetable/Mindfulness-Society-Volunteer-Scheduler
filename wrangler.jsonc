@@ -43,7 +43,6 @@
         "STAGING_DATA_REVISION": "42",
         "STAGING_SCHEDULING_INPUT_REVISION": "5",
         "STAGING_TAB_REVISIONS": "{\"Volunteers\":1,\"RecurringAvailability\":1,\"AvailabilityExceptions\":1,\"Sessions\":1,\"Assignments\":1,\"Backups\":1,\"SchedulingRuns\":1,\"Imports\":1,\"ImportMappings\":1,\"ImportedAvailability\":1,\"Users\":1,\"Settings\":1,\"AuditLog\":1,\"Centers\":1,\"CandidateSchedules\":1}",
-        "GOOGLE_SERVICE_ACCOUNT_EMAIL": "scheduling-staging-reader@mindfulness-society-website.iam.gserviceaccount.com"
       }
     }
   }

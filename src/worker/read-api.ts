@@ -161,7 +161,17 @@ export function createReadApi(options: ReadApiOptions): ReadApi {
   const corsHeaders = (origin: string | null): { ok: true; headers: Record<string, string> } | { ok: false } => {
     if (origin === null) return { ok: true, headers: {} };
     if (!origins.has(origin)) return { ok: false };
-    return { ok: true, headers: { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } };
+    return {
+      ok: true,
+      headers: {
+        'Access-Control-Allow-Origin': origin,
+        Vary: 'Origin',
+        // The browser probe records the point of presence and the request's read
+        // count and snapshot digest; without this a cross-origin caller can see
+        // none of them.
+        'Access-Control-Expose-Headers': 'cf-ray, X-Staging-Sheets-Reads, X-Staging-Snapshot-Digest'
+      }
+    };
   };
 
   const handle = async (request: Request): Promise<Response> => {

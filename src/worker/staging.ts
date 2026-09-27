@@ -176,7 +176,7 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         dependencies = googleFor();
       } catch {
         console.warn('staging request refused: identity configuration is missing or invalid');
-        return failure('UNAVAILABLE', 'The staging read service is not configured.');
+        return failure('UNAVAILABLE', 'The staging read service is not configured.', { reason: 'identity-configuration' });
       }
 
       const credential = request.credential;
@@ -193,7 +193,7 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         const detail = error instanceof Error ? error.message : String(error);
         if (error instanceof SigningKeyError && error.unavailable) {
           console.warn(`staging verification unavailable: ${detail}`);
-          return failure('UNAVAILABLE', 'The staging read service could not verify credentials.');
+          return failure('UNAVAILABLE', 'The staging read service could not verify credentials.', { reason: 'key-set' });
         }
         console.warn(`staging sign-in rejected (invalid): token verification failed: ${detail}`);
         return unauthorized('invalid', `token verification failed: ${detail}`);
@@ -206,7 +206,7 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         workbook = workbookConfiguration(bindings);
       } catch {
         console.warn('staging request refused: workbook configuration is missing or invalid');
-        return failure('UNAVAILABLE', 'The staging read service is not configured.');
+        return failure('UNAVAILABLE', 'The staging read service is not configured.', { reason: 'workbook-configuration' });
       }
 
       const sheets = createSheetsReadClient({
@@ -233,7 +233,12 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       } catch (error) {
         denied += 1;
         console.warn(`staging authorization table could not be read: ${error instanceof Error ? error.message : String(error)}`);
-        return failure('UNAVAILABLE', 'The staging read service could not read the authorization table.');
+        // The reason names the failure class: a staging operator needs to tell a
+        // Sheets outage from a token problem without server log access, and none
+        // of these names carries a row value or a credential.
+        return failure('UNAVAILABLE', 'The staging read service could not read the authorization table.', {
+          reason: error instanceof SheetsReadError && error.status !== undefined ? `users-read-${error.status}` : 'users-read'
+        });
       }
 
       let principal;
@@ -266,7 +271,9 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
           }
         } catch (error) {
           console.warn(`staging workbook read failed: ${error instanceof SheetsReadError ? error.message : String(error)}`);
-          return failure('UNAVAILABLE', 'The staging read service could not read the workbook.');
+          return failure('UNAVAILABLE', 'The staging read service could not read the workbook.', {
+            reason: error instanceof SheetsReadError && error.status !== undefined ? `workbook-read-${error.status}` : 'workbook-read'
+          });
         }
       }
 

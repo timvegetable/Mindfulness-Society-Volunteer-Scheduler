@@ -84,10 +84,14 @@ async function probeOnce(operation, expectedUrl, inFlight) {
     });
     attempt.durationMs = Math.round(performance.now() - startedAt);
     attempt.facts = directResponseFacts(response, expectedUrl);
+    attempt.sheetsReads = response.headers.get('x-staging-sheets-reads');
     const body = await response.json().catch(() => undefined);
     if (response.status !== 200) attempt.failure = `status-${response.status}`;
     else if (body?.ok !== true) {
       attempt.errorCode = body?.error?.code ?? 'unknown';
+      // The reason and message are what make a field failure diagnosable.
+      attempt.errorReason = body?.error?.details?.reason;
+      attempt.errorMessage = body?.error?.message;
       attempt.failure = `envelope-${attempt.errorCode}`;
     }
   } catch (error) {
@@ -170,10 +174,13 @@ async function runProbe() {
     concurrency: CONCURRENCY,
     observedMaxInFlight: Math.max(0, ...attempts.map((attempt) => attempt.inFlight ?? 0)),
     pointsOfPresence: [...new Set(attempts.map((attempt) => attempt.facts?.pointOfPresence).filter(Boolean))],
-    perAttempt: attempts.slice(0, MAX_REPORTED_CELLS * OPERATIONS).map((attempt) => ({
+    perAttempt: attempts.slice(0, MAX_REPORTED_CELLS * OPERATIONS.length).map((attempt) => ({
       operation: attempt.operation,
       durationMs: attempt.durationMs,
       failure: attempt.failure,
+      errorReason: attempt.errorReason ?? null,
+      errorMessage: attempt.errorMessage ?? null,
+      sheetsReads: attempt.sheetsReads ?? null,
       status: attempt.facts?.status ?? null,
       corsReadable: attempt.facts?.corsReadable ?? null,
       inFlight: attempt.inFlight

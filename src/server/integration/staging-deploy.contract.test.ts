@@ -42,7 +42,10 @@ describe('staging deploy tool', () => {
     // tool, so the plan only has to report it as a boolean.
     expect(typeof plan.tokenPresent).toBe('boolean');
     expect(plan.steps).toHaveLength(3);
-    expect(plan.steps[2]).toContain('wrangler deploy --env staging');
+    // Code before secrets: a secret whose name the deployed version binds as a
+    // variable is refused until the deploy has cleared it.
+    expect(plan.steps[0]).toContain('wrangler deploy --env staging');
+    expect(plan.steps[1]).toContain('secret put GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY');
     expect(plan.writes).toBe(true);
   });
 
