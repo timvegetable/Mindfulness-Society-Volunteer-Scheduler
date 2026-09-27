@@ -32,6 +32,38 @@ Role and ownership enforcement is server-side:
 
 Response projections are part of the security boundary. Avoid returning full workbook records when a narrower projection exists.
 
+### Staging Worker identity (separate from production)
+
+The feasibility slice at
+`openspec/changes/validate-worker-backend-feasibility/` verifies Google ID tokens
+itself: the RS256 signature is checked against Google's published key set, the
+algorithm is pinned rather than taken from the token, and the same shared claim
+validator the Apps Script path uses then checks issuer, audience, expiry,
+`email_verified` and subject. Key sets and service-account access tokens are
+cached only as expiring optimisations, with bounded reloads so a forged key id
+cannot turn requests into outbound fetches. That slice holds a **read-only**
+service account, separately from a one-time loader identity whose access is
+removed after the fixture is loaded, and it never uses the Apps Script deploying
+account or domain-wide delegation.
+
+### Recorded disclosure: the Users row count in a rejected sign-in
+
+Follow-up from the milestone 4 review, recorded here with its measured evidence
+and an explicit decision. `AuthenticationError.detail` in
+`src/server/integration/auth.ts` includes `(directory holds N row(s))`, and
+`mapUnknownError` copies that detail into `details.detail` of the `UNAUTHORIZED`
+envelope returned to the caller. Precondition: the caller must already hold a
+valid Google ID token for the configured audience, so it is not reachable
+anonymously. The disclosed value is the number of rows in the `Users` tab — a
+count, never a row, an address or a credential. The same detail is pinned for the
+Apps Script path by `src/server/integration/dispatcher.contract.test.ts`.
+
+Decision: **accepted for now**, because the value is a count behind a valid
+credential and the detail is what lets an operator diagnose a misconfigured
+deployment without server log access. Removing it would change the shared
+envelope for both runtimes and belongs with a deliberate change to that
+contract, not with the feasibility experiment.
+
 ## Cache authorization rule
 
 Neither browser route snapshots nor server caches may become authority.

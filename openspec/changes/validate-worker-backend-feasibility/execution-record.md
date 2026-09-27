@@ -17,7 +17,8 @@ action. Longer sanitized reports are linked, not copied.
 | 3. Authentication | 2.4 | complete, verified | `3dc8667` |
 | 4. Workbook integration and parity | 2.5–2.6 | complete, verified | `591b76d` |
 | 5. Release readiness | 3.1 | complete, verified | `c5eab07` |
-| 6. Measurement and verdict | 3.2–4.3 | **blocked on provisioning/deployment approval** — checkpoint written | — |
+| 6. Measurement and verdict | 3.2–3.4, 4.1–4.3 | complete, verdict recorded | `pending commit` |
+| 6. Alternative topology | 3.5 | open — needs its own deployment approval | — |
 
 ## Decisions
 
@@ -513,6 +514,29 @@ Milestone 5 findings and how each was resolved (mandatory release gate):
   from direct page fetches instead.
 * Pages currently deploys on every push (`.github/workflows/pages.yml`), so no
   push may happen until task 3.1 separates validation from deployment.
+
+## Milestone 6 outcome (2026-09-27)
+
+Provisioned, deployed and measured under explicit approval. 250 paced requests
+across both fixtures, zero failures; authorization-before-hydration confirmed
+against the deployed service (a denied caller costs exactly one authorization
+read, a forged credential costs none); 1/2/2 Sheets reads per operation; wall-time
+p99 755–1074 ms at four in flight; no 429.
+
+The verdict is **no-go for the topology as built**: warm CPU medians were 2.1–3.2 ms
+but the tail did not fit the predeclared headroom — p99 83.6 ms and a cold start of
+19.7 ms at p50 against the free runtime's 10 ms limit. Profiling attributes the
+median cost roughly equally to the two domain reads and points at the 1304 KiB
+bundle evaluated per fresh isolate as the likely cold-start cause. The free
+Durable Object path (task 3.5) is left open and needs its own approval.
+
+Three things this session got wrong and fixed, recorded because each was a real
+defect rather than a slip: the Worker was deployed under a doubled name
+(`…-staging-staging`) until `env.staging.name` was pinned; the service-account
+email was declared both as a variable and a secret, which Cloudflare refuses
+(error 10053) and which only surfaced because the deploy script set secrets before
+deploying; and the browser probe rendered no sign-in control at all because it
+mounted one only on a change event, with a pre-filled client id never firing one.
 
 ## Milestone 6 checkpoint
 

@@ -147,6 +147,27 @@ Correlate the measurement window and direct probe IDs with sanitized `read-phase
 
 ### Local experiment and proposed migration
 
+### Deployed staging Worker
+
+On 2026-09-27 the feasibility slice was provisioned and deployed: a Free-plan
+Worker at `https://volunteer-scheduling-staging.timothyc2371.workers.dev/exec`,
+reading the synthetic "mindfulness staging 1" and "2" workbooks through a
+read-only service account. It serves only `session.me`, `admin.schedule.read` and
+`admin.insights.read`, has no route or custom domain, and cannot write.
+
+Measured on 2026-09-27: 250 paced requests across both fixtures with **zero
+failures**; warm wall time p99 755-1074 ms at up to four requests in flight, well
+inside the staging threshold; one, two and two Sheets reads per operation; and no
+429. Warm CPU medians were 2.1-3.2 ms, but the tail did not fit: p99 83.6 ms and a
+cold start of 19.7 ms at p50 against the free runtime's 10 ms limit with the
+headroom the experiment predeclared. The dated decision is a **no-go for the
+topology as built**, with an optimized build and the free Durable Object path left
+unevaluated: see the [verdict](../openspec/changes/validate-worker-backend-feasibility/evidence/verdict.md).
+Production remains Apps Script; this is staging evidence and does not satisfy the
+2000 ms production objective, which the
+[read-latency task record](../openspec/changes/meet-read-latency-objective/tasks.md)
+still owns.
+
 The `codex/read-api-prototype` branch at `a47b274` records a synthetic localhost Node experiment: two warmups and 40/40 successes per route, zero redirects, Schedule/Insights p95 6.2/5.9 ms. Its evidence lives in that branch's read-latency tasks, not master's production evidence. It does not test real Google identity verification, live Sheets, WAN behavior or Worker CPU. The [six-change roadmap](../openspec/changes/validate-worker-backend-feasibility/design.md#sequence-and-ownership) is proposed work; production remains Apps Script until separately approved releases establish otherwise.
 
 ## Availability diagnostics

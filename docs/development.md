@@ -44,6 +44,35 @@ node scripts/render-public-config.mjs --config production.local.json --output pu
    openspec validate <change-name> --strict
    ```
 
+Two of the gates are separate because they use their own runtime and toolchain:
+
+```sh
+pnpm run test:worker     # runs the Worker slice's tests inside workerd
+pnpm run build:worker    # wrangler dry-run: bundles without uploading
+```
+
+`pnpm run check` covers both TypeScript programs — the Node/Apps Script one and
+the Worker one — and lints the Worker boundary (no Node built-ins or Node globals
+in any module the Worker program compiles).
+
+### Staging the Worker experiment
+
+`openspec/changes/validate-worker-backend-feasibility/evidence/staging-manifest.md`
+owns the provisioning, deployment and rollback procedure. Everything it needs
+locally lives in the ignored `staging-local/` directory: the service-account keys,
+the Cloudflare API token, the fixture payloads and every measurement report. In
+short:
+
+```sh
+pnpm exec node scripts/staging/load-fixture.mjs --spreadsheet <id> --size representative --confirm-staging
+pnpm exec node scripts/staging/deploy-staging.mjs --plan          # review, then --confirm-deploy
+pnpm exec node scripts/staging/measure-worker.mjs --manifest staging-local/measure-manifest.json --cold --confirm-staging
+pnpm exec node scripts/staging/collect-metrics.mjs --since <iso>
+```
+
+Each of those refuses to act without an explicit confirmation, a staging-shaped
+target and a manifest. The deployment itself still needs its own approval.
+
 Do not push or deploy as part of this loop unless the user separately approves that action.
 
 ## Local client
