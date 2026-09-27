@@ -9,20 +9,33 @@ synthetic data only, free hosting only, no production migration.
 Read together with [the experiment contract](experiment-contract.md), which fixes
 the fixture, the measurement protocol and the acceptance thresholds.
 
-Toolchain note (2026-09-26): the repository now pins `wrangler@4.141.0` and is
-installed with pnpm, so `pnpm-lock.yaml` is the authoritative lockfile and
-`package-lock.json` is stale at 4.139.0. The workflows still run `npm ci`, which
-fails when `package.json` and `package-lock.json` disagree, so exactly one of the
-two must be chosen before any push: refresh `package-lock.json` and keep npm, or
-switch the workflows to `pnpm install --frozen-lockfile` and delete
-`package-lock.json`. The pinned local `workerd` still reports compatibility date
-2026-03-10, so `wrangler.jsonc` needs no change.
+Toolchain (settled 2026-09-27): the repository uses **pnpm** (`packageManager:
+pnpm@11.7.0`, `pnpm-lock.yaml`, `pnpm install --frozen-lockfile` in both
+workflows) and pins `wrangler@4.141.0`. `package-lock.json` is gone. The bundled
+`workerd` still reports compatibility date 2026-03-10, so `wrangler.jsonc` needs
+no change.
+
+Supplied resources (2026-09-27), recorded here as the reviewed inventory:
+
+| Resource | Value |
+| --- | --- |
+| Cloudflare account | "Timothyc2371@gmail.com's Account", account id `868086b4b2dc75413ea149480ae4fe82`, authenticated as `timothyc2371@gmail.com` (`wrangler whoami`) |
+| Staging OAuth audience | `716719981089-lqjuqu56n0p46fha286qoo35curo1h9g.apps.googleusercontent.com` (new web client in the existing "Mindfulness Society Website" project) |
+| Representative workbook | "mindfulness staging 1", `1QPRWcAhsyy1s032Sj4_kS4hVra9rajph21AKkNu_D0w` — assignment assumed, swappable |
+| Larger workbook | "mindfulness staging 2", `1nRq-njNjwNnmZWV49A5Yl74w1vplf3UOfAVfPghp5XI` — assignment assumed, swappable |
+| Measurement origin | `http://localhost:8788` (confirmed), allowlisted for the measurement window only |
+
+Still outstanding before provisioning can start: the read-only service-account
+key and the one-time loader service-account key, both under `staging-local/`.
+The Cloudflare `*.workers.dev` subdomain is assigned by the account and appears in
+the first deploy output; it is not needed beforehand because it is the Worker's
+own URL, not an entry in the origin allowlist.
 
 ## 1. Resource isolation
 
 | Resource | Choice | Why it cannot touch production |
 | --- | --- | --- |
-| Cloudflare Worker | One Worker, `volunteer-scheduling-staging`, on its `*.workers.dev` hostname | `wrangler.jsonc` declares no `route` and no custom domain, so deploying it cannot take traffic from the Pages client or from Apps Script |
+| Cloudflare Worker | One Worker, `volunteer-scheduling-staging`, on its `*.workers.dev` hostname, created by the first `wrangler deploy` rather than by a dashboard app | `wrangler.jsonc` declares no `route` and no custom domain, so deploying it cannot take traffic from the Pages client or from Apps Script; a Git-connected dashboard app was deliberately not used because it would rebuild on every push |
 | Cloudflare plan | Free | No paid feature, no Durable Object, no KV; `limits.cpu_ms` is not raised |
 | Google Cloud project | The existing "Mindfulness Society Website" project, with a **new** OAuth web client created for staging and used as the ID-token audience | Reusing the project shares the Sheets API enablement, not the credentials: the staging client id is distinct from the one the Apps Script client signs in with, so neither audience can authorize against the other |
 | Sheets identity | One **read-only** service account, shared on the two synthetic workbooks only, no domain-wide delegation | It cannot read or write anything else, and it is not the deploying user of any production script |
@@ -202,6 +215,14 @@ deployed evidence.
   `<report>.attempts.jsonl` as it completes so an aborted run still keeps its
   evidence. `--plan` validates everything and prints the workload without
   contacting anything.
+* `scripts/staging/fixture.mjs`, `google-auth.mjs`, `workbook.mjs` and
+  `load-fixture.mjs` generate the synthetic fixture, authenticate as the one-time
+  loader identity, create the tabs and headers from the repository's own workbook
+  schema, write the rows, then read them back with the Worker's exact
+  `values:batchGet` request and record the resulting row counts and fixture digest
+  in `staging-local/loaded-<size>.json`. The generator is pinned to the contract's
+  dimensions by `staging-fixture.contract.test.ts`, so the deployed fixture cannot
+  drift from the predeclared one.
 * `scripts/staging/browser-probe.html` and `browser-probe.js` run in a real
   browser from an allowlisted origin, sign in with Google Identity Services, and
   record direct-response/CORS facts (status, `type === 'cors'`, `redirected`,

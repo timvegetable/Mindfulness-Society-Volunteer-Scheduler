@@ -9,6 +9,7 @@ dist/
 .omp/
 .codex/
 .minimax/
+.jspace/
 # Local tool wiring, not part of the project.
 .mcp.json
 # Private migration material: never commit these exports.
