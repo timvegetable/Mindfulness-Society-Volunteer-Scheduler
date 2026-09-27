@@ -213,19 +213,45 @@ async function enableProbe(response) {
   }
 }
 
-function startSignIn() {
+const buttonContainer = document.querySelector('#gsi-button');
+
+/** Waits for the Google Identity Services script, which loads asynchronously. */
+function whenGoogleReady(action, attempt = 0) {
+  if (window.google?.accounts?.id) {
+    action();
+    return;
+  }
+  if (attempt > 100) {
+    statusNode.textContent = 'Google Identity Services did not load. Check the network and reload this page.';
+    return;
+  }
+  setTimeout(() => whenGoogleReady(action, attempt + 1), 100);
+}
+
+/**
+ * Renders Google's own sign-in button. A rendered button is the reliable path:
+ * the One Tap `prompt()` needs a signed-in Google session and is blocked in many
+ * browsers, and a prefilled client id never fires a change event to trigger it.
+ */
+function mountSignIn() {
   const clientId = clientInput.value.trim();
   if (!clientId) {
     statusNode.textContent = 'Enter the staging OAuth client id to sign in.';
     return;
   }
-  if (!window.google?.accounts?.id) {
-    statusNode.textContent = 'Google Identity Services has not loaded yet; retry in a moment.';
-    return;
-  }
-  window.google.accounts.id.initialize({ client_id: clientId, callback: enableProbe });
-  window.google.accounts.id.prompt();
+  statusNode.textContent = 'Loading the Google sign-in button…';
+  whenGoogleReady(() => {
+    buttonContainer.innerHTML = '';
+    window.google.accounts.id.initialize({ client_id: clientId, callback: enableProbe, auto_select: false });
+    window.google.accounts.id.renderButton(buttonContainer, { theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: 280 });
+    statusNode.textContent = 'Click the Google button above and choose the staging account named in the URL. '
+      + 'If nothing happens, this origin may not be authorised for the client id.';
+  });
 }
 
 runButton.addEventListener('click', () => { void runProbe(); });
-clientInput.addEventListener('change', startSignIn);
+document.querySelector('#retry-signin').addEventListener('click', mountSignIn);
+clientInput.addEventListener('change', mountSignIn);
+
+// Mount immediately: the client id arrives prefilled from the URL.
+mountSignIn();

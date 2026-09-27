@@ -19,6 +19,10 @@
   },
   "env": {
     "staging": {
+      // Wrangler otherwise suffixes the name with the environment, which yielded
+      // `volunteer-scheduling-staging-staging`; the manifest and the measurement
+      // record both name this Worker, so it is pinned explicitly.
+      "name": "volunteer-scheduling-staging",
       // Named environment: `wrangler deploy --env staging`. Every binding the
       // slice needs is listed here so a deploy cannot silently omit one; each
       // REPLACE_ value is a placeholder that fails validation, which makes the

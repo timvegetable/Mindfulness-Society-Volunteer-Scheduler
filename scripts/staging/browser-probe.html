@@ -25,10 +25,13 @@
     </p>
     <label>Worker URL <input id="api" size="60" value="" placeholder="https://volunteer-scheduling-staging.<account>.workers.dev/exec" /></label>
     <label>OAuth client id <input id="client" size="60" value="" /></label>
+    <p id="signin">Sign in with the staging account shown in the URL:</p>
+    <div id="gsi-button"></div>
+    <p><button id="retry-signin" type="button">Reload the sign-in button</button></p>
     <p><button id="run" type="button" disabled>Run browser probe</button></p>
     <p id="status" role="status" aria-live="polite">Sign in to enable the probe.</p>
     <pre id="report">No requests have been made.</pre>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://accounts.google.com/gsi/client" async defer onload="window.__gsiLoaded = true"></script>
     <script type="module" src="./browser-probe.js"></script>
   </body>
 </html>
