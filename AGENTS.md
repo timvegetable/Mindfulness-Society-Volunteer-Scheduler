@@ -38,16 +38,16 @@ Private material under `migration-output/` and `scrubbed_exports/` must never be
 ## Commands
 
 ```sh
-npm ci
-npm run dev
-npm run build
-npm test
-npm run check
+pnpm install --frozen-lockfile
+pnpm run dev
+pnpm run build
+pnpm test
+pnpm run check
 ```
 
-* `npm run build` builds the Vite client, Apps Script bundle, and bundle audit.
-* `npm test` runs Vitest with watch disabled.
-* `npm run check` runs `tsc --noEmit` followed by ESLint with zero warnings.
+* `pnpm run build` builds the Vite client, Apps Script bundle, and bundle audit.
+* `pnpm test` runs Vitest with watch disabled.
+* `pnpm run check` runs `tsc --noEmit` followed by ESLint with zero warnings.
 * There is no separate lint or typecheck command.
 
 Deployment commands and verification procedures live in `docs/deployment.md`.
@@ -70,8 +70,8 @@ For every behavior change, add or update tests that exercise the changed behavio
 Before considering code work complete, run the smallest relevant tests and then:
 
 ```sh
-npm test
-npm run check
+pnpm test
+pnpm run check
 ```
 
 The Pages workflow does not run the complete local validation suite; see `docs/testing.md`.

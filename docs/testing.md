@@ -7,7 +7,7 @@ Tests protect contracts at the boundaries most likely to fail in production: unt
 Vitest runs in the Node environment and discovers `src/**/*.test.ts`:
 
 ```sh
-npm test
+pnpm test
 ```
 
 Run a focused file while developing:
@@ -42,11 +42,11 @@ For every bug fix:
 5. Run the full suite and static checks:
 
    ```sh
-   npm test
-   npm run check
+   pnpm test
+   pnpm run check
    ```
 
-6. Run `npm run build` when the change can affect bundling, entry-point exposure, or client output. Validate OpenSpec when specs or task evidence changed.
+6. Run `pnpm run build` when the change can affect bundling, entry-point exposure, or client output. Validate OpenSpec when specs or task evidence changed.
 
 Do not mark an OpenSpec task complete merely because a test exists. Browser, production, performance, or administrator-review tasks require the evidence named in the task.
 
@@ -58,7 +58,7 @@ Node provides globals that Apps Script V8 may not. The server bundle audit and `
 
 Two workflows split validation from release:
 
-- `.github/workflows/validate.yml` runs on every push and pull request and deploys nothing: `npm ci`, `npm run check`, `npm test`, `npm run test:worker`, `npm run build`, and the Worker dry-run build (`npm run build:worker`). It needs no secret.
-- `.github/workflows/pages.yml` publishes the client and runs only on manual dispatch, so a push is not a deployment. It runs `npm ci`, private-to-public config rendering, `npm run build:client`, the fail-closed client deployment check, and the Pages artifact upload and deployment.
+- `.github/workflows/validate.yml` runs on every push and pull request and deploys nothing: `pnpm install --frozen-lockfile`, `pnpm run check`, `pnpm test`, `pnpm run test:worker`, `pnpm run build`, and the Worker dry-run build (`pnpm run build:worker`). It needs no secret.
+- `.github/workflows/pages.yml` publishes the client and runs only on manual dispatch, so a push is not a deployment. It runs `pnpm install --frozen-lockfile`, private-to-public config rendering, `pnpm run build:client`, the fail-closed client deployment check, and the Pages artifact upload and deployment.
 
 `validate.yml` still does **not** run strict OpenSpec validation, which stays a local planning gate, and it does not deploy. Local full-suite evidence is therefore still required before release; a green validation workflow does not establish server or domain correctness.

@@ -5,7 +5,7 @@
 Use Node 22, npm, and the repository lockfile:
 
 ```sh
-npm ci
+pnpm install --frozen-lockfile
 ```
 
 For Apps Script work, install/authenticate `clasp` through the project tooling and keep `.clasp.json` local. Deployment requires an administrator-owned Apps Script project; ordinary development and tests do not.
@@ -33,9 +33,9 @@ node scripts/render-public-config.mjs --config production.local.json --output pu
 5. Run the full local gates:
 
    ```sh
-   npm test
-   npm run check
-   npm run build
+   pnpm test
+   pnpm run check
+   pnpm run build
    ```
 
 6. If task/spec state changed, update the owning `openspec/changes/<change-name>/tasks.md` with evidence and run:
@@ -51,7 +51,7 @@ Do not push or deploy as part of this loop unless the user separately approves t
 Start Vite on port 5173:
 
 ```sh
-npm run dev
+pnpm run dev
 ```
 
 The client loads `/config.json`. A realistic sign-in flow therefore needs a generated public config, an OAuth client that permits the local origin, and a reachable public Apps Script `/exec` deployment. The endpoint is still production-capable even when the UI is local: keep the live write gate disabled unless a specifically approved test requires otherwise.
@@ -59,7 +59,7 @@ The client loads `/config.json`. A realistic sign-in flow therefore needs a gene
 The Vite client uses a relative production base and builds to `dist/client`:
 
 ```sh
-npm run build:client
+pnpm run build:client
 ```
 
 ## Apps Script build
@@ -67,7 +67,7 @@ npm run build:client
 Build the server with:
 
 ```sh
-npm run build:server
+pnpm run build:server
 ```
 
 This sequence:
@@ -81,7 +81,7 @@ The runtime is V8 and synchronous. Do not return promises from operation handler
 
 The server build minifies while retaining the English-only Zod locale exclusion. `dist/bundle-evidence.json` records esbuild inputs, per-input emitted contributions, and final bytes outside the clasp upload directory. Use `node scripts/bundle-server.mjs --unminified-trial` and `node scripts/compare-server-bundles.mjs` for a synthetic, read-only bundle comparison; that benchmark does not reproduce remote Sheet or browser latency.
 
-`npm run deploy:server` and `npm run deploy` call `clasp` and can mutate the deployed project. Do not use them as build commands; follow [deployment.md](deployment.md) and use the guarded deployment script only after explicit approval.
+`pnpm run deploy:server` and `pnpm run deploy` call `clasp` and can mutate the deployed project. Do not use them as build commands; follow [deployment.md](deployment.md) and use the guarded deployment script only after explicit approval.
 
 ## Code conventions
 

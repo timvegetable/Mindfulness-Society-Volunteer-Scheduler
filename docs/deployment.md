@@ -7,10 +7,10 @@ Every push and deployment requires explicit one-time approval. A server deployme
 From the repository root:
 
 ```sh
-npm ci
-npm test
-npm run check
-npm run build
+pnpm install --frozen-lockfile
+pnpm test
+pnpm run check
+pnpm run build
 openspec validate <change-name> --strict
 ```
 
