@@ -109,9 +109,16 @@ semantics rather than platform behaviour. Configuration is inherited from the
 `OPERATING_HOURS_END=21:00`, `DATA_REVISION=42`,
 `SCHEDULING_INPUT_REVISION=5`, `TAB_REVISION_*=1`, newest completed
 `SchedulingRuns` row `inputRevision=5`, `outputRevision=7`, `status=completed`.
-Workbook time zone is pinned to `America/New_York` while `TIME_ZONE` is
-deliberately changed to `America/Chicago` for the zone-mismatch case, so a
-workbook-zone/display-zone mix-up cannot pass parity.
+Workbook time zone and `TIME_ZONE` are both `America/New_York`.
+**Revised 2026-09-27 at the operator's instruction** ("all time zones should be
+EST"): the original contract deliberately used `America/Chicago` for `TIME_ZONE`
+to exercise a workbook-zone/display-zone mismatch in the deployed fixture. That
+mismatch is now exercised only in the local differential suite
+(`src/worker/staging.test.ts` keeps a workbook-Chicago variant that fails if the
+decode zone is ignored, and the shared codec tests cover the same ground). The
+consequence is recorded rather than hidden: deployed staging no longer
+demonstrates the mismatch case, so a regression that ignored the workbook zone
+would pass the deployed measurement and fail the local suite.
 
 | Dimension | Representative (deployed) | Larger (deployed) | Empty (local) |
 | --- | --- | --- | --- |

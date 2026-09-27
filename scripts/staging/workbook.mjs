@@ -81,6 +81,19 @@ export async function createWorkbookApi({ token, spreadsheetId }) {
       return { timeZone: meta?.properties?.timeZone, sheets: (meta?.sheets ?? []).map((sheet) => sheet?.properties?.title) };
     },
 
+    /**
+     * Pins the spreadsheet's own time zone. Date and time cells are decoded in
+     * this zone, so it is staging configuration rather than a preference, and a
+     * blank workbook reports `Etc/GMT` until it is set.
+     */
+    async setTimeZone(timeZone) {
+      await request(`/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        body: JSON.stringify({ requests: [{ updateSpreadsheetProperties: { properties: { timeZone }, fields: 'timeZone' } }] })
+      });
+      return (await this.metadata()).timeZone;
+    },
+
     /** Creates any missing tab and rewrites every header row. */
     async ensureTabs() {
       const meta = await this.metadata();
@@ -108,10 +121,15 @@ export async function createWorkbookApi({ token, spreadsheetId }) {
     /** Replaces a tab's data rows. `USER_ENTERED` lets Sheets type the cells. */
     async writeTab(name, rows) {
       const columns = definition(name).columns;
-      const values = rows.map((row) => columns.map((column) => {
-        const value = row[column];
-        return value === undefined || value === null ? '' : value;
-      }));
+      // Lists are stored the way the workbook codecs store them: a JSON array in
+      // one cell (`json()` in src/server/workbook/codecs.ts). Writing a bare array
+      // is rejected by the API, and any other encoding would not read back.
+      const cell = (value) => {
+        if (value === undefined || value === null) return '';
+        if (Array.isArray(value)) return JSON.stringify(value);
+        return value;
+      };
+      const values = rows.map((row) => columns.map((column) => cell(row[column])));
       await request(`/${spreadsheetId}/values/${encodeURIComponent(`${quoted(name)}!A2:${columnLetters(columns.length)}`)}:clear`, { method: 'POST', body: JSON.stringify({}) });
       if (values.length === 0) return 0;
       await request(`/${spreadsheetId}/values/${encodeURIComponent(`${quoted(name)}!A2`)}?valueInputOption=USER_ENTERED`, {

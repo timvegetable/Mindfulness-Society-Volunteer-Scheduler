@@ -14,7 +14,7 @@ import { accessTokenFor } from './google-auth.mjs';
 import { createWorkbookApi } from './workbook.mjs';
 
 export function parseArguments(argv) {
-  const options = { spreadsheet: undefined, key: 'staging-local/google-loader.json', size: undefined, startDate: undefined, report: undefined, confirm: false, plan: false };
+  const options = { spreadsheet: undefined, key: 'staging-local/google-loader.json', size: undefined, startDate: undefined, report: undefined, workbookTimeZone: 'America/New_York', confirm: false, plan: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const next = () => {
@@ -27,6 +27,7 @@ export function parseArguments(argv) {
     else if (argument === '--size') options.size = next();
     else if (argument === '--start-date') options.startDate = next();
     else if (argument === '--report') options.report = next();
+    else if (argument === '--workbook-time-zone') options.workbookTimeZone = next();
     else if (argument === '--confirm-staging') options.confirm = true;
     else if (argument === '--plan') options.plan = true;
     else if (argument === '--help' || argument === '-h') options.help = true;
@@ -72,6 +73,7 @@ async function main() {
     startDate: fixture.startDate,
     sessionStart: fixture.sessionStart,
     schedulingTimeZone: fixture.schedulingTimeZone,
+    workbookTimeZone: options.workbookTimeZone,
     keyPath: options.key,
     revisions: fixture.revisions,
     expectedCounts: fixture.counts,
@@ -98,8 +100,11 @@ async function main() {
   }
 
   const workbook = await createWorkbookApi({ token, spreadsheetId: options.spreadsheet });
+  // Pin the decode zone before anything is written, so no cell is ever
+  // interpreted in the blank workbook's Etc/GMT default.
+  const appliedTimeZone = await workbook.setTimeZone(options.workbookTimeZone);
   const { missingTabs, timeZone } = await workbook.ensureTabs();
-  if (!timeZone) {
+  if (!timeZone && !appliedTimeZone) {
     console.error('The spreadsheet reported no time zone; refusing to load a fixture whose cells cannot be decoded deterministically.');
     process.exitCode = 1;
     return;
@@ -120,7 +125,7 @@ async function main() {
     size: fixture.size,
     startDate: fixture.startDate,
     sessionStart: fixture.sessionStart,
-    workbookTimeZone: timeZone,
+    workbookTimeZone: timeZone ?? appliedTimeZone,
     schedulingTimeZone: fixture.schedulingTimeZone,
     missingTabs,
     revisions: fixture.revisions,

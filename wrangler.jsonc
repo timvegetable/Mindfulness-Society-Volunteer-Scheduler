@@ -25,18 +25,21 @@
       // endpoint refuse (503) instead of serving with guessed configuration.
       // Secrets are supplied with `wrangler secret put --env staging`.
       "vars": {
-        "STAGING_ALLOWED_ORIGINS": "REPLACE_WITH_THE_STAGING_ORIGIN",
-        "STAGING_OAUTH_AUDIENCE": "REPLACE_WITH_THE_STAGING_OAUTH_CLIENT_ID",
-        "STAGING_WORKBOOK_ID": "REPLACE_WITH_THE_STAGING_SPREADSHEET_ID",
-        "STAGING_WORKBOOK_TIME_ZONE": "REPLACE_WITH_THE_SPREADSHEET_TIME_ZONE",
-        "STAGING_TIME_ZONE": "America/Chicago",
+        // Filled 2026-09-27 from the reviewed staging manifest. These are
+        // identifiers, not secrets; the two Google credentials are set with
+        // `wrangler secret put --env staging` and never appear here.
+        "STAGING_ALLOWED_ORIGINS": "http://localhost:8788",
+        "STAGING_OAUTH_AUDIENCE": "716719981089-lqjuqu56n0p46fha286qoo35curo1h9g.apps.googleusercontent.com",
+        "STAGING_WORKBOOK_ID": "1QPRWcAhsyy1s032Sj4_kS4hVra9rajph21AKkNu_D0w",
+        "STAGING_WORKBOOK_TIME_ZONE": "America/New_York",
+        "STAGING_TIME_ZONE": "America/New_York",
         "STAGING_DISPLAY_INCREMENT_MINUTES": "30",
         "STAGING_OPERATING_HOURS_START": "09:00",
         "STAGING_OPERATING_HOURS_END": "21:00",
-        "STAGING_DATA_REVISION": "REPLACE_WITH_THE_FIXTURE_REVISION",
-        "STAGING_SCHEDULING_INPUT_REVISION": "REPLACE_WITH_THE_FIXTURE_INPUT_REVISION",
-        "STAGING_TAB_REVISIONS": "REPLACE_WITH_A_JSON_OBJECT_OF_TAB_REVISIONS",
-        "GOOGLE_SERVICE_ACCOUNT_EMAIL": "REPLACE_WITH_THE_READ_ONLY_SERVICE_ACCOUNT"
+        "STAGING_DATA_REVISION": "42",
+        "STAGING_SCHEDULING_INPUT_REVISION": "5",
+        "STAGING_TAB_REVISIONS": "{\"Volunteers\":1,\"RecurringAvailability\":1,\"AvailabilityExceptions\":1,\"Sessions\":1,\"Assignments\":1,\"Backups\":1,\"SchedulingRuns\":1,\"Imports\":1,\"ImportMappings\":1,\"ImportedAvailability\":1,\"Users\":1,\"Settings\":1,\"AuditLog\":1,\"Centers\":1,\"CandidateSchedules\":1}",
+        "GOOGLE_SERVICE_ACCOUNT_EMAIL": "scheduling-staging-reader@mindfulness-society-website.iam.gserviceaccount.com"
       }
     }
   }

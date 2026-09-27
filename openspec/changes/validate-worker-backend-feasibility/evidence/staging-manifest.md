@@ -58,8 +58,8 @@ committed file or in a deployment report.
 | `STAGING_ALLOWED_ORIGINS` | variable | Exact origins, comma separated: the GitHub Pages staging origin and the loopback origin of the measurement host (`http://localhost:8788`) for the measurement window only |
 | `STAGING_OAUTH_AUDIENCE` | variable | The staging OAuth web client id |
 | `STAGING_WORKBOOK_ID` | variable | The representative or larger staging spreadsheet id |
-| `STAGING_WORKBOOK_TIME_ZONE` | variable | The spreadsheet's own zone, e.g. `America/New_York` |
-| `STAGING_TIME_ZONE` | variable | Scheduling zone, deliberately different, e.g. `America/Chicago` |
+| `STAGING_WORKBOOK_TIME_ZONE` | variable | The spreadsheet's own zone, `America/New_York`; set explicitly because a blank workbook reports `Etc/GMT` |
+| `STAGING_TIME_ZONE` | variable | Scheduling and display zone, `America/New_York` (2026-09-27: the operator requires every staging zone to be Eastern) |
 | `STAGING_DISPLAY_INCREMENT_MINUTES` | variable | `30` |
 | `STAGING_OPERATING_HOURS_START` / `_END` | variable | `09:00` / `21:00` |
 | `STAGING_DATA_REVISION` | variable | The fixture's pinned global revision |
@@ -104,6 +104,24 @@ workbook configuration before any row is read.
    exercised.
 7. Record the Cloudflare and Google account limits observed at provisioning time
    (the contract's dated figures are a starting point, not a substitute).
+
+## 3a. Provisioning record (executed 2026-09-27 under approval)
+
+| Step | Outcome |
+| --- | --- |
+| Loader identity | `scheduling-staging-loader@mindfulness-society-website.iam.gserviceaccount.com`, Editor on both workbooks |
+| Read-only identity | `scheduling-staging-reader@mindfulness-society-website.iam.gserviceaccount.com`, Viewer on both workbooks; verified to read them |
+| Representative workbook | "mindfulness staging 1", workbook zone pinned to `America/New_York`, 305 data rows, digest `aedfec2ba60623013a0427df0f084020ab3e84118e0b4f1370e602e0db3372a9` |
+| Larger workbook | "mindfulness staging 2", workbook zone pinned to `America/New_York`, 2158 data rows, digest `fc05ff654fff5304b8cf9af200413f2eab03692674182132d4150f2690fcb517` |
+| Fixture contents | exactly the contract dimensions: 4 centers / 40 volunteers / 200 availability / 12 exceptions / 20 sessions / 20 assignments / 4 backups / 1 run, and 10 / 200 / 1000 / 60 / 400 / 400 / 80 / 4 for the larger one |
+| Accounts | the four supplied addresses, mapped as section 7 records |
+| Verification | every tab written with `USER_ENTERED`, then read back with the Worker's exact `values:batchGet` request; read-back counts equal what was written for every tab, and the read-only identity reproduces both digests |
+
+Deviations recorded rather than hidden: the `Users` tab carries four rows, not the
+contract's six (four accounts, with the three denial variants produced by the
+pass in section 7), and both workbooks use `America/New_York` for the workbook
+zone *and* the scheduling zone, so the deployed fixture no longer exercises the
+workbook-versus-display zone mismatch (still covered by the local suite).
 
 ## 4. Deployment procedure (requires approval, task 3.2)
 
