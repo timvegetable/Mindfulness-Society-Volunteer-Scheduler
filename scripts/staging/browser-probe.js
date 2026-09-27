@@ -8,6 +8,12 @@
 
 const OPERATIONS = ['session.me', 'admin.schedule.read', 'admin.insights.read'];
 const ATTEMPTS_PER_OPERATION = 5;
+// The read budget from the experiment contract: at most 40 Sheets reads in any
+// 60-second window. Each operation costs a known number of reads, and the probe
+// refuses to exceed the budget rather than discovering it as a 429.
+const OPERATION_READS = { 'session.me': 1, 'admin.schedule.read': 2, 'admin.insights.read': 2 };
+const READ_BUDGET = 40;
+const BUDGET_WINDOW_MS = 60_000;
 const MAX_REPORTED_CELLS = 8;
 // The contract's wall-time threshold applies to observations taken with at least
 // three requests in flight, so the probe drives a real in-flight pool.
@@ -22,8 +28,25 @@ const clientInput = document.querySelector('#client');
 const parameters = new URLSearchParams(location.search);
 apiInput.value = parameters.get('api') ?? '';
 clientInput.value = parameters.get('client') ?? '';
+const accountLabel = parameters.get('label') ?? 'probe';
 
 let credential;
+const spentReads = [];
+
+/** Waits until `reads` more reads fit inside the contract's sliding window. */
+async function reserveReads(reads) {
+  for (;;) {
+    const cutoff = Date.now() - BUDGET_WINDOW_MS;
+    while (spentReads.length > 0 && spentReads[0] < cutoff) spentReads.shift();
+    if (spentReads.length + reads <= READ_BUDGET) {
+      for (let index = 0; index < reads; index += 1) spentReads.push(Date.now());
+      return;
+    }
+    const waitMs = Math.max(50, spentReads[0] + BUDGET_WINDOW_MS - Date.now());
+    statusNode.textContent = `Holding to stay inside the Sheets read budget (${spentReads.length}/${READ_BUDGET} reads this minute)…`;
+    await new Promise((resolveWait) => setTimeout(resolveWait, waitMs));
+  }
+}
 
 function quantile(values, fraction) {
   if (values.length === 0) return null;
@@ -45,6 +68,7 @@ function directResponseFacts(response, expectedUrl) {
 }
 
 async function probeOnce(operation, expectedUrl, inFlight) {
+  await reserveReads(OPERATION_READS[operation] ?? 2);
   const startedAt = performance.now();
   const attempt = { operation, durationMs: null, facts: null, errorCode: null, failure: null, inFlight };
   try {
@@ -122,7 +146,8 @@ async function runProbe() {
     if (attempt.failure) failureCodes[attempt.failure] = (failureCodes[attempt.failure] ?? 0) + 1;
   }
   const observedFacts = attempts.map((attempt) => attempt.facts).filter(Boolean);
-  reportNode.textContent = JSON.stringify({
+  const report = {
+    label: accountLabel,
     api,
     generatedAt: new Date().toISOString(),
     attempts: attempts.length,
@@ -153,15 +178,39 @@ async function runProbe() {
       corsReadable: attempt.facts?.corsReadable ?? null,
       inFlight: attempt.inFlight
     }))
-  }, null, 2);
-  statusNode.textContent = `Done: ${successes.length}/${attempts.length} succeeded. Copy the report into the staging evidence directory (sanitized).`;
+  };
+  reportNode.textContent = JSON.stringify(report, null, 2);
+  try {
+    const captured = await fetch('/__report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: accountLabel, report })
+    });
+    statusNode.textContent = captured.ok
+      ? `Done: ${successes.length}/${attempts.length} succeeded, and the report was saved locally.`
+      : `Done: ${successes.length}/${attempts.length} succeeded. Copy the report below.`;
+  } catch {
+    statusNode.textContent = `Done: ${successes.length}/${attempts.length} succeeded. Copy the report below.`;
+  }
   runButton.disabled = false;
 }
 
-function enableProbe(response) {
+async function enableProbe(response) {
   credential = response.credential;
   runButton.disabled = false;
   statusNode.textContent = 'Signed in. Confirm the Worker URL, then run the probe.';
+  // Hand the credential to the local probe host so the paced Node harness can
+  // reuse it while it is still valid. It is never logged or displayed.
+  try {
+    const captured = await fetch('/__credential', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: accountLabel, credential })
+    });
+    if (captured.ok) statusNode.textContent = 'Signed in and captured. Run the probe.';
+  } catch {
+    statusNode.textContent = 'Signed in. Run the probe (the credential could not be captured locally).';
+  }
 }
 
 function startSignIn() {
