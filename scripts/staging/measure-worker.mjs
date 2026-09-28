@@ -111,21 +111,44 @@ export function validateManifest(value, options = {}) {
 
 /** Sliding-window budget over the Sheets reads the run is expected to spend. */
 export class ReadBudget {
-  constructor(limit = READ_BUDGET_PER_WINDOW, windowMs = WINDOW_MS, now = () => Date.now()) {
+  constructor(limit = READ_BUDGET_PER_WINDOW, windowMs = WINDOW_MS, now = () => Date.now(), ledgerPath = undefined) {
     this.limit = limit;
     this.windowMs = windowMs;
     this.now = now;
     this.spent = [];
+    this.ledgerPath = ledgerPath;
+  }
+
+  /**
+   * Loads timestamps a previous run recorded, so the rolling window is shared
+   * across harness restarts: Google's read quota rolls continuously, so two
+   * back-to-back manifest runs must not each believe a fresh window began.
+   */
+  async loadLedger() {
+    if (this.ledgerPath === undefined) return;
+    try {
+      const parsed = JSON.parse(await readFile(this.ledgerPath, 'utf8'));
+      if (Array.isArray(parsed?.spent)) this.spent = parsed.spent.filter((at) => typeof at === 'number' && at > this.now() - this.windowMs);
+    } catch {
+      // No ledger yet: the window starts empty for this run.
+    }
+  }
+
+  async saveLedger() {
+    if (this.ledgerPath === undefined) return;
+    await writeFile(this.ledgerPath, `${JSON.stringify({ spent: this.spent })}\n`, 'utf8');
   }
 
   /** Waits until `reads` more reads fit inside the window. */
   async reserve(reads) {
     if (reads > this.limit) throw new Error(`A single request would exceed the read budget (${reads} > ${this.limit}).`);
+    await this.loadLedger();
     for (;;) {
       const cutoff = this.now() - this.windowMs;
       this.spent = this.spent.filter((at) => at > cutoff);
       if (this.spent.length + reads <= this.limit) {
         for (let index = 0; index < reads; index += 1) this.spent.push(this.now());
+        await this.saveLedger();
         return;
       }
       const oldest = this.spent[0] ?? this.now();
@@ -297,7 +320,11 @@ async function main() {
   }
 
   const plan = planFor(manifest);
-  const budget = new ReadBudget();
+  // The ledger lives next to the report in staging-local/, so every harness
+  // run in the campaign shares one rolling read window; Google's quota does
+  // not reset when a new process starts.
+  const budget = new ReadBudget(undefined, undefined, undefined, resolve(dirname(manifest.reportPath), '.read-budget-ledger.json'));
+  await budget.loadLedger();
   const startedAt = new Date().toISOString();
   await mkdir(dirname(manifest.reportPath), { recursive: true });
   await writeFile(plan.attemptLogPath, '', 'utf8');

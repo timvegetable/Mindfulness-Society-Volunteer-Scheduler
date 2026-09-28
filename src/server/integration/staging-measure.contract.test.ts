@@ -1,3 +1,5 @@
+import { rm, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OPERATION_READS, ReadBudget, classifyFailure, isStagingHost, parseArguments, validateManifest } from '../../../scripts/staging/measure-worker.mjs';
 
@@ -29,6 +31,26 @@ describe('workload budget', () => {
   it('refuses a single request that cannot fit the window at all', async () => {
     const budget = new ReadBudget(4, 60_000);
     await expect(budget.reserve(5)).rejects.toThrow('read budget');
+  });
+
+  it('shares one rolling window across harness restarts through the ledger', async () => {
+    const ledgerPath = resolve('staging-local/.contract-test-ledger.json');
+    await writeFile(ledgerPath, '[]\n', 'utf8');
+    let clock = 1_000_000;
+    const now = () => clock;
+    const first = new ReadBudget(4, 60_000, now, ledgerPath);
+    await first.reserve(3);
+    expect(first.observed()).toBe(3);
+    // A second run (new budget, same ledger) must see the first run's reads.
+    const second = new ReadBudget(4, 60_000, now, ledgerPath);
+    await second.reserve(1);
+    expect(second.observed()).toBe(4);
+    // The window rolls for the shared ledger, not just for one process.
+    clock += 61_000;
+    const third = new ReadBudget(4, 60_000, now, ledgerPath);
+    await third.reserve(4);
+    expect(third.observed()).toBe(4);
+    await rm(ledgerPath, { force: true });
   });
 });
 
