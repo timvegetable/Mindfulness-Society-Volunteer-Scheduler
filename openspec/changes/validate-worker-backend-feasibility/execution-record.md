@@ -524,11 +524,18 @@ read, a forged credential costs none); 1/2/2 Sheets reads per operation; wall-ti
 p99 755–1074 ms at four in flight; no 429.
 
 The verdict is **no-go for the topology as built**: warm CPU medians were 2.1–3.2 ms
-but the tail did not fit the predeclared headroom — p99 83.6 ms and a cold start of
-19.7 ms at p50 against the free runtime's 10 ms limit. Profiling attributes the
-median cost roughly equally to the two domain reads and points at the 1304 KiB
-bundle evaluated per fresh isolate as the likely cold-start cause. The free
-Durable Object path (task 3.5) is left open and needs its own approval.
+but the tail did not fit the predeclared headroom, the decisive exact sample being
+110 ms on the *second* request after a deploy — the first execution of the larger
+fixture's decode path in an already-warm isolate. The cold threshold is *not
+evaluated* rather than failed: the run produced two genuine cold observations where
+the contract requires five, because the cold phase issued five sequential requests
+after a single deploy instead of uploading a version per observation. Profiling
+attributes the median cost roughly equally to the two domain reads and identifies
+per-request decoding, not the transport, as the cost that does not fit. Task 3.5
+stays open and unevaluated: the free Durable Object path relocates state without
+making decoding cheaper, so the finding is handed to `make-workbook-state-portable`
+as a design input (a revision-keyed cache of the decoded snapshot, never covering
+the authorization read).
 
 Three things this session got wrong and fixed, recorded because each was a real
 defect rather than a slip: the Worker was deployed under a doubled name

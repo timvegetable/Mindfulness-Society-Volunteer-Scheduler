@@ -158,9 +158,11 @@ read-only service account. It serves only `session.me`, `admin.schedule.read` an
 Measured on 2026-09-27: 250 paced requests across both fixtures with **zero
 failures**; warm wall time p99 755-1074 ms at up to four requests in flight, well
 inside the staging threshold; one, two and two Sheets reads per operation; and no
-429. Warm CPU medians were 2.1-3.2 ms, but the tail did not fit: p99 83.6 ms and a
-cold start of 19.7 ms at p50 against the free runtime's 10 ms limit with the
-headroom the experiment predeclared. The dated decision is a **no-go for the
+429. Warm CPU medians were 2.1-3.2 ms, but the tail did not fit: p99 83.6 ms, and an
+exact 110 ms sample on the second request after a deploy against the free
+runtime's 10 ms limit with the headroom the experiment predeclared. The cold
+threshold was not evaluated rather than failed, because the run produced two
+genuine cold observations where the contract requires five. The dated decision is a **no-go for the
 topology as built**, with an optimized build and the free Durable Object path left
 unevaluated: see the [verdict](../openspec/changes/validate-worker-backend-feasibility/evidence/verdict.md).
 Production remains Apps Script; this is staging evidence and does not satisfy the

@@ -10,8 +10,8 @@ before any measurement and none was adjusted afterwards.
 
 **No-go for the Worker topology as built.** Production migration stays blocked:
 the measured CPU does not fit the free runtime's limit with the headroom the
-contract requires, and the failure is in the tail — the cold start and occasional
-spikes — not in the median.
+contract requires, and the failure is in the tail — the first execution of each
+decode path and occasional spikes — not in the median.
 
 This is a verdict on *this implementation*, not on Cloudflare Workers in general.
 An optimized build and the free Durable Object path were **not** evaluated (task
@@ -35,7 +35,7 @@ later experiment with a smaller cold start is not ruled out.
 | --- | --- | --- | --- |
 | Correctness | parity, negative authorization, unchanged workbook | 38 local test files / 229 tests including the fixed-clock differential; deployed matrix exact (below); snapshot digests stable across repeat reads | **met** |
 | CPU headroom | warm p99 ≤ 5.0 ms, warm max ≤ 8.0 ms | warm p50 3.2 ms, p95 16.5 ms, p99 83.6 ms, max 83.6 ms | **not met** |
-| Cold CPU | ≤ 10 ms over ≥ 5 observations | p50 19.7 ms, max 110 ms | **not met** |
+| Cold CPU | ≤ 10 ms over ≥ **5** observations | **2** genuine cold observations (30.4 ms and 18.5 ms, both exact); the run issued five sequential requests after one deploy, so the rest were already warm | **not evaluated** |
 | Runtime-limit outcomes | zero `exceededResources` | zero; every invocation reported `success` | met |
 | Wall time | warm p99 ≤ 1500 ms at ≥ 3 in flight | 4 in flight: p95 925 ms, p99 1074 ms; sequential p99 755 ms | **met** |
 | Failure rate | zero unexpected failures | 250/250 requests succeeded, zero 429, zero 5xx | **met** |
@@ -65,21 +65,48 @@ later experiment with a smaller cold start is not ruled out.
 
 Warm medians are comfortable: 2.1 ms (representative) and 3.2 ms (larger), both
 inside the 5 ms threshold. The distribution has a heavy tail — p95 16.5 ms, p99
-83.6 ms on the larger fixture — and the cold start is 19.7 ms at p50 and 110 ms at
-max, against a 10 ms limit. The predeclared rule reads: a workload that misses the
-CPU threshold is profiled, then an optimized or free Durable Object topology is
-evaluated against the same thresholds, and only then may the verdict be anything
-other than no-go. Profiling was done (below); the alternatives were not built.
+83.6 ms on the larger fixture — and the exact single-request samples are the
+strongest evidence, because they need no estimation:
+
+| Fixture | Position after the deploy | Operation | CPU (exact) | Wall |
+| --- | --- | --- | --- | --- |
+| representative | 1st request | `session.me` | 30.4 ms | 950 ms |
+| representative | 4th request | `session.me` | 4.1 ms | 301 ms |
+| larger | 1st request | `session.me` | 18.5 ms | 1124 ms |
+| larger | **2nd request** | `admin.schedule.read` | **110.0 ms** | 605 ms |
+| larger | 3rd request | `admin.insights.read` | 18.1 ms | 542 ms |
+
+The 110 ms sample is the decisive one and it is **not** a cold start: the runtime
+was already serving the second request of the sequence. It is the first execution
+of the full decode path on the larger fixture — 400 sessions, 400 assignments, 200
+volunteers, 80 backups and 10 centers through Zod and Temporal — before the JIT has
+warmed that path. The decay across the representative sequence (30.4 → 15.6 → 4.1
+ms) is the same effect amortising. So the cost that does not fit is **per-request
+decode work**, not the transport, not the identity check, and not the isolate's
+first evaluation of the bundle alone.
+
+The predeclared rule reads: a workload that misses the CPU threshold is profiled,
+then an optimized or free Durable Object topology is evaluated against the same
+thresholds, and only then may the verdict be anything other than no-go. Profiling
+was done (below); neither alternative was built, because the diagnosis points at
+caching decoded state rather than at a different compute topology, and a cache
+design belongs to `make-workbook-state-portable`, which owns revisions and
+portable state. Task 3.5 stays open and unevaluated.
 
 Two limitations must travel with this verdict:
 
 1. **The per-request CPU attribution is partly estimated.** The analytics dataset
    buckets by second, so a bucket holding one request yields that request's exact
    CPU while a bucket holding several yields a quantile across them; for those the
-   value cited is the bucket quantile divided by its request count. The cold
-   figures, measured one request at a time, are exact; the burst and sustained
-   tails are estimates and are labelled as such.
-2. **Measured CPU exceeded the documented 10 ms free-plan limit while every
+   value cited is the bucket quantile divided by its request count. Every figure in
+   the table above is exact; the burst and sustained tails are estimates and are
+   labelled as such wherever they appear.
+2. **The cold threshold is not evaluated, not failed.** The contract requires five
+   genuine cold observations from successive uploads; this run produced two, so by
+   the contract's own rule the dimension is *not evaluated* and the verdict cannot
+   be an unconditional go. A future run can settle it by uploading a version per
+   observation, as the contract prescribes.
+3. **Measured CPU exceeded the documented 10 ms free-plan limit while every
    invocation reported `success`.** That is consistent with the runtime's
    documented rollover allowance for occasional overruns, but it was not
    reconciled from outside the platform, so the tail should be read as "the
@@ -118,11 +145,22 @@ are not all evaluated for a read that needs neither).
 
 ## What would change the verdict
 
-1. A build whose cold start and p99 fit under 10 ms with headroom on the larger
-   fixture — most plausibly by reducing what a fresh isolate must evaluate.
-2. Or the free Durable Object path, evaluated against these same workloads and
-   thresholds, which task 3.5 leaves open and which needs its own deployment
-   approval.
+1. **A revision-keyed cache of the decoded snapshot**, filled only after
+   authorization and never covering the `Users` read. This is the change the
+   measurements point at: it removes the repeated decode that produced the 110 ms
+   sample rather than moving it somewhere else. Falsifiable prediction: warm p50
+   stays 2-4 ms while the p99 tail collapses toward the projection cost.
+2. **A smaller cold footprint**, if the genuine cold start still matters after
+   that. The Worker imports the whole runtime — scheduling, self-service, imports
+   and centers included — to serve three read operations.
+3. The free Durable Object path remains the task's named alternative, but the
+   measurements give it no independent motivation: a Durable Object relocates
+   state, it does not make decoding cheaper, and the same cache would be needed
+   inside it. Build it only if 1 and 2 fail.
+
+Each needs its own deployment approval, and 1 and 2 are design work that
+`make-workbook-state-portable` owns. The finding is recorded there as a design
+input.
 
 Until one of those passes, `make-workbook-state-portable` and the four changes
 behind it must not proceed on the strength of this experiment.
