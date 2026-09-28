@@ -24,3 +24,5 @@ plan.md
 # Staging credentials, workbook snapshots, measurement reports and raw traces.
 # Never commit: the staging manifest records paths, not values.
 staging-local/
+# Mnemosyne workspace binding marker: local tool wiring, not project content.
+.mnemosyne-id
