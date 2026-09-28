@@ -164,8 +164,10 @@ export function createGoogleKeyStore(options: {
         // The same window that bounds rotation also bounds retries after a
         // failed load, so an unavailable key endpoint cannot turn every request
         // into an outbound fetch. A gated attempt fails closed: no stale key is
-        // used and no fetch is issued.
-        if (nowMs() - lastAttemptAt < minReloadIntervalMs) {
+        // used and no fetch is issued. A load that is already in flight is the
+        // exception: joining it costs no outbound fetch and adds no retry, so
+        // concurrent cold callers wait for the shared load instead of failing.
+        if (pendingLoad === undefined && nowMs() - lastAttemptAt < minReloadIntervalMs) {
           throw new SigningKeyError('The identity provider key set is not available yet.', true);
         }
         await load();

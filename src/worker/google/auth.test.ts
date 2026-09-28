@@ -237,6 +237,30 @@ describe('Google ID-token verification', () => {
     }
   });
 
+  it('joins the in-flight key-set load instead of failing concurrent cold callers', async () => {
+    // Regression (2026-09-28 campaign): a four-way burst arriving at a cold
+    // isolate lost three of four verifications because the retry gate fired
+    // while the shared load was still in flight. A gated attempt must fail
+    // closed only when no load is in flight; joining it costs no fetch.
+    let release: (value: Response) => void = () => undefined;
+    const slowFetch: FetchLike = async () => new Promise<Response>((resolve) => { release = resolve; });
+    const keys = createGoogleKeyStore({ fetch: slowFetch, nowMs: () => NOW, minReloadIntervalMs: 5_000 });
+    const first = keys.verificationKeys(SIGNING_KEY_ID);
+    const concurrent = [keys.verificationKeys(SIGNING_KEY_ID), keys.verificationKeys(SIGNING_KEY_ID), keys.verificationKeys(SIGNING_KEY_ID)];
+    release(jwksResponse([primary.publicJwk], { 'Cache-Control': 'max-age=600' }));
+    const results = await Promise.all([first, ...concurrent]);
+    expect(results.every((keyList) => keyList.length === 1)).toBe(true);
+    expect(keys.stats()).toMatchObject({ loads: 1 });
+
+    // Without an in-flight load, the gate still fails closed inside the window
+    // and performs no outbound fetch: the first attempt's own load fails, and
+    // the next two attempts are gated without touching the endpoint again.
+    const gated = createGoogleKeyStore({ fetch: async () => { throw new Error('unreachable'); }, nowMs: () => NOW, minReloadIntervalMs: 5_000 });
+    await expect(gated.verificationKeys(SIGNING_KEY_ID)).rejects.toThrow(/could not be retrieved/);
+    await expect(gated.verificationKeys(SIGNING_KEY_ID)).rejects.toThrow(/not available yet/);
+    await expect(gated.verificationKeys(SIGNING_KEY_ID)).rejects.toThrow(/not available yet/);
+  });
+
   it('decodes a JOSE header only from a structurally valid token', () => {
     expect(decodeJoseHeader(`${base64UrlEncodeJson({ alg: 'RS256', kid: 'abc' })}.e30.sig`)).toEqual({ alg: 'RS256', kid: 'abc' });
     for (const bad of ['a', 'a.b', 'a.b.c.d', 'e30.e30.sig', 'x.y.z']) expect(() => decodeJoseHeader(bad), bad).toThrow();

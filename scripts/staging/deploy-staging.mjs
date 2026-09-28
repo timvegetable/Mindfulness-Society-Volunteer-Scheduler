@@ -151,6 +151,7 @@ async function main() {
   const environment = { token };
   const deployArgs = ['deploy', '--env', options.environment];
   if (options.workbook !== undefined) deployArgs.push('--var', `STAGING_WORKBOOK_ID:${options.workbook}`);
+  if (options.benchmarkEnabled === true) deployArgs.push('--var', 'STAGING_PREVIEW_BENCHMARK_ENABLED:true');
   const deploy = wrangler(deployArgs, environment);
   let url = deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
   // The DO host has no workers.dev endpoint, so a missing URL is expected there.
