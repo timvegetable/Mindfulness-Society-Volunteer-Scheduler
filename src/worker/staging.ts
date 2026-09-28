@@ -8,7 +8,7 @@ import type { WorkbookBatchReader } from '../server/workbook/batch-read.js';
 import { createProductionRuntime, type ScriptProperties } from '../server/runtime.js';
 import { googleIdentityConfiguration, workbookConfiguration, type StagingBindings } from './config.js';
 import { SigningKeyError, createGoogleDependencies, type FetchLike, type GoogleDependencies } from './google/index.js';
-import { READ_API_MAX_REQUEST_BYTES } from './read-api.js';
+import { READ_API_MAX_REQUEST_BYTES, type ReadRoute } from './read-api.js';
 import { SheetsReadError, createSheetsReadClient } from './workbook/sheets.js';
 import { createSnapshotBatchReader, createWorkbookSnapshot } from './workbook/snapshot.js';
 
@@ -39,11 +39,21 @@ export const SERVED_OPERATIONS: ReadonlySet<string> = new Set([
   INTEGRATION_OPERATIONS.adminInsights
 ]);
 
+/**
+ * The benchmark route serves exactly the schedule preview, and only for a
+ * service constructed with `benchmarkPreview`. A preview request that arrives
+ * through `/exec` still hits `SERVED_OPERATIONS` and stays refused: the two
+ * routes' allowlists are disjoint even when the benchmark is enabled.
+ */
+export const BENCHMARK_SERVED_OPERATIONS: ReadonlySet<string> = new Set([INTEGRATION_OPERATIONS.adminSchedulePreview]);
+
 /** The read plan each served operation needs, beyond the always-fresh Users read. */
 const OPERATION_PLANS: Readonly<Record<string, BatchReadPlan | undefined>> = {
   [INTEGRATION_OPERATIONS.me]: undefined,
   [INTEGRATION_OPERATIONS.adminSchedule]: 'publishedSchedule',
-  [INTEGRATION_OPERATIONS.adminInsights]: 'insightCacheMiss'
+  [INTEGRATION_OPERATIONS.adminInsights]: 'insightCacheMiss',
+  // Served only through the benchmark route's own allowlist, never through /exec.
+  [INTEGRATION_OPERATIONS.adminSchedulePreview]: 'schedulePreview'
 };
 
 export type StagingServiceStats = Readonly<{
@@ -67,6 +77,8 @@ export type StagingServiceOptions = Readonly<{
   google?: (configuration: ReturnType<typeof googleIdentityConfiguration>) => GoogleDependencies;
   /** Replaces the isolate-scoped client cache; tests use a private one. */
   dependencyCache?: DependencyCache;
+  /** Serves the schedule preview on the benchmark route; default false keeps it refused everywhere. */
+  benchmarkPreview?: boolean;
 }>;
 
 let isolateEntry: { key: string; dependencies: GoogleDependencies } | undefined;
@@ -97,7 +109,8 @@ function configurationKey(configuration: ReturnType<typeof googleIdentityConfigu
 }
 
 export type StagingReadService = Readonly<{
-  handle(input: unknown): Promise<ApiResponse<unknown>>;
+  /** `route` selects the transport route's allowlist; default keeps `/exec` behaviour. */
+  handle(input: unknown, route?: ReadRoute): Promise<ApiResponse<unknown>>;
   stats(): StagingServiceStats;
 }>;
 
@@ -129,11 +142,11 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
   };
 
   return {
-    async handle(input: unknown): Promise<ApiResponse<unknown>> {
+    async handle(input: unknown, route: ReadRoute = 'exec'): Promise<ApiResponse<unknown>> {
       requests += 1;
       let sheets: ReturnType<typeof createSheetsReadClient> | undefined;
       try {
-        return await serve(input, (client) => { sheets = client; });
+        return await serve(input, (client) => { sheets = client; }, route);
       } finally {
         if (sheets) sheetsReads += sheets.readCount();
       }
@@ -141,7 +154,19 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
     stats: () => ({ sheetsReads, requests, denied, digest })
   };
 
-  async function serve(input: unknown, onSheetsClient: (client: ReturnType<typeof createSheetsReadClient>) => void): Promise<ApiResponse<unknown>> {
+  async function serve(input: unknown, onSheetsClient: (client: ReturnType<typeof createSheetsReadClient>) => void, route: ReadRoute): Promise<ApiResponse<unknown>> {
+
+      const benchmarkRoute = route === 'benchmark';
+      // The benchmark route serves the preview only for a service constructed
+      // with `benchmarkPreview`; a direct call that skips the transport still
+      // cannot reach it otherwise. `/exec` always uses the three-op allowlist,
+      // so the preview is refused there even when the benchmark is enabled.
+      const served = benchmarkRoute
+        ? (options.benchmarkPreview === true ? BENCHMARK_SERVED_OPERATIONS : undefined)
+        : SERVED_OPERATIONS;
+      const forbiddenMessage = benchmarkRoute
+        ? 'This staging benchmark endpoint only serves the schedule preview operation.'
+        : 'This staging endpoint only serves the allowlisted read operations.';
 
       // 1. The operation allowlist first, so an operation this endpoint does not
       //    serve is refused whatever its payload looks like — the same order the
@@ -152,9 +177,9 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       // An operation that is not registered at all stays the shared gate's
       // INVALID_REQUEST; a registered one this endpoint does not serve is
       // refused as FORBIDDEN.
-      if (typeof rawOperation === 'string' && ALLOWED_INTEGRATION_OPERATIONS.has(rawOperation) && !SERVED_OPERATIONS.has(rawOperation)) {
+      if (typeof rawOperation === 'string' && ALLOWED_INTEGRATION_OPERATIONS.has(rawOperation) && (served === undefined || !served.has(rawOperation))) {
         denied += 1;
-        return failure('FORBIDDEN', 'This staging endpoint only serves the allowlisted read operations.');
+        return failure('FORBIDDEN', forbiddenMessage);
       }
 
       // 2. Envelope and policy, with the shared rules the Apps Script dispatcher
@@ -165,9 +190,9 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         return validation.response;
       }
       const request: ValidatedRequest = validation.value;
-      if (!SERVED_OPERATIONS.has(request.operation)) {
+      if (served === undefined || !served.has(request.operation)) {
         denied += 1;
-        return failure('FORBIDDEN', 'This staging endpoint only serves the allowlisted read operations.');
+        return failure('FORBIDDEN', forbiddenMessage);
       }
 
       // 3. Identity configuration, then the credential itself.

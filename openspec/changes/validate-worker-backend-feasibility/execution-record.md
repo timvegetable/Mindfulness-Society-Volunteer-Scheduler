@@ -577,3 +577,63 @@ every command, verified the goal clause by clause, and accepted the delivery.
 Await approval for the resources and the staging deployment described in
 `evidence/staging-manifest.md`; on approval, resume at its pre-deployment
 checklist and then run the milestone-6 measurement tasks.
+
+## Task 3.5 progress (Durable Object feasibility, 2026-09-27/28)
+
+Executed per `plan.md` and the amendment of 2026-09-27 in
+`evidence/experiment-contract.md` (predeclared DO targets recorded before any
+measurement):
+
+* **Contract amended (3.5a).** `tasks.md` 3.5 expanded into subtasks 3.5a–3.5f;
+  proposal/design/spec delta amended (isolated gateway/DO topology requirement,
+  staging preview benchmark endpoint requirement, separately measured gateway
+  and object CPU budgets); predeclared thresholds recorded in the contract
+  amendment; the prior verdict's unsupported percentile claims corrected in
+  `evidence/verdict-addendum-2026-09-27.md` (valid exact single-request
+  evidence retained); Durable Object limits/pricing facts archived in
+  `platform-limits-2026-09-24.md` (fetched 2026-09-27: SQLite-backed DOs on
+  Free, 30 s default CPU allowance, 100k requests/day, 13k GB-s/day).
+* **Topology implemented (3.5b).** `src/worker/host.ts` (`StagingWorkbookHost`,
+  no storage writes, request-local services, benchmark flag), `src/worker/
+  gateway.ts` (thin forwarding with exact-CORS admission, streamed responses,
+  correlation ids, binding-failure envelope, config-derived object naming);
+  `read-api.ts` gains the disabled-by-default `/benchmark/schedule-preview`
+  route; `staging.ts` serves the preview through the real preview handler with
+  the authenticated principal (preview never served through `/exec`); the
+  `schedulePreview` read plan (7 tabs, one batch) added to
+  `read-plans.ts`/`batch-read.ts`, with `AvailabilityExceptions` priming added
+  to the runtime's batch repositories; `wrangler.jsonc` gains `env.staging-host`
+  (SQLite migration v1, no public endpoint) and `env.staging-gateway`
+  (cross-script binding, no credentials); deployment helper selects the bundle
+  (`--target baseline|host|gateway`) and provisions credentials only for the
+  host, with `--benchmark-enabled` for the host only.
+* **Measurement repaired (3.5c).** `collect-metrics.mjs` rewritten: explicit
+  per-script/namespace/window attribution, documented microsecond units,
+  single-request buckets kept as exact samples, multi-request buckets kept as
+  per-bucket aggregates (never divided by counts, never relabelled as campaign
+  percentiles), window splitting with truncation detection, `__unknown__`
+  attribution flagged ambiguous, coverage checks that cannot pass a gate, and
+  DO CPU/memory from `durableObjectsInvocationsAdaptiveGroups` +
+  `durableObjectsPeriodicGroups` (billable duration recorded as unresolved).
+  `measure-worker.mjs` budgets the preview operation (2 reads) and records the
+  server correlation id per attempt.
+* **Campaign plan prepared.** `evidence/do-campaign-plan.md` pins the
+  deployment chain (host first, then gateway; every deployment separately
+  approved), both fixtures' manifests, the cold-isolate protocol with operation
+  rotation and object-activation separation, the ≤974-of-1,000 attempt budget,
+  and the cross-check/consumption procedure.
+
+Local evidence: Node suite 40 files / 249 tests pass; Worker suite 8 files /
+125 tests pass (26 new: gateway forwarding/streaming/CORS/oversized/chunked/
+binding-failure tests, gateway→host end-to-end, benchmark enablement/parity/
+denial/isolation/storage-untouched/telemetry tests); `pnpm run check` passes
+with zero warnings; app build + Apps Script audit pass; baseline, host and
+gateway dry-run builds pass with the gateway bundle audit clean (4.96 KiB, no
+forbidden imports); `openspec validate --strict` passes.
+
+## Next action
+
+Await the operator's approvals for the deployment chain in
+`evidence/do-campaign-plan.md` section 1 (host deploy, gateway deploy,
+benchmark enable + cold redeploys, campaign run); on approval, execute the
+campaign and record the new dated verdict.

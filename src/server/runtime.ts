@@ -421,7 +421,9 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     Sessions: store.sessions,
     Volunteers: store.volunteers,
     Centers: store.centers,
-    RecurringAvailability: store.recurringAvailability
+    RecurringAvailability: store.recurringAvailability,
+    // Primed by the staging preview benchmark's batch plan; no other plan reads it.
+    AvailabilityExceptions: store.exceptions
   } satisfies Record<BatchReadTab, { primeRows(rows: readonly (readonly unknown[])[]): void }>;
   const primedTabs = new Set<BatchReadTab>();
   const primeBatch = (plan: BatchReadPlan): void => {
@@ -537,14 +539,18 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     // Read-only: the deterministic scheduler runs in memory against this
     // request's snapshot and writes no Sheet row, run record, audit entry, or revision.
     [INTEGRATION_OPERATIONS.adminSchedulePreview]: ({ now: requestNow }) => {
+      const before = options.batchReader ? revisionSnapshot() : undefined;
+      primeBatch('schedulePreview');
       const inputRevision = schedulingInputRevision(properties);
       const previous = latestCompletedRun(store.schedulingRuns.list());
       const result = computeSchedule(inputRevision, previous, 'administrator-preview', requestNow);
-      return scheduleProjection(
+      const projection = scheduleProjection(
         store,
         { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision },
         { globalRevision: globalRevision(), schedulingInput: inputRevision, run: previous, preview: true, computedAt: requestNow, schedulingTimeZone: configuration.timeZone }
       );
+      if (before) assertBatchStable(before);
+      return projection;
     },
     [INTEGRATION_OPERATIONS.adminScheduleRerun]: ({ actor, now: requestNow }) => {
       const inputRevision = schedulingInputRevision(properties);

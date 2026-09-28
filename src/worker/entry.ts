@@ -18,7 +18,7 @@ export default {
       const service = createStagingReadService(env);
       const api = createReadApi({
         origins: allowedOrigins(env),
-        dispatch: (input) => service.handle(input),
+        dispatch: (input, route) => service.handle(input, route),
         maxRequestBytes: READ_API_MAX_REQUEST_BYTES,
         responseHeaders: () => {
           const stats = service.stats();

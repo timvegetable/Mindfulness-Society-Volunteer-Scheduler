@@ -112,3 +112,46 @@ verification) and
 (server-to-server OAuth). See also
 <https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/batchGet>
 for the request/response shape the slice reuses.
+
+## Cloudflare Durable Objects — fetched 2026-09-27
+
+Source: <https://developers.cloudflare.com/durable-objects/platform/limits/> —
+page states "Last updated Jun 1, 2026". Fetched 2026-09-27.
+
+- "Durable Objects are available on both the Workers Free and Paid plans."
+- On the Workers Free plan, **only SQLite-backed Durable Objects are available**
+  (KV-backed classes are not available on Free).
+- "CPU per request: 30 seconds (default), configurable up to 5 minutes via
+  `limits.cpu_ms` in wrangler" — the increase applies to Workers Paid.
+- SQLite storage per Durable Object: 10 GB on Workers Paid; the Free plan allows
+  5 GB total storage per account with SQL storage, and storage is split into
+  SQLite chunks.
+- Wall time for a request that waits on a caller is unlimited while the caller
+  remains connected (CPU time, not wall time, is metered); alarm handlers get
+  15 minutes of wall time.
+- A single object has a soft limit of ~1,000 requests/second; sustained overload
+  returns an error rather than degrading the isolate.
+
+Source: <https://developers.cloudflare.com/durable-objects/platform/pricing/> —
+page states "Last updated Aug 25, 2026". Fetched 2026-09-27.
+
+- **Workers Free plan includes Durable Objects**: 100,000 requests/day;
+  13,000 GB-s of duration per day (each billed duration counts 128 MB of
+  resident memory); 5 million rows read/day and 100,000 rows written/day for
+  SQLite storage; 5 GB SQL storage total.
+- Paid plan prices requests ($0.15/million beyond 1M/month) and duration
+  ($12.50/million GB-s beyond 400,000 GB-s/month); rows read/written and storage
+  are billed per-unit beyond the included quota.
+- Duration is billed as wall-clock time while the object is active or not
+  eligible for hibernation; CPU time is billed separately only on Workers Paid.
+
+Relevance to task 3.5 (recorded before measurement, per the amendment):
+
+- SQLite-backed DOs on the account's Free plan are documented as available, so a
+  zero-cost DO topology is possible in principle. The topology uses no storage
+  writes and no KV-backed classes, so storage row quotas do not apply to it; the
+  request and duration quotas are shared with the existing staging Worker
+  deployments on the same account.
+- The documented 30 s default CPU allowance per DO request is the platform
+  ceiling for preview computation; the predeclared application gates (read
+  ≤ 1,000 ms, preview ≤ 5,000 ms including cold) remain the acceptance bars.

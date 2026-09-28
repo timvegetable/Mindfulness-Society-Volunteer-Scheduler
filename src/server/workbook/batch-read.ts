@@ -13,7 +13,8 @@ function withoutUsers<const T extends readonly WorkbookTabName[]>(tabs: T): Excl
 export const BATCH_READ_PLANS = {
   publishedSchedule: withoutUsers(READ_PLANS.publishedSchedule),
   insightCacheHit: withoutUsers(READ_PLANS.insightCacheHit),
-  insightCacheMiss: withoutUsers(READ_PLANS.insightCacheMiss)
+  insightCacheMiss: withoutUsers(READ_PLANS.insightCacheMiss),
+  schedulePreview: withoutUsers(READ_PLANS.schedulePreview)
 } as const;
 
 export type BatchReadPlan = keyof typeof BATCH_READ_PLANS;

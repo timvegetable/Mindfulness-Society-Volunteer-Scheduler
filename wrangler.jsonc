@@ -44,6 +44,59 @@
         "STAGING_SCHEDULING_INPUT_REVISION": "5",
         "STAGING_TAB_REVISIONS": "{\"Volunteers\":1,\"RecurringAvailability\":1,\"AvailabilityExceptions\":1,\"Sessions\":1,\"Assignments\":1,\"Backups\":1,\"SchedulingRuns\":1,\"Imports\":1,\"ImportMappings\":1,\"ImportedAvailability\":1,\"Users\":1,\"Settings\":1,\"AuditLog\":1,\"Centers\":1,\"CandidateSchedules\":1}",
       }
+    },
+    "staging-host": {
+      // Durable Object host for the isolated staging topology (task 3.5). It
+      // defines and registers the object class; it has no public route and no
+      // workers.dev endpoint, so only the gateway's cross-script binding can
+      // reach it. The Google credentials are provisioned here and nowhere else.
+      "name": "volunteer-scheduling-staging-host",
+      "main": "src/worker/host.ts",
+      "workers_dev": false,
+      "observability": { "enabled": true },
+      // The class needs a SQLite-backed namespace on the Free plan; no
+      // application state is ever written to it.
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["StagingWorkbookHost"] }],
+      "vars": {
+        // Same staging workbook configuration as env.staging, so the object's
+        // service resolves the same fixtures; the two Google credentials are
+        // set with `wrangler secret put --env staging-host`.
+        "STAGING_ALLOWED_ORIGINS": "http://localhost:8788",
+        "STAGING_OAUTH_AUDIENCE": "716719981089-lqjuqu56n0p46fha286qoo35curo1h9g.apps.googleusercontent.com",
+        "STAGING_WORKBOOK_ID": "1QPRWcAhsyy1s032Sj4_kS4hVra9rajph21AKkNu_D0w",
+        "STAGING_WORKBOOK_TIME_ZONE": "America/New_York",
+        "STAGING_TIME_ZONE": "America/New_York",
+        "STAGING_DISPLAY_INCREMENT_MINUTES": "30",
+        "STAGING_OPERATING_HOURS_START": "09:00",
+        "STAGING_OPERATING_HOURS_END": "21:00",
+        "STAGING_DATA_REVISION": "42",
+        "STAGING_SCHEDULING_INPUT_REVISION": "5",
+        "STAGING_TAB_REVISIONS": "{\"Volunteers\":1,\"RecurringAvailability\":1,\"AvailabilityExceptions\":1,\"Sessions\":1,\"Assignments\":1,\"Backups\":1,\"SchedulingRuns\":1,\"Imports\":1,\"ImportMappings\":1,\"ImportedAvailability\":1,\"Users\":1,\"Settings\":1,\"AuditLog\":1,\"Centers\":1,\"CandidateSchedules\":1}",
+        // Benchmark route disabled by default; a separate approved deployment
+        // flips this to "true" for the measurement campaign.
+        "STAGING_PREVIEW_BENCHMARK_ENABLED": "false",
+      }
+    },
+    "staging-gateway": {
+      // Thin gateway for the isolated staging topology. It holds no Google
+      // credentials and no workbook identity; it forwards to one stable object
+      // chosen from the workbook id below and streams the object's response.
+      "name": "volunteer-scheduling-staging-gateway",
+      "main": "src/worker/gateway.ts",
+      "workers_dev": true,
+      "observability": { "enabled": true },
+      "durable_objects": {
+        "bindings": [
+          // Cross-script binding to the host namespace. Deploying the gateway
+          // before the host fails closed at the gateway (bounded 503), so the
+          // deployment order is always host first.
+          { "name": "STAGING_HOST", "class_name": "StagingWorkbookHost", "script_name": "volunteer-scheduling-staging-host" }
+        ]
+      },
+      "vars": {
+        "STAGING_WORKBOOK_ID": "1QPRWcAhsyy1s032Sj4_kS4hVra9rajph21AKkNu_D0w",
+        "STAGING_ALLOWED_ORIGINS": "http://localhost:8788",
+      }
     }
   }
 }

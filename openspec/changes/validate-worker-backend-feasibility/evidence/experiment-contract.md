@@ -424,3 +424,91 @@ deployment, and no deployment happens without its own explicit approval.
 * `web_search` was unavailable during this run (provider returned HTTP 401), so
   external facts come from direct page fetches on 2026-09-24; the Google page
   publishes no last-updated date, so its date is the fetch date only.
+
+## Amendment 2026-09-27: Durable Object topology targets (task 3.5)
+
+The measured verdict of 2026-09-27 (`evidence/verdict.md`) found the single
+Worker topology no-go for CPU-limited preview computation and left the Durable
+Object path to its own deployment approval. This amendment predeclares the
+targets for that topology **before any result is observed**, per the same
+fixed-thresholds rule. It amends and extends, never relaxes, the thresholds
+above.
+
+### Topology under test
+
+Browser → thin gateway Worker → Durable Object → Sheets, as specified in the
+amended proposal/design/spec delta: separate gateway and host bundles, a
+cross-script Durable Object binding registered through a SQLite migration, no
+public host endpoint, config-derived object selection (one stable object per
+configured synthetic workbook), request-local services and counters inside the
+object, Google credentials on the host only, and the default-disabled
+`POST /benchmark/schedule-preview` endpoint. The existing staging Worker remains
+the baseline.
+
+### Predeclared thresholds for the Durable Object topology (fixed)
+
+| Dimension | Threshold |
+| --- | --- |
+| Gateway CPU | Warm p99 ≤ 5 ms; **every** measured warm request ≤ 8 ms; cold requests ≤ 10 ms. Measured from platform invocation records attributed explicitly to the gateway script. |
+| Object read CPU | Warm p99 ≤ 500 ms; **every** measured request including cold ≤ 1,000 ms (a 30 s documented allowance leaves ≥ 30× headroom, so the gate is the application target, not the platform limit). Attributed to the host script / object namespace. |
+| Object preview CPU | Warm p99 ≤ 3,000 ms; **every** measured request including cold ≤ 5,000 ms. Same attribution. |
+| Wall time | Read operations unchanged: warm p99 ≤ 1,500 ms per read operation and per fixture, ≥ 30 observations at ≥ 3 in flight. Preview: end-to-end warm p99 ≤ 5,000 ms (measured, not asserted; the prior verdict recorded 6.9 s on 3–4 vCPU). |
+| Reliability | Zero unexpected failures, zero quota errors, zero resource-limit errors across all workloads. |
+| Correctness | Semantic parity with the existing implementation at fixed clocks across both fixtures; fresh authorization; workbook and revisions unchanged. |
+| Sheets budget | One read for identity; two for domain reads and preview; ≤ 40 reads in every rolling 60-second window. |
+| Memory | Measured isolate p99 ≤ 64 MiB where the platform publishes it; an unavailable memory measurement stays unresolved, not passed. |
+| Free-tier consumption | Campaign ≤ 1,000 browser/API attempts; measured daily consumption plus 100/500/1,000-per-day projections stay ≤ 50% of current request and duration allowances; no paid plan. |
+
+Thresholds are never adjusted after observing results. A threshold that cannot
+be evaluated is reported **not evaluated** and caps the verdict at
+**conditional-go**; an unmet threshold that is not repairable records **no-go**.
+
+### Measurement and attribution rules (replacing the account-wide query)
+
+* Metrics are attributed explicitly to the gateway script, the host script, the
+  Durable Object namespace, the deployment, and a bounded time window; account
+  totals are not evidence. A query whose platform attribution renders records
+  ambiguous (`__unknown__` script attribution, mixed namespaces) is reported as
+  **ambiguously attributed** and cannot pass a gate.
+* Platform invocation CPU records are preferred, with their documented units
+  stated. Aggregate quantiles are used only for their actual population: bucket
+  quantiles are never divided by request counts, and a maximum bucket percentile
+  is never labelled the campaign percentile.
+* Pagination and window splitting are applied so no record set is silently
+  truncated; truncated, sampled, missing, or ambiguously attributed records are
+  detected and reported. Insufficient coverage cannot pass a gate.
+* Gateway CPU, object CPU, object memory, and billable duration are collected
+  separately. Wall-clock phase timings are diagnosis-only evidence.
+* Server-generated correlation IDs, deployment identity, and isolate/object-start
+  markers are attached to sanitized telemetry; telemetry never logs credentials,
+  response bodies, principals, or workbook rows.
+
+### Cold-isolate protocol (replacing the single-deploy cold sequence)
+
+* At least five genuine **gateway** and five genuine **host** cold-isolate
+  observations, covering every operation as a first-use path. A cold observation
+  is the first request to a freshly deployed script version, verified through
+  platform telemetry; reusing an isolate after its first request is a warm
+  observation and is not counted.
+* **Object activation is recorded separately**: a newly named object does not by
+  itself establish a cold isolate. The first activation of an object inside a
+  fresh host isolate is recorded as both, and the two are distinguishable in the
+  verdict.
+* Cold sequences use individually approved redeployments (`--cold-redeploy`),
+  each requiring its own approval; requests within a deployed version are spaced
+  so platform per-second buckets that hold a single invocation produce exact
+  CPU records, and multi-request buckets are reported as per-bucket aggregates
+  with their population, never scaled.
+* Every attempt is retained; no automatic retries. Sheets read counters and
+  workbook digests are cross-checked before and after each fixture campaign.
+
+### Verdict bookkeeping
+
+* The 2026-09-27 verdict remains the historical verdict of the single Worker
+  topology. Its unsupported percentile claims are corrected through a dated
+  addendum (`evidence/verdict-addendum-2026-09-27.md`), and valid single-request
+  evidence is retained.
+* The Durable Object topology gets its own dated verdict
+  (`evidence/verdict-<date>.md`). A **go** permits the next migration change
+  through its own gates; it does not authorize production cutover, a paid plan,
+  or any push without approval.

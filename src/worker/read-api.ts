@@ -13,6 +13,13 @@ import { DEFAULT_MAX_PAYLOAD_BYTES, INTEGRATION_OPERATIONS, failure } from '../s
  */
 
 export const READ_API_PATH = '/exec';
+/**
+ * Secondary route for the staging `admin.schedule.preview` benchmark, served by
+ * the Durable Object host only. It is disabled unless the deployment explicitly
+ * sets `STAGING_PREVIEW_BENCHMARK_ENABLED`; a disabled request is answered with
+ * the same 404 envelope as any unknown route, before any body read.
+ */
+export const BENCHMARK_PREVIEW_PATH = '/benchmark/schedule-preview';
 export const READ_API_MAX_REQUEST_BYTES = DEFAULT_MAX_PAYLOAD_BYTES;
 export const READ_API_CONTENT_TYPE = 'text/plain';
 export const READ_API_ALLOW_METHODS = 'POST, OPTIONS';
@@ -37,7 +44,17 @@ export const READ_API_OPERATIONS: ReadonlySet<string> = new Set([
   INTEGRATION_OPERATIONS.adminInsights
 ]);
 
-export type ReadDispatch = (input: unknown) => Promise<ApiResponse<unknown>> | ApiResponse<unknown>;
+/**
+ * The benchmark route serves exactly one operation, and the preview is never
+ * accepted through `/exec`: this set is what keeps the two routes disjoint even
+ * when the benchmark is enabled.
+ */
+export const BENCHMARK_PREVIEW_OPERATIONS: ReadonlySet<string> = new Set([INTEGRATION_OPERATIONS.adminSchedulePreview]);
+
+/** Which transport route served a request. The staging dispatch uses it to pick the route-aware allowlist. */
+export type ReadRoute = 'exec' | 'benchmark';
+
+export type ReadDispatch = (input: unknown, route: ReadRoute) => Promise<ApiResponse<unknown>> | ApiResponse<unknown>;
 
 export type ReadApiOptions = Readonly<{
   /** Exact allowed origins. An empty list denies every request that sends `Origin`. */
@@ -50,6 +67,11 @@ export type ReadApiOptions = Readonly<{
    * so a measurement run records what actually happened.
    */
   responseHeaders?: () => Record<string, string>;
+  /**
+   * Enables the staging preview benchmark route. Absent (the default) keeps
+   * `/benchmark/schedule-preview` answering 404 like any unknown route.
+   */
+  benchmarkPreview?: Readonly<{ enabled: boolean }>;
 }>;
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -180,8 +202,11 @@ export function createReadApi(options: ReadApiOptions): ReadApi {
     if (!cors.ok) return fail(403, 'FORBIDDEN', 'This staging endpoint does not allow that origin.');
     const headers = cors.headers;
     const path = requestPath(request);
+    const benchmarkEnabled = options.benchmarkPreview?.enabled === true;
+    const route: ReadRoute = path === BENCHMARK_PREVIEW_PATH ? 'benchmark' : 'exec';
+    const benchmarkRoute = route === 'benchmark';
 
-    if (request.method === 'OPTIONS' && path === READ_API_PATH) {
+    if (request.method === 'OPTIONS' && (path === READ_API_PATH || (benchmarkRoute && benchmarkEnabled))) {
       return new Response(null, {
         status: 204,
         headers: {
@@ -193,7 +218,11 @@ export function createReadApi(options: ReadApiOptions): ReadApi {
         }
       });
     }
-    if (path !== READ_API_PATH) return fail(404, 'NOT_FOUND', 'Route not found.', headers);
+    // A disabled benchmark route is indistinguishable from an unknown route:
+    // 404 before any body read, with no workbook or identity access.
+    if (path !== READ_API_PATH && !(benchmarkRoute && benchmarkEnabled)) {
+      return fail(404, 'NOT_FOUND', 'Route not found.', headers);
+    }
     if (request.method !== 'POST') {
       return fail(405, 'INVALID_REQUEST', 'Use POST for the read API.', { ...headers, Allow: READ_API_ALLOW_METHODS });
     }
@@ -224,12 +253,22 @@ export function createReadApi(options: ReadApiOptions): ReadApi {
     const operation = typeof input === 'object' && input !== null && !Array.isArray(input)
       ? (input as { operation?: unknown }).operation
       : undefined;
-    if (typeof operation !== 'string' || !READ_API_OPERATIONS.has(operation)) {
-      return jsonResponse(failure('FORBIDDEN', 'This staging endpoint only serves the allowlisted read operations.'), 200, headers);
+    const routeOperations = benchmarkRoute ? BENCHMARK_PREVIEW_OPERATIONS : READ_API_OPERATIONS;
+    if (typeof operation !== 'string' || !routeOperations.has(operation)) {
+      return jsonResponse(
+        failure(
+          'FORBIDDEN',
+          benchmarkRoute
+            ? 'This staging benchmark endpoint only serves the schedule preview operation.'
+            : 'This staging endpoint only serves the allowlisted read operations.'
+        ),
+        200,
+        headers
+      );
     }
 
     try {
-      const response = await options.dispatch(input);
+      const response = await options.dispatch(input, route);
       return jsonResponse(response, 200, { ...headers, ...options.responseHeaders?.() });
     } catch {
       // The caller learns only that the service failed; configuration and

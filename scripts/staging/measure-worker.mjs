@@ -11,10 +11,12 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const OPERATION_READS = {
+export const OPERATION_READS = {
   'session.me': 1,
   'admin.schedule.read': 2,
-  'admin.insights.read': 2
+  'admin.insights.read': 2,
+  // The benchmark route costs one authorization read plus one schema-derived batch.
+  'admin.schedule.preview': 2
 };
 const READ_BUDGET_PER_WINDOW = 40;
 const WINDOW_MS = 60_000;
@@ -221,6 +223,9 @@ async function runPhase(manifest, phase, workload, credential, budget, fetchImpl
         attempt.status = response.status;
         attempt.sheetsReads = Number(response.headers.get('x-staging-sheets-reads') ?? '') || 0;
         attempt.digest = response.headers.get('x-staging-snapshot-digest') ?? undefined;
+        // The server-generated correlation id joins this attempt to gateway and
+        // object telemetry; it is printed by the platform, never by us.
+        attempt.correlationId = response.headers.get('x-staging-correlation-id') ?? undefined;
         const body = await response.json().catch(() => undefined);
         attempt.envelopeOk = body?.ok === true;
         attempt.errorCode = body?.ok === false ? body.error?.code : undefined;

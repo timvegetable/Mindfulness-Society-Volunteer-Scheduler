@@ -38,5 +38,27 @@ export default tseslint.config(
         { name: 'clearImmediate', message: 'Node globals are unavailable in the Worker runtime.' }
       ]
     }
+  },
+  {
+    // The staging gateway bundle must stay thin: no production runtime, no Zod,
+    // no Temporal. This is the review-time boundary; the bundle audit
+    // (scripts/audit-gateway-bundle.mjs) is the build-time check for the same
+    // constraint on the emitted output.
+    files: ['src/worker/gateway.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: ['assert', 'buffer', 'child_process', 'crypto', 'events', 'fs', 'http', 'https', 'net', 'os', 'path', 'process', 'stream', 'tls', 'url', 'util', 'zlib'],
+        patterns: [
+          {
+            group: ['node:*'],
+            message: 'Node builtins are unavailable in the Worker runtime.'
+          },
+          {
+            group: ['../server/**', '../shared/**', '../worker/staging.js', '../worker/host.js', '../worker/workbook/**', 'zod', '@js-temporal/*'],
+            message: 'The gateway must not import the production runtime, Zod, or Temporal; keep its admission rules local and pinned by tests.'
+          }
+        ]
+      }]
+    }
   }
 );

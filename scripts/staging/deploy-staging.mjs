@@ -19,6 +19,8 @@ export function parseArguments(argv) {
     key: 'staging-local/google-service-account.json',
     workbook: undefined,
     environment: 'staging',
+    /** Which bundle to deploy: the baseline Worker, the DO host, or the gateway. */
+    target: 'baseline',
     report: undefined,
     confirm: false,
     plan: false
@@ -34,12 +36,20 @@ export function parseArguments(argv) {
     else if (argument === '--key') options.key = next();
     else if (argument === '--workbook') options.workbook = next();
     else if (argument === '--env') options.environment = next();
+    else if (argument === '--target') {
+      const value = next();
+      if (!['baseline', 'host', 'gateway'].includes(value)) throw new Error(`--target must be baseline, host or gateway, not ${value}.`);
+      options.target = value;
+    }
+    else if (argument === '--benchmark-enabled') options.benchmarkEnabled = true;
     else if (argument === '--report') options.report = next();
     else if (argument === '--confirm-deploy') options.confirm = true;
     else if (argument === '--plan') options.plan = true;
     else if (argument === '--help' || argument === '-h') options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
+  if (options.target !== 'baseline') options.environment = options.target === 'host' ? 'staging-host' : 'staging-gateway';
+  if (options.benchmarkEnabled === true && options.target !== 'host') throw new Error('--benchmark-enabled applies to the host target only; the flag lives on the Durable Object host.');
   return options;
 }
 
@@ -79,13 +89,17 @@ async function main() {
     return;
   }
 
+  // The gateway holds no Google credentials and needs no key material, so the
+  // helper never reads it for that target. The host and the baseline do.
   let serviceAccount;
-  try {
-    serviceAccount = await readServiceAccountKey(resolve(options.key));
-  } catch (error) {
-    console.error(error.message);
-    process.exitCode = 1;
-    return;
+  if (options.target !== 'gateway') {
+    try {
+      serviceAccount = await readServiceAccountKey(resolve(options.key));
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   // A plan is reviewable without the credential; only an actual deploy needs it.
@@ -98,13 +112,32 @@ async function main() {
   }
   if (tokenPresent) token = (await readFile(resolve(options.tokenFile), 'utf8')).trim();
 
-  const steps = [
-    `wrangler deploy --env ${options.environment}${options.workbook === undefined ? '' : ` --var STAGING_WORKBOOK_ID:${options.workbook}`}`,
-    'wrangler secret put GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY --env ' + options.environment,
-    'wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL --env ' + options.environment
-  ];
+  const deployStep = `wrangler deploy --env ${options.environment}${options.workbook === undefined ? '' : ` --var STAGING_WORKBOOK_ID:${options.workbook}`}${options.benchmarkEnabled === true ? ' --var STAGING_PREVIEW_BENCHMARK_ENABLED:true' : ''}`;
+  // Google credentials are provisioned only where they are used: the DO host
+  // and the baseline Worker, never the gateway.
+  const steps = options.target === 'gateway'
+    ? [deployStep]
+    : [
+      deployStep,
+      'wrangler secret put GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY --env ' + options.environment,
+      'wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL --env ' + options.environment
+    ];
   if (options.plan || !options.confirm) {
-    console.log(JSON.stringify({ accountId: ACCOUNT_ID, environment: options.environment, tokenFile: options.tokenFile, tokenPresent, keyPath: options.key, serviceAccountEmail: serviceAccount.clientEmail, workbookOverride: options.workbook ?? null, steps, writes: true }, null, 2));
+    console.log(JSON.stringify({
+      accountId: ACCOUNT_ID,
+      environment: options.environment,
+      target: options.target,
+      // The isolated topology deploys the host before the gateway; every
+      // deployment, including cold-start redeploys, needs its own approval.
+      deploymentOrder: options.target === 'baseline' ? null : 'host first, then gateway',
+      tokenFile: options.tokenFile,
+      tokenPresent,
+      keyPath: options.target === 'gateway' ? null : options.key,
+      serviceAccountEmail: serviceAccount?.clientEmail ?? null,
+      workbookOverride: options.workbook ?? null,
+      steps,
+      writes: true
+    }, null, 2));
     if (!options.confirm) {
       console.error('Refusing to deploy: pass --confirm-deploy once the staging deployment is approved.');
       process.exitCode = options.plan ? 0 : 1;
@@ -120,7 +153,9 @@ async function main() {
   if (options.workbook !== undefined) deployArgs.push('--var', `STAGING_WORKBOOK_ID:${options.workbook}`);
   const deploy = wrangler(deployArgs, environment);
   let url = deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
-  if (deploy.status !== 0 || url === undefined) {
+  // The DO host has no workers.dev endpoint, so a missing URL is expected there.
+  const urlExpected = options.target === 'baseline' || options.target === 'gateway';
+  if (deploy.status !== 0 || (url === undefined && urlExpected)) {
     console.error('The deploy failed.');
     // The tail is enough to diagnose and contains no secret.
     console.error((deploy.stderr || deploy.stdout).slice(-1200));
@@ -128,13 +163,15 @@ async function main() {
     return;
   }
 
-  for (const [name, value] of [['GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY', serviceAccount.privateKey], ['GOOGLE_SERVICE_ACCOUNT_EMAIL', serviceAccount.clientEmail]]) {
-    const result = wrangler(['secret', 'put', name, '--env', options.environment], environment, { stdin: value });
-    if (result.status !== 0) {
-      console.error(`Setting ${name} failed.`);
-      console.error((result.stderr || result.stdout).slice(-600));
-      process.exitCode = 1;
-      return;
+  if (options.target !== 'gateway') {
+    for (const [name, value] of [['GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY', serviceAccount.privateKey], ['GOOGLE_SERVICE_ACCOUNT_EMAIL', serviceAccount.clientEmail]]) {
+      const result = wrangler(['secret', 'put', name, '--env', options.environment], environment, { stdin: value });
+      if (result.status !== 0) {
+        console.error(`Setting ${name} failed.`);
+        console.error((result.stderr || result.stdout).slice(-600));
+        process.exitCode = 1;
+        return;
+      }
     }
   }
 
@@ -145,10 +182,19 @@ async function main() {
     deployedAt: new Date().toISOString(),
     accountId: ACCOUNT_ID,
     environment: options.environment,
-    workerUrl: url,
-    execUrl: `${url}/exec`,
-    serviceAccountEmail: serviceAccount.clientEmail,
+    target: options.target,
+    // The gateway serves /exec and, when the benchmark is enabled, the preview
+    // route; the host serves nothing publicly.
+    workerUrl: url ?? null,
+    ...(url === null || url === undefined
+      ? {}
+      : {
+        execUrl: `${url}/exec`,
+        ...(options.target === 'gateway' ? { benchmarkUrl: `${url}/benchmark/schedule-preview` } : {})
+      }),
+    serviceAccountEmail: serviceAccount?.clientEmail ?? null,
     workbookOverride: options.workbook ?? null,
+    benchmarkEnabled: options.benchmarkEnabled === true,
     // Sanitization: the token, the key and the secret values are never recorded.
     sanitized: true
   };

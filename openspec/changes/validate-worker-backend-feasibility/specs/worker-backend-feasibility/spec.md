@@ -43,3 +43,36 @@ The experiment SHALL produce a dated go, conditional-go or no-go report with wor
 #### Scenario: Evidence contains sensitive data
 - **WHEN** raw traces include credentials, private rows, account identifiers or one-time response URLs
 - **THEN** checked-in evidence contains only sanitized aggregate results and private artifacts remain in ignored in-tree storage
+
+### Requirement: Isolated gateway and Durable Object staging topology (amendment 2026-09-27)
+The experiment SHALL additionally evaluate a staging topology in which a thin gateway Worker forwards browser requests through a cross-script Durable Object binding to a SQLite-backed object that reuses the existing bounded transport and staging service. The gateway SHALL NOT import the production runtime, Zod, or Temporal, SHALL keep handling limited to transport admission and forwarding, SHALL stream the returned response without parsing or reserializing it, and SHALL map binding failures to the existing JSON error envelope. The host SHALL have no public route or workers.dev endpoint, SHALL route to one stable object per configured synthetic workbook chosen from deployment configuration (never browser input), SHALL keep Google credentials on the host only, SHALL create request-local services, snapshots, counters and principals inside the object, SHALL retain only existing expiring Google caches across requests, and SHALL write no application state into object storage. The existing staging Worker SHALL remain available as the baseline.
+
+#### Scenario: Binding failure
+- **WHEN** the gateway's Durable Object binding or object-selection configuration is missing or the forwarding call fails
+- **THEN** the gateway responds with the existing bounded JSON error envelope without leaking binding details
+
+#### Scenario: Object state isolation
+- **WHEN** concurrent or sequential requests reach the same object
+- **THEN** each request uses its own service, snapshot, counters and principal, and no application state is written to object storage
+
+### Requirement: Staging preview benchmark endpoint (amendment 2026-09-27)
+The experiment SHALL expose `POST /benchmark/schedule-preview` on the isolated staging topology, controlled by `STAGING_PREVIEW_BENCHMARK_ENABLED` with `false` as the default, and disabled requests SHALL return 404. An enabled request SHALL accept the existing authenticated envelope with operation `admin.schedule.preview` and an empty payload, SHALL require a freshly authorized administrator, SHALL invoke the real preview handler with the authenticated principal rather than a fabricated actor, SHALL fetch Users first and then one schema-derived batch containing SchedulingRuns, Volunteers, RecurringAvailability, AvailabilityExceptions, Sessions, Assignments, and Centers, and SHALL return the existing preview envelope. Neither previews nor rejected requests SHALL modify Sheets, audit rows, or revisions. `/exec` and its three-operation allowlist SHALL be preserved, and the preview operation SHALL be rejected through `/exec`.
+
+#### Scenario: Benchmark disabled by default
+- **WHEN** a deployment has not explicitly enabled `STAGING_PREVIEW_BENCHMARK_ENABLED`
+- **THEN** `POST /benchmark/schedule-preview` returns 404 without reading the workbook
+
+#### Scenario: Preview denial costs no domain reads
+- **WHEN** a non-administrator submits the preview benchmark envelope, or an administrator submits it through `/exec`
+- **THEN** the request is denied with the existing envelope and zero domain Sheets reads
+
+### Requirement: Separately measured gateway and object CPU budgets (amendment 2026-09-27)
+The experiment SHALL measure gateway CPU and object CPU separately against predeclared thresholds recorded before results are observed: gateway warm p99 ≤5 ms with every warm request ≤8 ms; object read CPU p99 ≤500 ms with every measured request including cold ≤1,000 ms; object preview CPU p99 ≤3,000 ms with every measured request including cold ≤5,000 ms; wall-clock latency thresholds unchanged. Platform metrics SHALL be attributed explicitly to the gateway script, host script, namespace, deployment and time window; coverage gaps, truncation or ambiguous attribution SHALL be reported and cannot pass a gate. Object memory and billable duration SHALL be collected from platform metrics where published, with unavailable measurements recorded as unresolved.
+
+#### Scenario: Thresholds are predeclared
+- **WHEN** the campaign runs and the verdict is recorded
+- **THEN** the recorded thresholds match the amendment-2026-09-27 values in `evidence/experiment-contract.md` and have not been adjusted after observing results
+
+#### Scenario: Insufficient coverage
+- **WHEN** platform attribution is missing, truncated, sampled or ambiguous for a measured dimension
+- **THEN** the affected dimension is reported unresolved instead of counted as passing

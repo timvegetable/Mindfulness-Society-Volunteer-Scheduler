@@ -8,6 +8,7 @@ Apps Script can finish a handler successfully while its ContentService redirect 
 - Reuse existing schemas, workbook codecs, read plans, derivations, and selected prototype fixtures/probes; measure representative and larger workloads, including scheduling-preview computation.
 - Produce a dated feasibility verdict covering correctness, CPU, latency, quotas, credentials, and zero-cost operation before production migration.
 - Establish the six-change dependency roadmap in this change's design. Proposal readiness does not authorize deployment, production writes, a paid plan, or subsequent cutover.
+- Amendment 2026-09-27 (task 3.5): additionally evaluate an isolated Durable Object staging topology — a thin gateway Worker forwarding through a cross-script Durable Object binding to a SQLite-backed object that reuses the existing bounded transport and staging service — together with a default-disabled `POST /benchmark/schedule-preview` staging endpoint and separately predeclared gateway/object CPU budgets. This amendment authorizes only the staging experiment described in `evidence/experiment-contract.md` (amendment 2026-09-27); it does not change production authorization, persistence, or the baseline staging Worker.
 
 ## Capabilities
 
