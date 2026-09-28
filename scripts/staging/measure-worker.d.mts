@@ -28,8 +28,10 @@ export declare function validateManifest(value: unknown, options?: { allowHost?:
 export declare class ReadBudget {
   readonly limit: number;
   readonly windowMs: number;
-  constructor(limit?: number, windowMs?: number, now?: () => number);
+  constructor(limit?: number, windowMs?: number, now?: () => number, ledgerPath?: string);
   spent: number[];
+  loadLedger(): Promise<void>;
+  saveLedger(): Promise<void>;
   reserve(reads: number): Promise<void>;
   observed(): number;
 }
