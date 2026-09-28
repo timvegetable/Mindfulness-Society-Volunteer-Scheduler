@@ -231,6 +231,7 @@ export function summarizeInvocations(rows) {
     }
   }
   const exactShare = requests > 0 ? exactSamples.length / requests : null;
+  const exactMaxUs = exactSamples.length ? Math.max(...exactSamples.map((sample) => sample.cpuUs)) : null;
   const campaignQuantiles = exactShare !== null && exactSamples.length >= 30 && exactShare >= 0.9
     ? campaignPercentiles(exactSamples.map((sample) => sample.cpuUs))
     : null;
@@ -250,6 +251,8 @@ export function summarizeInvocations(rows) {
       unit: CPU_UNIT,
       exactSamples: exactSamples.length,
       exactSampleShare: exactShare === null ? null : Math.round(exactShare * 1000) / 1000,
+      exactMaxUs,
+      exactMaxMs: exactMaxUs === null ? null : Math.round(exactMaxUs / 10) / 100,
       // Campaign percentiles only when the population is dominated by exact
       // single-request samples; otherwise the per-bucket aggregates stand on
       // their own and no campaign percentile is claimed.

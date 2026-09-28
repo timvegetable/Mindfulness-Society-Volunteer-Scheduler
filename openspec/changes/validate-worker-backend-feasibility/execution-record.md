@@ -637,3 +637,50 @@ Await the operator's approvals for the deployment chain in
 `evidence/do-campaign-plan.md` section 1 (host deploy, gateway deploy,
 benchmark enable + cold redeploys, campaign run); on approval, execute the
 campaign and record the new dated verdict.
+
+## Task 3.5 completion (2026-09-28): Durable Object topology measured, no-go as built
+
+Executed under the approvals recorded on 2026-09-28 (host deploy, gateway
+deploy, benchmark enablement + cold redeploy cycles, campaign run; the
+corrective key-set fix redeploy was separately approved as d1961cd):
+
+* **Deployment chain executed.** Host first (SQLite migration `v1`, secrets on
+  the host only), then gateway (cross-script binding); benchmark enabled and
+  disabled by separate approved host redeploys; the representative workbook
+  restored at the end (verified: reads serve with the unchanged campaign
+  digest `051583ae…`, `POST /benchmark/schedule-preview` → 404 with zero
+  reads).
+* **Campaign executed** per `evidence/do-campaign-plan.md`: 920 workload
+  attempts + 10 cold/denial attempts through the gateway harness, ~90 browser
+  probe attempts across six probe sessions, every attempt retained without
+  retries, digests stable, read counts 1/2/2 + preview 2 verified via headers.
+  Two mid-campaign defects were found, fixed with regression tests, and
+  deployed under separate approvals: (1) concurrent cold verifiers hit the
+  JWKS retry gate instead of joining the in-flight load (d1961cd); (2) the
+  read budget's rolling window reset per harness process (ledger fix).
+* **Cold coverage:** 6 gateway + 5 host cold-isolate observations, every
+  operation covered as a first-use path including a served cold preview;
+  object activation recorded separately; the DO-redeploy version-lag finding
+  recorded.
+* **Platform metrics:** gateway script 1,504 invocations (all `success`, max
+  exact CPU 2.43 ms); DO namespace 1,501 requests, 340.1 s CPU over the
+  window, isolate memory P99 55.05 MiB; per-request DO CPU quantiles and
+  billable duration are not published (recorded unresolved; per-minute sums
+  used as labelled aggregates). The host script's `workersInvocationsAdaptive`
+  records are not published — the object evidence comes from the
+  namespace-filtered DO datasets, as the amendment anticipated.
+* **Verdict:** `evidence/verdict-2026-09-28.md` — **no-go for the topology as
+  built**: the larger fixture's preview costs ≈7.5–12 s of CPU against the
+  predeclared ≤3 s/≤5 s and ≈11 s wall against ≤5 s, and the predeclared
+  four-way preview burst exceeded the platform's per-request wall cap (ten
+  503s at ~37 s). Every read-path target met. The ~120-attempt overage of the
+  campaign cap (extra credential-refresh probe sessions) and the larger
+  preview burst's attributed 429s are recorded as deviations with causes.
+
+## Next action
+
+Task 3.5 is complete with evidence. The change's remaining open tasks are the
+milestone-4 documentation/verdict items already recorded as satisfied by
+`verdict.md` (2026-09-27) and now supplemented by the Durable Object verdict;
+follow-up work (`serve-primary-reads-from-worker`) inherits the read-path
+evidence through its own gates.
