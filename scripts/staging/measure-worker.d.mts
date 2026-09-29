@@ -51,3 +51,19 @@ export declare function planFor(manifest: { workerUrl: string; operations: strin
 };
 
 export declare function summarize(attempts: Array<Record<string, unknown>>, elapsedMs: number): Record<string, unknown>;
+
+export declare const ATTEMPT_BUDGET_PER_CAMPAIGN: number;
+
+export declare class AttemptBudget {
+  readonly limit: number;
+  constructor(limit?: number, ledgerPath?: string);
+  spent: number;
+  loadLedger(): Promise<void>;
+  saveLedger(): Promise<void>;
+  reserve(): Promise<boolean>;
+  observed(): number;
+}
+
+export declare function classifyColdObservation(attempt: { failure?: string; hostDeployedAt?: string }, expectedHostDeployedAt?: string): string;
+
+export declare function runPhase(manifest: { workerUrl: string; operations: string[] }, phase: string, workload: { requests: number; concurrency: number }, credential: string, budget: ReadBudget, attemptLedger: AttemptBudget, fetchImpl: (url: string, init: unknown) => Promise<{ status: number; headers: { get(name: string): string | null }; json(): Promise<unknown> }>, attemptLog: string): Promise<{ attempts: Array<Record<string, unknown>>; elapsedMs: number; deferred: number }>;

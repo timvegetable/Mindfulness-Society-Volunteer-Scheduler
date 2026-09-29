@@ -31,20 +31,34 @@ clientInput.value = parameters.get('client') ?? '';
 const accountLabel = parameters.get('label') ?? 'probe';
 
 let credential;
-const spentReads = [];
+// Reserved reads come from the probe host's shared ledger endpoint, so the
+// browser's Sheets reads and the harness's attempts hold one rolling window.
+const pacing = { reservedReads: 0 };
 
-/** Waits until `reads` more reads fit inside the contract's sliding window. */
+/** Reserves `reads` in the probe host's shared read ledger before an attempt. */
 async function reserveReads(reads) {
   for (;;) {
-    const cutoff = Date.now() - BUDGET_WINDOW_MS;
-    while (spentReads.length > 0 && spentReads[0] < cutoff) spentReads.shift();
-    if (spentReads.length + reads <= READ_BUDGET) {
-      for (let index = 0; index < reads; index += 1) spentReads.push(Date.now());
+    statusNode.textContent = `Holding for the shared read budget (reserving ${reads} reads)…`;
+    let response;
+    try {
+      response = await fetch('/__reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reads })
+      });
+    } catch {
+      statusNode.textContent = 'The probe host could not be reached for read pacing.';
+      await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+      continue;
+    }
+    if (response.ok) {
+      const granted = await response.json().catch(() => undefined);
+      pacing.reservedReads += reads;
+      pacing.observedReadsInLastWindow = granted?.observedReadsInLastWindow ?? null;
       return;
     }
-    const waitMs = Math.max(50, spentReads[0] + BUDGET_WINDOW_MS - Date.now());
-    statusNode.textContent = `Holding to stay inside the Sheets read budget (${spentReads.length}/${READ_BUDGET} reads this minute)…`;
-    await new Promise((resolveWait) => setTimeout(resolveWait, waitMs));
+    statusNode.textContent = 'The probe host refused the read reservation.';
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
   }
 }
 
@@ -173,6 +187,11 @@ async function runProbe() {
     },
     concurrency: CONCURRENCY,
     observedMaxInFlight: Math.max(0, ...attempts.map((attempt) => attempt.inFlight ?? 0)),
+    // The pacing evidence: every attempt reserved its reads in the shared
+    // ledger first, closing the pacing gap the 2026-09-28 verdict recorded.
+    pacedThroughSharedLedger: pacing.reservedReads === attempts.reduce((total, attempt) => total + (attempt.operation in OPERATION_READS ? OPERATION_READS[attempt.operation] : 2), 0),
+    reservedReads: pacing.reservedReads,
+    observedReadsInLastWindow: pacing.observedReadsInLastWindow ?? null,
     pointsOfPresence: [...new Set(attempts.map((attempt) => attempt.facts?.pointOfPresence).filter(Boolean))],
     perAttempt: attempts.slice(0, MAX_REPORTED_CELLS * OPERATIONS.length).map((attempt) => ({
       operation: attempt.operation,

@@ -13,6 +13,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
 const HARNESS = join(ROOT, 'scripts/staging/measure-worker.mjs');
+// The feasibility change's evidence was archived with its change folder; the
+// staging manifest's probes live there now.
+const STAGING_MANIFEST = join(ROOT, 'openspec/changes/archive/2026-09-29-validate-worker-backend-feasibility/evidence/staging-manifest.md');
 
 const VALID_MANIFEST = {
   workerUrl: 'https://volunteer-scheduling-staging.example.workers.dev/exec',
@@ -144,8 +147,90 @@ describe('staging measurement harness', () => {
     expect(source).toContain('A single request would exceed the read budget');
   });
 
+  it('keeps the campaign attempt budget at the predeclared cap across restarts', async () => {
+    const module = await import('../../../scripts/staging/measure-worker.mjs') as {
+      AttemptBudget: new (limit?: number, ledgerPath?: string) => { loadLedger(): Promise<void>; reserve(): Promise<boolean>; observed(): number };
+      ATTEMPT_BUDGET_PER_CAMPAIGN: number;
+    };
+    expect(module.ATTEMPT_BUDGET_PER_CAMPAIGN).toBe(1_000);
+    const directory = await mkdtemp(join(tmpdir(), 'staging-attempts-'));
+    const ledger = join(directory, '.attempt-budget-ledger.json');
+    try {
+      const first = new module.AttemptBudget(3, ledger);
+      expect(await first.reserve()).toBe(true);
+      expect(await first.reserve()).toBe(true);
+      // A restart shares the same campaign counter through the ledger file.
+      const second = new module.AttemptBudget(3, ledger);
+      await second.loadLedger();
+      expect(second.observed()).toBe(2);
+      expect(await second.reserve()).toBe(true);
+      expect(await second.reserve()).toBe(false);
+      expect(await second.reserve()).toBe(false);
+      // The refused reserve must not have advanced the ledger.
+      const third = new module.AttemptBudget(3, ledger);
+      await third.loadLedger();
+      expect(third.observed()).toBe(3);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a cold observation only when the object answered with the expected version', async () => {
+    const module = await import('../../../scripts/staging/measure-worker.mjs') as {
+      classifyColdObservation: (attempt: { failure?: string; hostDeployedAt?: string }, expectedHostDeployedAt?: string) => string;
+    };
+    expect(module.classifyColdObservation({ hostDeployedAt: '2026-09-29T07:00:00.000Z' }, '2026-09-29T07:00:00.000Z')).toBe('genuine');
+    expect(module.classifyColdObservation({ hostDeployedAt: '2026-09-29T06:00:00.000Z' }, '2026-09-29T07:00:00.000Z')).toBe('version-lag');
+    expect(module.classifyColdObservation({}, '2026-09-29T07:00:00.000Z')).toBe('version-lag');
+    expect(module.classifyColdObservation({ failure: 'transport' }, '2026-09-29T07:00:00.000Z')).toBe('failed');
+    expect(module.classifyColdObservation({ hostDeployedAt: 'x' }, undefined)).toBe('unexpected-marker');
+    expect(module.classifyColdObservation({}, undefined)).toBe('unverified');
+  });
+
+  it('paces the browser probe through the shared read ledger', async () => {
+    const source = await readFile(join(ROOT, 'scripts/staging/browser-probe.js'), 'utf8');
+    // The probe reserves through the host's ledger endpoint instead of keeping
+    // a browser-local window: the two sides must hold one shared budget.
+    expect(source).toContain("'/__reserve'");
+    expect(source).not.toContain('spentReads');
+    const probeHost = await readFile(join(ROOT, 'scripts/staging/serve-probe.mjs'), 'utf8');
+    expect(probeHost).toContain("url.pathname === '/__reserve'");
+    expect(probeHost).toContain("resolve(stagingDirectory, '.read-budget-ledger.json')");
+  });
+
+  it('retains every attempt as it completes, including transport failures', async () => {
+    const module = await import('../../../scripts/staging/measure-worker.mjs') as unknown as {
+      runPhase: (manifest: { workerUrl: string; operations: string[] }, phase: string, workload: { requests: number; concurrency: number }, credential: string, budget: unknown, attemptLedger: unknown, fetchImpl: (url: string, init: unknown) => Promise<never>, attemptLog: string) => Promise<{ attempts: Array<{ failure?: string; index: number }>; deferred: number }>;
+      ReadBudget: new () => unknown;
+      AttemptBudget: new () => unknown;
+    };
+    const directory = await mkdtemp(join(tmpdir(), 'staging-attempts-'));
+    try {
+      const attemptLog = join(directory, 'attempts.jsonl');
+      const result = await module.runPhase(
+        { workerUrl: 'https://volunteer-scheduling-staging.example.workers.dev/exec', operations: ['session.me'] },
+        'burst',
+        { requests: 3, concurrency: 2 },
+        'credential-placeholder',
+        new module.ReadBudget(),
+        new module.AttemptBudget(),
+        async () => { throw new Error('connection refused'); },
+        attemptLog
+      );
+      // Every attempt is retained exactly once, failure or not.
+      expect(result.attempts).toHaveLength(3);
+      expect(result.attempts.every((attempt) => attempt.failure === 'transport')).toBe(true);
+      expect(result.deferred).toBe(0);
+      const lines = (await readFile(attemptLog, 'utf8')).trim().split('\n');
+      expect(lines).toHaveLength(3);
+      expect(lines.map((line) => JSON.parse(line) as { index: number }).sort((left, right) => left.index - right.index).map((attempt) => attempt.index)).toEqual([0, 1, 2]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('documents that the browser probe is the only CORS evidence', async () => {
-    const manifest = await readFile(join(ROOT, 'openspec/changes/validate-worker-backend-feasibility/evidence/staging-manifest.md'), 'utf8');
+    const manifest = await readFile(STAGING_MANIFEST, 'utf8');
     expect(manifest).toContain('browser-probe.html');
     expect(manifest).toContain('wrangler delete --env staging');
     expect(manifest).toContain('workflow_dispatch');

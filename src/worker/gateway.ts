@@ -141,7 +141,7 @@ export default {
             'Access-Control-Allow-Methods': GATEWAY_ALLOW_METHODS,
             'Access-Control-Allow-Headers': GATEWAY_ALLOW_HEADERS,
             'Access-Control-Max-Age': GATEWAY_PREFLIGHT_MAX_AGE_SECONDS,
-            'Access-Control-Expose-Headers': 'cf-ray, X-Staging-Sheets-Reads, X-Staging-Snapshot-Digest, X-Staging-Correlation-Id',
+            'Access-Control-Expose-Headers': 'cf-ray, X-Staging-Sheets-Reads, X-Staging-Snapshot-Digest, X-Staging-Host-Deployed-At, X-Staging-Correlation-Id',
             'Cache-Control': 'no-store'
           }
         });

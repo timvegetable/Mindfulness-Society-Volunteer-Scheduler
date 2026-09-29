@@ -20,6 +20,8 @@ export const OPERATION_READS = {
 };
 const READ_BUDGET_PER_WINDOW = 40;
 const WINDOW_MS = 60_000;
+/** The predeclared campaign cap: at most 1,000 attempts, shared across restarts. */
+export const ATTEMPT_BUDGET_PER_CAMPAIGN = 1_000;
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
 /** Contract failure taxonomy: every retained failure lands in exactly one bucket. */
@@ -139,16 +141,23 @@ export class ReadBudget {
     await writeFile(this.ledgerPath, `${JSON.stringify({ spent: this.spent })}\n`, 'utf8');
   }
 
-  /** Waits until `reads` more reads fit inside the window. */
+  /** Reserves `reads` more reads once they fit inside the window. */
   async reserve(reads) {
     if (reads > this.limit) throw new Error(`A single request would exceed the read budget (${reads} > ${this.limit}).`);
-    await this.loadLedger();
+    // The ledger is read once per process; within a process the window lives in
+    // memory, and saves serialize behind a promise chain so concurrent workers
+    // never overwrite each other's reservations.
+    if (!this.loaded) {
+      await this.loadLedger();
+      this.loaded = true;
+    }
     for (;;) {
       const cutoff = this.now() - this.windowMs;
       this.spent = this.spent.filter((at) => at > cutoff);
       if (this.spent.length + reads <= this.limit) {
         for (let index = 0; index < reads; index += 1) this.spent.push(this.now());
-        await this.saveLedger();
+        this.saveQueue = (this.saveQueue ?? Promise.resolve()).then(() => this.saveLedger());
+        await this.saveQueue;
         return;
       }
       const oldest = this.spent[0] ?? this.now();
@@ -163,6 +172,70 @@ export class ReadBudget {
   }
 }
 
+/**
+ * The campaign's attempt budget, shared across harness restarts like the read
+ * budget: Google's and Cloudflare's quotas roll continuously, so two
+ * back-to-back runs must not each believe a fresh campaign began. Every issued
+ * request is one attempt whether it succeeded, failed, or was killed by the
+ * platform, and a run that reaches the predeclared cap stops issuing rather
+ * than continuing.
+ */
+export class AttemptBudget {
+  constructor(limit = ATTEMPT_BUDGET_PER_CAMPAIGN, ledgerPath = undefined) {
+    this.limit = limit;
+    this.ledgerPath = ledgerPath;
+    this.spent = 0;
+  }
+
+  async loadLedger() {
+    if (this.ledgerPath === undefined) return;
+    try {
+      const parsed = JSON.parse(await readFile(this.ledgerPath, 'utf8'));
+      if (Number.isSafeInteger(parsed?.spent) && parsed.spent >= 0) this.spent = parsed.spent;
+    } catch {
+      // No ledger yet: the campaign counter starts at zero for this run.
+    }
+  }
+
+  async saveLedger() {
+    if (this.ledgerPath === undefined) return;
+    await writeFile(this.ledgerPath, `${JSON.stringify({ spent: this.spent })}\n`, 'utf8');
+  }
+
+  /** Reserves one attempt; `false` once the predeclared campaign cap is spent. */
+  async reserve() {
+    // Loaded once per process; saves serialize so concurrent workers never
+    // lose an increment to a concurrent rewrite of the ledger.
+    if (!this.loaded) {
+      await this.loadLedger();
+      this.loaded = true;
+    }
+    if (this.spent >= this.limit) return false;
+    this.spent += 1;
+    this.saveQueue = (this.saveQueue ?? Promise.resolve()).then(() => this.saveLedger());
+    await this.saveQueue;
+    return true;
+  }
+
+  observed() {
+    return this.spent;
+  }
+}
+
+/**
+ * The Durable Object version-lag check for a cold attempt. A cold observation
+ * counts as genuine only when the object answered with the manifest's expected
+ * deployment marker; a lagging object is retained as evidence but not counted.
+ */
+export function classifyColdObservation(attempt, expectedHostDeployedAt) {
+  if (attempt.failure) return 'failed';
+  if (expectedHostDeployedAt === undefined) {
+    return attempt.hostDeployedAt === undefined ? 'unverified' : 'unexpected-marker';
+  }
+  if (attempt.hostDeployedAt === undefined) return 'version-lag';
+  return attempt.hostDeployedAt === expectedHostDeployedAt ? 'genuine' : 'version-lag';
+}
+
 export function planFor(manifest) {
   return {
     workerUrl: manifest.workerUrl,
@@ -173,6 +246,9 @@ export function planFor(manifest) {
     expectedReadsPerRequest: Object.fromEntries(manifest.operations.map((operation) => [operation, OPERATION_READS[operation]])),
     readBudgetPerWindow: READ_BUDGET_PER_WINDOW,
     windowSeconds: WINDOW_MS / 1000,
+    attemptBudgetPerCampaign: ATTEMPT_BUDGET_PER_CAMPAIGN,
+    /** Cold observations count only against the manifest's expected host version. */
+    hostDeployedAt: manifest.hostDeployedAt ?? null,
     retries: 0,
     reportPath: manifest.reportPath,
     attemptLogPath: `${manifest.reportPath}.attempts.jsonl`
@@ -222,15 +298,22 @@ export function summarize(attempts, elapsedMs) {
   };
 }
 
-async function runPhase(manifest, phase, workload, credential, budget, fetchImpl, attemptLog) {
+export async function runPhase(manifest, phase, workload, credential, budget, attemptLedger, fetchImpl, attemptLog) {
   const attempts = [];
   const startedAt = Date.now();
   let inFlight = 0;
+  let deferred = 0;
   const queue = Array.from({ length: workload.requests }, (_unused, index) => index);
   const workers = Array.from({ length: workload.concurrency }, async () => {
     for (;;) {
       const index = queue.shift();
       if (index === undefined) return;
+      if (!await attemptLedger.reserve()) {
+        // The campaign's predeclared attempt cap is spent: this request was
+        // never issued, and the queue is drained as deferred.
+        deferred += 1;
+        continue;
+      }
       const operation = manifest.operations[index % manifest.operations.length];
       await budget.reserve(OPERATION_READS[operation]);
       inFlight += 1;
@@ -246,6 +329,10 @@ async function runPhase(manifest, phase, workload, credential, budget, fetchImpl
         attempt.status = response.status;
         attempt.sheetsReads = Number(response.headers.get('x-staging-sheets-reads') ?? '') || 0;
         attempt.digest = response.headers.get('x-staging-snapshot-digest') ?? undefined;
+        // The host version marker is the Durable Object version-lag check: a
+        // cold observation counts only when the object answered with the
+        // freshly deployed version, not with a lagging one.
+        attempt.hostDeployedAt = response.headers.get('x-staging-host-deployed-at') ?? undefined;
         // The server-generated correlation id joins this attempt to gateway and
         // object telemetry; it is printed by the platform, never by us.
         attempt.correlationId = response.headers.get('x-staging-correlation-id') ?? undefined;
@@ -265,7 +352,7 @@ async function runPhase(manifest, phase, workload, credential, budget, fetchImpl
     }
   });
   await Promise.all(workers);
-  return { attempts: attempts.sort((left, right) => left.index - right.index), elapsedMs: Date.now() - startedAt };
+  return { attempts: attempts.sort((left, right) => left.index - right.index), elapsedMs: Date.now() - startedAt, deferred };
 }
 
 async function main() {
@@ -320,35 +407,65 @@ async function main() {
   }
 
   const plan = planFor(manifest);
-  // The ledger lives next to the report in staging-local/, so every harness
-  // run in the campaign shares one rolling read window; Google's quota does
-  // not reset when a new process starts.
+  // The ledgers live next to the report in staging-local/, so every harness
+  // run in the campaign shares one rolling read window and one attempt count;
+  // neither quota resets when a new process starts.
   const budget = new ReadBudget(undefined, undefined, undefined, resolve(dirname(manifest.reportPath), '.read-budget-ledger.json'));
   await budget.loadLedger();
+  const attemptLedger = new AttemptBudget(undefined, resolve(dirname(manifest.reportPath), '.attempt-budget-ledger.json'));
+  await attemptLedger.loadLedger();
+  const attemptsBeforeRun = attemptLedger.observed();
   const startedAt = new Date().toISOString();
   await mkdir(dirname(manifest.reportPath), { recursive: true });
   await writeFile(plan.attemptLogPath, '', 'utf8');
 
   // Cold observations come first and only from a fresh deployment; the operator
+  // passes --cold on the first run after each approved upload. A cold attempt
+  // counts as a genuine cold observation only when the object answered with the
+  // manifest's expected host version; a lagging object is retained as evidence
+  // but not counted, so a stale version can never be measured as a cold start.
+  const expectedHostDeployedAt = manifest.hostDeployedAt ?? undefined;
+
+  // Cold observations come first and only from a fresh deployment; the operator
   // passes --cold on the first run after each approved upload.
   const cold = options.cold
-    ? await runPhase(manifest, 'cold', { requests: manifest.cold?.requests ?? 5, concurrency: 1 }, credential, budget, fetch, plan.attemptLogPath)
-    : { attempts: [], elapsedMs: 0 };
-  const burst = await runPhase(manifest, 'burst', manifest.burst, credential, budget, fetch, plan.attemptLogPath);
-  const sustained = await runPhase(manifest, 'sustained', manifest.sustained, credential, budget, fetch, plan.attemptLogPath);
+    ? await runPhase(manifest, 'cold', { requests: manifest.cold?.requests ?? 5, concurrency: 1 }, credential, budget, attemptLedger, fetch, plan.attemptLogPath)
+    : { attempts: [], elapsedMs: 0, deferred: 0 };
+  const coldBreakdown = cold.attempts.reduce((counts, attempt) => {
+    const kind = classifyColdObservation(attempt, expectedHostDeployedAt);
+    counts[kind] = (counts[kind] ?? 0) + 1;
+    return counts;
+  }, {});
+  const burst = await runPhase(manifest, 'burst', manifest.burst, credential, budget, attemptLedger, fetch, plan.attemptLogPath);
+  const sustained = await runPhase(manifest, 'sustained', manifest.sustained, credential, budget, attemptLedger, fetch, plan.attemptLogPath);
 
   const report = {
     generatedAt: new Date().toISOString(),
     startedAt,
     workerUrl: manifest.workerUrl,
     fixtureDigest: manifest.fixtureDigest ?? null,
+    hostDeployedAt: manifest.hostDeployedAt ?? null,
     workload: plan,
-    budget: { limit: READ_BUDGET_PER_WINDOW, windowSeconds: WINDOW_MS / 1000, observedReadsInLastWindow: budget.observed() },
+    budget: {
+      limit: READ_BUDGET_PER_WINDOW,
+      windowSeconds: WINDOW_MS / 1000,
+      observedReadsInLastWindow: budget.observed(),
+      attempts: { limit: ATTEMPT_BUDGET_PER_CAMPAIGN, spentBeforeRun: attemptsBeforeRun, spentAfterRun: attemptLedger.observed() }
+    },
     cold: options.cold
-      ? { observations: cold.attempts.length, sufficient: cold.attempts.length >= 5, ...summarize(cold.attempts, cold.elapsedMs) }
+      ? {
+        observations: cold.attempts.length,
+        expectedHostDeployedAt: expectedHostDeployedAt ?? null,
+        breakdown: coldBreakdown,
+        genuineObservations: coldBreakdown.genuine ?? 0,
+        sufficient: (coldBreakdown.genuine ?? 0) >= 5,
+        ...summarize(cold.attempts, cold.elapsedMs),
+        deferred: cold.deferred
+      }
       : { observations: 0, sufficient: false, note: 'Run with --cold immediately after an approved upload to collect cold observations.' },
     burst: summarize(burst.attempts, burst.elapsedMs),
     sustained: summarize(sustained.attempts, sustained.elapsedMs),
+    deferredByPhase: { cold: cold.deferred, burst: burst.deferred, sustained: sustained.deferred },
     // Sanitization: no credential, no response body, no workbook id, no account id.
     sanitized: true
   };

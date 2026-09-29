@@ -34,6 +34,25 @@ export function benchmarkPreviewEnabled(bindings: StagingBindings): boolean {
   return value.trim() === 'true';
 }
 
+/** The response header that carries the host's deployment marker. */
+export const HOST_DEPLOYED_AT_HEADER = 'X-Staging-Host-Deployed-At';
+
+/**
+ * The deployment marker the host echoes back, so a measurement can verify the
+ * Durable Object runs the freshly deployed version before its attempts are
+ * counted as cold observations. A redeploy does not immediately restart an
+ * existing object, so an attempt answered without the expected marker is
+ * version lag, not a cold start. Absent binding means no header: legacy
+ * deployments stay untouched.
+ */
+export function hostDeployedMarker(bindings: StagingBindings): string | undefined {
+  const value = bindings.STAGING_DEPLOYED_AT;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 /**
  * One stable object per configured synthetic workbook. The gateway derives the
  * name from its deployment configuration with `gatewayObjectName`; the class
@@ -80,7 +99,14 @@ export class StagingWorkbookHost {
         },
         benchmarkPreview: { enabled: benchmarkEnabled }
       });
-      return await api.fetch(request);
+      const response = await api.fetch(request);
+      // The deployment marker rides on every response the object serves, so a
+      // lagging object is identifiable on a 404 as well as on a served request.
+      const marker = hostDeployedMarker(this.env);
+      if (marker === undefined) return response;
+      const headers = new Headers(response.headers);
+      headers.set(HOST_DEPLOYED_AT_HEADER, marker);
+      return new Response(response.body, { status: response.status, headers });
     } catch {
       // Configuration errors can name bindings and hosts, and an unexpected
       // transport failure would otherwise become a platform error page. The

@@ -95,6 +95,13 @@ export async function checkEndpoint({ execUrl, origin }) {
     const response = await fetch(target, { method: 'POST', body: '{}', headers: { 'Content-Type': 'text/plain' } });
     return { status: response.status, headers: response.headers, body: await response.json().catch(() => undefined), redirected: response.redirected, url: response.url, requested: target };
   });
+  // The preview benchmark is disabled unless the host deployment explicitly
+  // enables it, and the 404 is answered before any body read or Sheets access.
+  await record('benchmark route with benchmark disabled', '404', async () => {
+    const target = new URL('/benchmark/schedule-preview', execUrl).toString();
+    const response = await fetch(target, { method: 'POST', body: '{}', headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
+    return { status: response.status, headers: response.headers, body: await response.json().catch(() => undefined), redirected: response.redirected, url: response.url, requested: target };
+  });
 
   return cases;
 }

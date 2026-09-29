@@ -149,7 +149,11 @@ async function main() {
   // version already binds as a plain variable (error 10053), so a change of
   // binding kind only takes effect if the deploy clears the variable first.
   const environment = { token };
-  const deployArgs = ['deploy', '--env', options.environment];
+  // Every deployment stamps its own marker, so the host's responses carry the
+  // version a measurement can verify the object against before counting cold
+  // observations (a redeploy does not immediately restart an existing object).
+  const deployedAt = new Date().toISOString();
+  const deployArgs = ['deploy', '--env', options.environment, '--var', `STAGING_DEPLOYED_AT:${deployedAt}`];
   if (options.workbook !== undefined) deployArgs.push('--var', `STAGING_WORKBOOK_ID:${options.workbook}`);
   if (options.benchmarkEnabled === true) deployArgs.push('--var', 'STAGING_PREVIEW_BENCHMARK_ENABLED:true');
   const deploy = wrangler(deployArgs, environment);
@@ -180,7 +184,7 @@ async function main() {
   url = url ?? deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
 
   const report = {
-    deployedAt: new Date().toISOString(),
+    deployedAt,
     accountId: ACCOUNT_ID,
     environment: options.environment,
     target: options.target,

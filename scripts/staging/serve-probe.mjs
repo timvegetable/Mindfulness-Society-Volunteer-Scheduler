@@ -11,6 +11,7 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ReadBudget } from './measure-worker.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, '..', '..');
@@ -53,6 +54,10 @@ function json(response, status, body) {
 export function createProbeServer(options = {}) {
   const port = options.port ?? DEFAULT_PORT;
   const stagingDirectory = options.stagingDirectory ?? STAGING_DIRECTORY;
+  // The probe's Sheets reads are paced through the same shared read ledger the
+  // harness uses, so browser probes and harness attempts hold one rolling
+  // 60-second window and cannot walk into Google's quota from opposite sides.
+  const budget = options.budget ?? new ReadBudget(undefined, undefined, undefined, resolve(stagingDirectory, '.read-budget-ledger.json'));
 
   const writeIntoStaging = async (name, contents) => {
     if (!/^[a-z0-9.-]+$/i.test(name)) throw new Error('unsafe file name');
@@ -78,6 +83,26 @@ export function createProbeServer(options = {}) {
         const path = await writeIntoStaging(`credential-${label}.txt`, body.credential);
         console.log(`captured a credential for ${label}`);
         json(response, 200, { ok: true, path });
+      } catch (error) {
+        json(response, 400, { ok: false, error: error instanceof Error ? error.message : 'bad request' });
+      }
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/__reserve') {
+      // The paced probe asks the shared ledger before each attempt, so the
+      // browser's reads hold inside the same 40-reads-per-60-seconds window the
+      // harness enforces. No attempt is issued until the ledger admits it.
+      try {
+        const body = await readJsonBody(request);
+        const reads = Number(body?.reads);
+        if (!Number.isSafeInteger(reads) || reads < 1 || reads > 8) {
+          json(response, 400, { ok: false, error: 'reads must be a positive integer of at most 8' });
+          return;
+        }
+        await budget.reserve(reads);
+        console.log(`reserved ${reads} Sheets reads for the probe (window at ${budget.observed()})`);
+        json(response, 200, { ok: true, reads, observedReadsInLastWindow: budget.observed() });
       } catch (error) {
         json(response, 400, { ok: false, error: error instanceof Error ? error.message : 'bad request' });
       }

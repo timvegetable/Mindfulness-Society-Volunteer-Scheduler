@@ -136,6 +136,18 @@ describe('benchmark preview enablement', () => {
     expect(preflight.status).toBe(404);
   });
 
+  it('echoes the deployment marker so a lagging object is identifiable before colds are counted', async () => {
+    const marker = '2026-09-29T07:00:00.000Z';
+    const { host } = hostWith({ STAGING_PREVIEW_BENCHMARK_ENABLED: 'true', STAGING_DEPLOYED_AT: marker });
+    const response = await host.fetch(benchmarkRequest(INTEGRATION_OPERATIONS.adminSchedulePreview, 'credential-placeholder'));
+    // The marker rides on every response, including a denied one, so the
+    // version-lag check works before any attempt is counted.
+    expect(response.headers.get('X-Staging-Host-Deployed-At')).toBe(marker);
+    const noMarker = hostWith({ STAGING_PREVIEW_BENCHMARK_ENABLED: 'true' });
+    const plain = await noMarker.host.fetch(benchmarkRequest(INTEGRATION_OPERATIONS.adminSchedulePreview, 'credential-placeholder'));
+    expect(plain.headers.get('X-Staging-Host-Deployed-At')).toBeNull();
+  });
+
   it('answers an enabled benchmark preflight like /exec', async () => {
     const { host } = hostWith({ STAGING_PREVIEW_BENCHMARK_ENABLED: 'true' });
     const preflight = await host.fetch(new Request(`https://gateway.example.test${BENCHMARK_PREVIEW_PATH}`, {
