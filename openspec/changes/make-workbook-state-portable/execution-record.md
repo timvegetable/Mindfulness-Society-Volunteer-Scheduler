@@ -396,3 +396,35 @@ Validation at the final commit: `pnpm test` 54 files / 433 tests;
 `pnpm run build` exit 0 with the Apps Script bundle audit; three Worker dry-run
 builds exit 0; snapshot self-test 82 checks; strict OpenSpec validation valid;
 `git diff --check` clean.
+
+## 2026-09-29 — live reader checks (tasks 4.1/4.2, deployed half)
+
+`evidence/staging-rehearsal-live-checks-2026-09-29.md`. The operator signed in and
+the checks ran against the deployed gateway → Durable Object host → Sheets
+topology: D1 (binding on), D1′ and D1″ (after two fixes the run exposed), D2
+(binding off, topology restored, `wrangler.jsonc` byte-identical to its committed
+state).
+
+Measured: an identity read at 1 read and a domain read at 4 (authorization +
+control, control, plan, control); a pending mutation refused with
+`UNAVAILABLE`/`control-pending`; an authority mismatch refused with
+`UNAVAILABLE`/`control-authority_mismatch`; and after the fix the served read
+reporting the record's counters (46/6) instead of the staging properties (42/5).
+
+The live run found three defects the unit tests had not: the Worker reported
+revisions from the properties rather than the record, a pending mutation was
+refused only after hydration (four reads where the plan prices one), and the
+authorization read was being bracketed. All three are fixed, with the first
+re-verified live.
+
+The generation-moved straddle was attempted three times and is recorded as
+inconclusive: the writes could not land inside the bracket's window because each
+transition runs in its own `vite-node` process. The path is covered
+deterministically by the worker contract test.
+
+## Next eligible action
+
+Tasks 4.1/4.2 remain open for the three items their progress notes name (the
+straddle check, the larger fixture, the post-activation forward recovery and the
+Property-only-writer demonstration). Everything else the workflow can do locally
+is complete; the final brief is updated with this batch.
