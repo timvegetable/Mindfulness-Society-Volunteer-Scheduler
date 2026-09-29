@@ -147,3 +147,44 @@ audit; `openspec validate make-workbook-state-portable --strict` valid.
 Implement section 3 (writer protocol, reader completed-generation checks, import
 preview reclassification, fenced maintenance paths) and task 2.4, then request
 the bounded staging mutation window the task 4.1/4.2 rehearsal needs.
+
+## 2026-09-29 — writer protocol, preview reclassification and the read guard
+
+The operator accepted the corrected task 1.6 attribution, so implementation
+continued on the same branch.
+
+- **3.1** — `evidence/mutation-lifecycle-2026-09-29.md`, commit `4c07690`. The
+  fenced `ControlMutationWriter` (script lock, live gate, authority) plus pure
+  begin/commit/abort transitions, a mutation scope that registers only the tabs
+  that persisted, a bounded journal written before the control row, and the
+  exact counter rules. 17 tests cover a closed gate, wrong authority, a held
+  lock, a crash before rows, a mid-write abort, a mismatched completion and a
+  second writer while pending.
+- **3.3** — `evidence/import-preview-reclassification-2026-09-29.md`, commit
+  `a8ef766`. Import preview is a mutation; the dispatcher enforces the declared
+  revision with `INVALID_REQUEST` before any state is touched; the client
+  sources the revision from the rendered run. Six dispatcher cases assert zero
+  persistence on the write-disabled, read-only, missing and stale paths, and the
+  architecture, integration, operations, security and testing documents are
+  updated in the same commit, stating the source behaviour and that the deployed
+  build carries it only after an approved release.
+- **3.5 (mechanism only)** — commit `2b03e76`. `withCompletedSnapshot` hydrates
+  inside a bracket of two control reads and rejects a concurrent completion,
+  abort, recovery or pending state; eight tests include the abort case where no
+  counter moves. It is not wired into a served path yet: the guard installs only
+  when the process is activated for `workbook-control` authority, which task 3.2
+  introduces. The task stays unticked until that wiring exists.
+- **Not started**: task 2.4 (needs the private `phamily-env` snapshot
+  interpreter) and tasks 3.2, 3.4, 3.6 (authority provider and repository and
+  dispatcher adaptation, fenced maintenance paths, reviewed recovery).
+
+Gates after each commit: `pnpm test` 45 files / 331 tests passed; `pnpm run
+check` exit 0; strict OpenSpec validation valid.
+
+## Next eligible action
+
+Task 3.2: introduce the activated-authority configuration and the request-scoped
+portable session, adapt the repository revision stores and the dispatcher
+lifecycle to it, and wire the completed-snapshot guard into the served read path
+(which is also what completes task 3.5). Then task 3.4 and 3.6, then the staging
+approval request.
