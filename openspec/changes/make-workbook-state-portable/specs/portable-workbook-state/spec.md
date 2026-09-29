@@ -1,3 +1,7 @@
+## Purpose
+
+Provide shared authoritative revisions and completed-snapshot validation so independent readers can safely coexist with the sole legacy writer, including recoverable migration and interrupted mutations.
+
 ## ADDED Requirements
 
 ### Requirement: Single portable revision authority
@@ -50,6 +54,10 @@ Initialization SHALL resolve the effective schema version, be idempotent, and pr
 
 ### Requirement: Configuration and release boundaries
 The migration SHALL classify policy, identity/configuration, secrets, caches and operational gates separately; secrets SHALL NOT be stored in public config or the control tab. Production activation SHALL require the accepted feasibility verdict, tested recovery, explicit action approval, a workbook snapshot and live write-gate verification before and after the action.
+
+#### Scenario: Feasibility evidence has unresolved acceptance conditions
+- **WHEN** archived staging evidence labels a gate passed using aggregate averages or estimates without establishing its required statistic or coverage, or retains an unresolved reliability condition
+- **THEN** the prerequisite review records the affected condition and production activation remains blocked until acceptance is demonstrated against the predeclared contract; an archived go label alone does not satisfy the gate
 
 #### Scenario: Local configuration disagrees with live state
 - **WHEN** a deployment report claims writes are disabled but the live gate has not been inspected
