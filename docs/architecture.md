@@ -72,18 +72,28 @@ An operation whose policy declares `expectedRevision` is refused with `INVALID_R
 
 ## Persistence and revisions
 
-Google Sheets stores domain rows; Apps Script Script Properties store counters. These counters are related but not interchangeable:
+Google Sheets stores domain rows. Revisions come from one of two authorities, selected per deployment by the `CONTROL_AUTHORITY` Script Property: **Script Properties** (the state of every deployed build until the approved migration runs, and of any deployment that has not been activated) or the workbook's **control record** (the portable authority). The two are never mixed: the record's own `authority` field must agree with the configuration, or every request fails closed. Which one a workbook uses is live state, read from the workbook, not inferred from configuration.
 
-| Revision | Storage | Purpose |
-| --- | --- | --- |
-| `TAB_REVISION_<TabName>` | Script Properties | Optimistic concurrency for one repository/tab |
-| `SCHEDULING_INPUT_REVISION` | Script Properties | Monotonic change counter for `Volunteers`, `RecurringAvailability`, `AvailabilityExceptions`, and `Sessions` |
-| scheduling output revision | `SchedulingRuns`, assignments, backups | Identifies one computed/published schedule output |
-| `DATA_REVISION` | Script Properties | Global API revision returned/checked around mutations |
+| Revision | Script Properties authority | Control authority | Purpose |
+| --- | --- | --- | --- |
+| `TAB_REVISION_<TabName>` | `TAB_REVISION_<TabName>` property | `tabRevisions` entry in the control record | Optimistic concurrency for one repository/tab |
+| `SCHEDULING_INPUT_REVISION` | property | `schedulingInputRevision` | Monotonic change counter for `Volunteers`, `RecurringAvailability`, `AvailabilityExceptions`, and `Sessions` |
+| `DATA_REVISION` | property | `dataRevision` | Global API revision returned/checked around mutations |
+| scheduling output revision | unchanged | unchanged | Identifies one computed/published schedule output; it is a value in the run, assignment and backup rows under **both** authorities |
 
-Repository writes compare the expected tab revision, write rows, append audit data, then advance the tab counter. Scheduling-input tab commits also advance `SCHEDULING_INPUT_REVISION`. The dispatcher compares the client's `expectedRevision` with `DATA_REVISION` under the global write lock and advances it after a successful mutation.
+Repository writes compare the expected tab revision, write rows, append audit data, then advance the tab counter; scheduling-input tab commits also advance the composed counter. The dispatcher compares the client's `expectedRevision` with the global revision under the global write lock and advances it after a successful mutation. An operation whose policy declares `expectedRevision` is refused when the caller omits it.
 
-Direct Sheets API or manual cell writes bypass these counters and the application audit path. The application then cannot reliably detect staleness or concurrency. See [operations](operations.md) before any exceptional direct write.
+### Portable control protocol
+
+`WorkbookControl` holds one protected row — protocol version, authority and epoch, a monotonic generation, the counters above, and the in-progress operation — and `ControlJournal` holds a bounded, append-only record of every transition. Under the control authority a mutating operation runs as: acquire the script lock, publish a pending marker and a new generation **before** any row changes, write rows and audit data, then complete with one row write that advances the generation and exactly the counters the commit touched. An abort or a restore advances the generation without moving a counter, which is why readers compare the whole generation/revision tuple rather than revisions alone: equal counters cannot prove that a multi-step mutation finished. Incomplete or unsupported control state fails closed rather than defaulting to zero.
+
+Readers — the Apps Script runtime and the Worker adapter — hydrate inside a bracket of two control reads and accept the result only when both observations are idle and carry the same completed generation and revision tuple. `Users` is read fresh for authorization and stays outside the bracket. Import preview is a mutation: staging persists a run, so it takes the lock, requires the live write gate and a current revision, and is refused through a read-only request.
+
+Interrupted mutations are recovered by a reviewed decision — completed, not-started, or restored — recorded in the journal with its reason; counters only ever increase, and a restore never writes a snapshot value back as a counter. The initializer and the migration loader run under a maintenance fence instead of the request path: the script lock is held for the whole action and the live write gate must be **closed**, so maintenance runs with writers drained.
+
+Direct Sheets API or manual cell writes bypass these counters and the application audit path, so the application cannot reliably detect staleness or concurrency. Under the control authority the reviewed reconciliation records a recovery decision instead of hand-bumping counters. See [operations](operations.md) before any exceptional direct write.
+
+The deployed build carries none of this until an approved release, and a workbook is only activated by the approved capture-and-activation procedure; until then Script Properties remain authoritative. The open work is tracked in the [portable-state change](../openspec/changes/make-workbook-state-portable/tasks.md).
 
 ## Scheduling publication and derived data
 
