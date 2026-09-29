@@ -311,6 +311,10 @@ refused with `OPERATION_MISMATCH`, retained as intended protocol behaviour.
 
 ## Next eligible action
 
-The two approved host redeployments (D1/D2) and the reader checks. The reader
-checks need a fresh Google ID-token credential: the retained ones expired, so the
-operator is needed before that measurement can run.
+The two approved host redeployments (D1/D2) and the reader checks. The operator
+chose to supply a fresh Google ID token as `staging-local/credential-rehearsal.txt`;
+once that file exists the sequence in the rehearsal evidence runs unchanged (D1,
+the six read checks with their expected codes and read counts, D2). Nothing has
+been deployed or claimed in the meantime. Two independent reviews — spec
+compliance and repository standards — are running against the branch and their
+findings are processed before the final brief.

@@ -207,3 +207,34 @@ not let an operator "restore" state that was never fenced.
   attempts.
 - Still to come: the two approved host redeployments (D1/D2) and the reader
   checks, which need a fresh Google ID-token credential.
+
+## Reader checks — prepared, waiting on a credential
+
+The workbook side of the rehearsal (S1–S8) is complete. What remains is the
+bracketed reader against the deployed staging Worker (D1/D2 and the checks
+between them), and it needs one input: a **fresh Google ID token** for an
+administrator account whose email is in the synthetic `Users` tab. The retained
+tokens expired hours before this run.
+
+Convention agreed with the operator: the token goes in
+`staging-local/credential-rehearsal.txt` (gitignored private storage, one line,
+no other content). The tooling that consumes it is
+`scripts/staging/control-read-check.mjs`, which reports the service's own answer
+— status, envelope code, refusal reason, the service's Sheets read count, and
+whether the correlation and host-marker headers are present — and never prints
+the credential or a row value.
+
+The sequence it will run, with the expectation each step must meet:
+
+| Step | Command (shape) | Expectation |
+| --- | --- | --- |
+| D1 | host redeploy with `STAGING_CONTROL_AUTHORITY=workbook-control` | the deployment reports its new version |
+| Served domain read | read check, `admin.schedule.read` | `ok`, four Sheets reads (control, Users, plan, control) |
+| Served identity read | read check, `session.me` | `ok`, three Sheets reads |
+| Pending refusal | begin a pending marker in the workbook, then read | `failed:UNAVAILABLE:control-pending`, one read |
+| Generation moved | complete the marker between the two control reads | `failed:STALE_REVISION:control-generation_changed` |
+| Legacy authority | roll the record back to `script-properties` | `failed:UNAVAILABLE:control-authority_mismatch` |
+| D2 | host redeploy with the binding removed | the pre-rehearsal topology is restored |
+
+Until the token exists, no deployment has been changed and no reader check has
+been claimed.
