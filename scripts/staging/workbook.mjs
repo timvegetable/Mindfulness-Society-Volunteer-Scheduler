@@ -13,8 +13,8 @@ import { fileURLToPath } from 'node:url';
 const API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** Loads WORKBOOK_TABS from the repository's own schema module. */
-export async function workbookTabs() {
+/** Bundles the repository's own schema module and imports it. */
+async function loadSchema() {
   const result = await build({
     entryPoints: [resolve(REPOSITORY_ROOT, 'src/server/workbook/schema.ts')],
     bundle: true,
@@ -25,8 +25,21 @@ export async function workbookTabs() {
   });
   const source = result.outputFiles?.[0]?.text;
   if (!source) throw new Error('The workbook schema could not be bundled.');
-  const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-  return module.WORKBOOK_TABS;
+  return await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+}
+
+/** Loads WORKBOOK_TABS from the repository's own schema module. */
+export async function workbookTabs() {
+  return (await loadSchema()).WORKBOOK_TABS;
+}
+
+/**
+ * The schema's control tabs. They are deliberately outside WORKBOOK_TABS — that
+ * list defines the fixture identity digest — so anything creating or digesting
+ * them has to ask for them explicitly.
+ */
+export async function workbookControlTabs() {
+  return (await loadSchema()).WORKBOOK_CONTROL_TABS;
 }
 
 function columnLetters(count) {
@@ -52,7 +65,11 @@ export async function createWorkbookApi({ token, spreadsheetId }) {
   if (typeof token !== 'string' || token.length === 0) throw new Error('An access token is required.');
   if (typeof spreadsheetId !== 'string' || spreadsheetId.trim().length === 0) throw new Error('A spreadsheet id is required.');
   const tabs = await workbookTabs();
-  const byName = new Map(tabs.map((tab) => [tab.name, tab]));
+  const controlTabs = await workbookControlTabs();
+  let calls = 0;
+  // Reads resolve control tabs as well; the exported `tabs` list and the digest
+  // stay domain-only so the pinned fixture identity is unaffected.
+  const byName = new Map([...tabs, ...controlTabs].map((tab) => [tab.name, tab]));
 
   const definition = (name) => {
     const found = byName.get(name);
@@ -60,7 +77,10 @@ export async function createWorkbookApi({ token, spreadsheetId }) {
     return found;
   };
 
+  let sheetIds;
+
   const request = async (path, init) => {
+    calls += 1;
     const response = await fetch(`${API}${path}`, {
       ...init,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init?.headers ?? {}) }
@@ -161,6 +181,180 @@ export async function createWorkbookApi({ token, spreadsheetId }) {
     async snapshot() {
       const rows = await this.readTabs(tabs.map((tab) => tab.name));
       return { rows, digest: await this.digest(rows) };
+    },
+
+    controlTabs,
+    callCount: () => calls,
+
+    /** The spreadsheet's tab titles with their numeric sheet ids. */
+    async sheetIds() {
+      if (sheetIds) return sheetIds;
+      const meta = await request(`/${spreadsheetId}?fields=sheets.properties(sheetId,title)`);
+      sheetIds = new Map((meta?.sheets ?? []).flatMap((sheet) => {
+        const title = sheet?.properties?.title;
+        const id = sheet?.properties?.sheetId;
+        return typeof title === 'string' && typeof id === 'number' ? [[title, id]] : [];
+      }));
+      return sheetIds;
+    },
+
+    /** Creates the named tabs when missing and writes their schema header rows. */
+    async ensureTabsFor(names) {
+      const meta = await this.metadata();
+      const definitions = new Map([...tabs, ...controlTabs].map((tab) => [tab.name, tab]));
+      const missing = names.filter((name) => !meta.sheets.includes(name));
+      if (missing.length > 0) {
+        await request(`/${spreadsheetId}:batchUpdate`, {
+          method: 'POST',
+          body: JSON.stringify({
+            requests: missing.map((name) => ({
+              addSheet: { properties: { title: name, gridProperties: { rowCount: 1000, columnCount: Math.max(definitions.get(name)?.columns.length ?? 6, 6), frozenRowCount: 1 } } }
+            }))
+          })
+        });
+        sheetIds = undefined;
+      }
+      await request(`/${spreadsheetId}/values:batchUpdate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          valueInputOption: 'RAW',
+          data: names.map((name) => ({ range: `${quoted(name)}!A1`, values: [[...(definitions.get(name)?.columns ?? [])]] }))
+        })
+      });
+      return { created: missing };
+    },
+
+    /** Writes one tab's header row. */
+    async writeHeader(name, header) {
+      await request(`/${spreadsheetId}/values/${encodeURIComponent(`${quoted(name)}!A1`)}?valueInputOption=RAW`, {
+        method: 'PUT',
+        body: JSON.stringify({ range: `${quoted(name)}!A1`, majorDimension: 'ROWS', values: [[...header]] })
+      });
+    },
+
+    /** Writes every named header row in one batched call. */
+    async writeHeaders(entries) {
+      if (entries.length === 0) return { written: 0 };
+      await request(`/${spreadsheetId}/values:batchUpdate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          valueInputOption: 'RAW',
+          data: entries.map((entry) => ({ range: `${quoted(entry.name)}!A1`, values: [[...entry.header]] }))
+        })
+      });
+      return { written: entries.length };
+    },
+
+    /**
+     * Adds every protected range in one batched call. One call per protection is
+     * what exhausted the 60-writes-per-minute-per-user Sheets quota on the first
+     * rehearsal run.
+     */
+    async addProtectedRanges(entries) {
+      if (entries.length === 0) return { outcomes: [] };
+      const ids = await this.sheetIds();
+      const requests = [];
+      const outcomes = [];
+      for (const entry of entries) {
+        const sheetId = ids.get(entry.name);
+        if (typeof sheetId !== 'number') {
+          outcomes.push({ name: entry.name, applied: false, reason: `no tab named ${entry.name}` });
+          continue;
+        }
+        requests.push({
+          addProtectedRange: {
+            protectedRange: {
+              range: {
+                sheetId,
+                startRowIndex: entry.range.startRowIndex,
+                startColumnIndex: entry.range.startColumnIndex,
+                ...(entry.range.endRowIndex === undefined ? {} : { endRowIndex: entry.range.endRowIndex }),
+                ...(entry.range.endColumnIndex === undefined ? {} : { endColumnIndex: entry.range.endColumnIndex })
+              },
+              description: entry.description,
+              warningOnly: entry.warningOnly
+            }
+          }
+        });
+        outcomes.push({ name: entry.name, applied: true });
+      }
+      try {
+        await request(`/${spreadsheetId}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests }) });
+        return { outcomes };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message.slice(0, 160) : 'unknown';
+        return { outcomes: outcomes.map((outcome) => (outcome.applied ? { name: outcome.name, applied: false, reason } : outcome)) };
+      }
+    },
+
+    /** Adds one protected range, the way the initializer asks for it. */
+    async addProtectedRange(name, range, description, warningOnly) {
+      const ids = await this.sheetIds();
+      const sheetId = ids.get(name);
+      if (typeof sheetId !== 'number') throw new Error(`The spreadsheet has no tab named ${name}`);
+      const protectedRange = {
+        range: {
+          sheetId,
+          startRowIndex: range.startRowIndex,
+          startColumnIndex: range.startColumnIndex,
+          ...(range.endRowIndex === undefined ? {} : { endRowIndex: range.endRowIndex }),
+          ...(range.endColumnIndex === undefined ? {} : { endColumnIndex: range.endColumnIndex })
+        },
+        description,
+        warningOnly
+      };
+      try {
+        await request(`/${spreadsheetId}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: [{ addProtectedRange: { protectedRange } }] }) });
+        return { applied: true };
+      } catch (error) {
+        // The identity may not be allowed to protect ranges it does not own.
+        // Report it instead of pretending the protection exists.
+        return { applied: false, reason: error instanceof Error ? error.message.slice(0, 120) : 'unknown' };
+      }
+    },
+
+    /** Creates the control tabs and writes their header rows, if missing. */
+    async ensureControlTabs() {
+      const meta = await this.metadata();
+      const missing = controlTabs.filter((tab) => !meta.sheets.includes(tab.name));
+      if (missing.length > 0) {
+        await request(`/${spreadsheetId}:batchUpdate`, {
+          method: 'POST',
+          body: JSON.stringify({
+            requests: missing.map((tab) => ({
+              addSheet: { properties: { title: tab.name, gridProperties: { rowCount: 1000, columnCount: Math.max(tab.columns.length, 6), frozenRowCount: 1 } } }
+            }))
+          })
+        });
+      }
+      await request(`/${spreadsheetId}/values:batchUpdate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          valueInputOption: 'RAW',
+          data: controlTabs.map((tab) => ({ range: `${quoted(tab.name)}!A1`, values: [[...tab.columns]] }))
+        })
+      });
+      return { createdTabs: missing.map((tab) => tab.name) };
+    },
+
+    /** Every tab the rehearsal compares: domain rows plus control state. */
+    async readAllTabs() {
+      const names = [...tabs.map((tab) => tab.name), ...controlTabs.map((tab) => tab.name)];
+      const rows = await this.readTabs(names);
+      const digests = {};
+      for (const name of names) {
+        digests[name] = createHash('sha256').update(JSON.stringify(rows[name] ?? [])).digest('hex');
+      }
+      return { rows, digests };
+    },
+
+    /** Writes one control record row (the caller supplies the serialized row). */
+    async writeControlRow(name, row) {
+      await request(`/${spreadsheetId}/values/${encodeURIComponent(`${quoted(name)}!A2`)}?valueInputOption=RAW`, {
+        method: 'PUT',
+        body: JSON.stringify({ range: `${quoted(name)}!A2`, majorDimension: 'ROWS', values: [row] })
+      });
+      return 1;
     }
   };
 }

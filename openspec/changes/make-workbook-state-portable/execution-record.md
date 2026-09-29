@@ -264,9 +264,34 @@ check` exit 0; strict OpenSpec validation valid.
   authorizations it sequences are not requested yet and the plan calls for its
   authorization-dependent portions to stay open.
 
+## 2026-09-29 — staging rehearsal approved and batch 1 executed
+
+The operator approved the [rehearsal manifest](../changes/make-workbook-state-portable/evidence/staging-rehearsal-manifest-2026-09-29.md).
+
+- Built `scripts/staging/rehearse-portable-state.ts` (run with `vite-node`, so it
+  imports the production initializer and control codecs rather than
+  reimplementing them) plus control-tab support and batched writes in
+  `scripts/staging/workbook.mjs`, with `scripts/**/*.ts` now inside the type-check
+  program.
+- **S1/S2 executed on the representative workbook**:
+  `evidence/staging-rehearsal-run-2026-09-29.md`. The baseline digest equals the
+  archived campaign's pinned digest; initialization is idempotent on a live
+  workbook (one effective Settings record, nothing appended on the second pass);
+  protections apply with zero refusals once batched.
+- **Two incidents, both detected and repaired, both recorded**: the runner wrote
+  data values into every header row (mirror treated `A2:` reads as including the
+  header) — data rows verified byte-identical by baseline diff, headers restored
+  from the schema and verified 17/17; and the first pass hit the Sheets write
+  quota with one call per protected range (retained 429) — fixed by batching, 82
+  calls down to 6.
+- **Finding C**: repeated initialization duplicates protected ranges (measured);
+  recorded as a follow-up with its evidence and its scope limit.
+- Attempt ledger unchanged at 529; no deployment changed; no reader check yet.
+
 ## Next eligible action
 
-Await the staging decision. If approved, implement the rehearsal runner and
-execute S1–S8 under D1/D2; if declined or deferred, continue with the locally
-verifiable remainder (task 2.4's schema-validation half, the task 4.3
-documentation pass, and the independent reviews).
+Baseline and initialize the larger workbook, then execute the counter transitions
+S3–S8 on the representative workbook, then the two approved host redeployments
+(D1/D2) and the reader checks. The reader checks need a fresh Google ID-token
+credential: the retained ones expired, so that is the next point at which the
+operator is needed.

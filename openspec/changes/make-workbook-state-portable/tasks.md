@@ -54,6 +54,12 @@
 - [ ] 5.3 Verify both readers' semantic outputs/counters, actual protections and interrupted-state handling; record sanitized evidence and separately authorize any write reopening.
 - [ ] 5.4 Link measured prerequisite evidence to original tasks 10.24/10.25 and keep any unfulfilled original acceptance checkboxes open.
 
+## Follow-ups recorded during the 2026-09-29 staging rehearsal
+
+- [ ] Protection application is not idempotent. Measured 2026-09-29 on the representative synthetic workbook: after two initialization passes a domain tab carries 6 protected ranges and each control tab 2, with `Schema header row` appearing 32 times across the workbook — each pass adds its declared ranges again instead of replacing what it already owns. Scope: measured on the REST-applied path (`scripts/staging/rehearse-portable-state.ts`); Apps Script's `Range.protect()` may differ, so the production verification must count protected ranges before and after initialization before this is claimed as a production defect. Evidence: `evidence/staging-rehearsal-run-2026-09-29.md` (Finding C).
+- [ ] The rehearsal runner's first pass hit the Sheets `Write requests per minute per user` quota with one call per protected range (retained 429, no retry loop); it now batches headers and protections into two calls. Any future staging tool that writes per-range must batch for the same reason.
+- [ ] The runner projects the production initializer's decisions over REST rather than executing the Apps Script runtime; the Apps Script maintenance path still needs its own production verification (task 5.2/5.3).
+
 ## Recorded implementation gaps (2026-09-24)
 
 Read-only source review confirmed that `OPERATION_POLICIES` marks import preview non-mutating/read-only while `runtime.ts` calls `stageFromFetcher`, which saves import runs through `WorkbookImportRepository`. Tasks 3.2–3.3 own the repair. `validateMigrationWorkbook()` calls `applyMigrationPayload` with `apply: false`, but `loader.ts` invokes `initializeWorkbook` before checking that option; the command can change schema/protections/Settings. Task 3.4 owns the maintenance boundary. These are measured code-path findings, not completed fixes or live production tests.
