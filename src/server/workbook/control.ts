@@ -43,6 +43,7 @@ export type ControlFailureCode =
   | 'GENERATION_CHANGED'
   | 'OPERATION_MISMATCH'
   | 'GATE_CLOSED'
+  | 'GATE_OPEN'
   | 'LOCKED';
 
 export class ControlError extends Error {
@@ -353,6 +354,7 @@ export function controlFailureCode(code: ControlFailureCode, access: 'read' | 'w
     case 'PENDING': return access === 'write' ? 'CONFLICT' : 'UNAVAILABLE';
     case 'OPERATION_MISMATCH':
     case 'LOCKED': return 'CONFLICT';
+    case 'GATE_OPEN': return 'UNAVAILABLE';
     default: return 'UNAVAILABLE';
   }
 }
@@ -556,6 +558,49 @@ function requirePending(record: ControlRecord): void {
   }
 }
 
+export type RecoveryDecision = 'completed' | 'not-started' | 'restored';
+
+export type RecoveryRequest = {
+  /**
+   * What the reviewer established about the interrupted mutation:
+   * `completed` — every affected tab's persistence was verified;
+   * `not-started` — no row was changed;
+   * `restored` — rows were partially written and have been restored from the
+   * approved snapshot.
+   */
+  decision: RecoveryDecision;
+  actorId: string;
+  /** The reviewed conclusion. Required, because the journal must explain itself. */
+  reason: string;
+  /** Tabs whose persistence the reviewer verified, for `completed`. */
+  committedTabs?: readonly WorkbookTabName[];
+};
+
+/**
+ * Pure transition for an interrupted mutation. It refuses to act unless a
+ * mutation is actually pending, which is what makes a repeated recovery stop
+ * instead of advancing every counter a second time. Rows are never restored by
+ * this function — the reviewed procedure does that — and no counter is ever
+ * written back to a snapshot value: recovering a restore advances the generation
+ * and leaves the counters exactly where they were.
+ */
+export function recoveryTransition(record: ControlRecord, request: RecoveryRequest, timestamp: string): ControlRecord {
+  if (record.mutationState !== 'pending') {
+    throw new ControlError('OPERATION_MISMATCH', 'No interrupted mutation is pending; recovering again would advance the counters twice');
+  }
+  if (request.reason.trim().length === 0) {
+    throw new ControlError('MALFORMED', 'A recovery decision must record the reason it was reached');
+  }
+  if (request.decision === 'completed') {
+    const tabs = request.committedTabs ?? [];
+    if (tabs.length === 0) {
+      throw new ControlError('MALFORMED', 'A completed recovery must name the tabs whose persistence was verified');
+    }
+    return commitMutationRecord(record, tabs, request.actorId, timestamp);
+  }
+  return abortMutationRecord(record, request.actorId, timestamp);
+}
+
 export type MutationScope = {
   readonly operationId: string;
   readonly actorId: string;
@@ -660,6 +705,23 @@ export class ControlMutationWriter {
       const current = this.admit(scope.operationId);
       const record = abortMutationRecord(current, scope.actorId, this.timestamp());
       this.transition('abort', record, current, scope.actorId, current.operationTabs, reason);
+      return { record };
+    });
+  }
+
+  /**
+   * Apply a reviewed recovery decision to an interrupted mutation. The script
+   * lock and the authority are required, but the **live write gate is not
+   * consulted on purpose**: recovery is a stopped-service procedure, and the gate
+   * is expected to be closed while it runs. Nothing else in this class skips that
+   * check.
+   */
+  recover(request: RecoveryRequest): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = readControlRecord(this.options.control);
+      assertAuthority(current, this.options.authority);
+      const record = recoveryTransition(current, request, this.timestamp());
+      this.transition('recover', record, current, request.actorId, request.committedTabs ?? current.operationTabs, request.reason);
       return { record };
     });
   }

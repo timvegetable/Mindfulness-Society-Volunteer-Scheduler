@@ -9,6 +9,8 @@ import { activatedAuthority } from './workbook/authority.js';
 import { createPortableAuthority, type PortableAuthority } from './portable-authority.js';
 import type { PrunableSheetLike } from './workbook/control.js';
 import type { SheetLike, SpreadsheetLike } from './workbook/initializer.js';
+import { withMaintenanceFence, type MaintenanceContext } from './workbook/maintenance.js';
+import type { LockLike } from './workbook/repository.js';
 import { applyMigrationPayload } from './workbook/loader.js';
 import { cellBoolean, cellNumber, optionalCellText } from './workbook/sheet-values.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
@@ -316,8 +318,46 @@ function logResult(label: string, value: unknown): unknown {
   return value;
 }
 
+function runtimeMaintenanceLock(): LockLike | undefined {
+  const runtime = globalThis as unknown as { LockService?: { getScriptLock(): { tryLock(timeoutMilliseconds: number): boolean; releaseLock(): void } } };
+  const lock = runtime.LockService?.getScriptLock();
+  if (!lock) return undefined;
+  return { tryLock: (timeoutMilliseconds: number) => lock.tryLock(timeoutMilliseconds), releaseLock: () => lock.releaseLock() };
+}
+
+/**
+ * Editor-invoked maintenance: structure changes and migration writes run with
+ * writers drained, under the script lock, and seed the control record
+ * idempotently once the workbook carries the protocol. A served request never
+ * comes through here, and the live write gate must be closed.
+ */
+function withMaintenance<T>(label: string, action: (context: MaintenanceContext) => T): T {
+  const properties = runtimeProperties();
+  const spreadsheet = activeSpreadsheet();
+  if (!properties || !spreadsheet) throw new Error('SpreadsheetApp and PropertiesService are required; run this from the bound Apps Script project');
+  const lock = runtimeMaintenanceLock();
+  if (!lock) throw new Error('LockService is required; run this from the bound Apps Script project');
+  return withMaintenanceFence({
+    lock,
+    writeEnabled: () => properties.getProperty('WRITE_ENABLED') === 'true',
+    controlSheet: () => spreadsheet.getSheetByName('WorkbookControl') ?? undefined,
+    journalSheet: () => spreadsheet.getSheetByName('ControlJournal') ?? undefined,
+    actorId: properties.getProperty('MIGRATION_ACTOR')?.trim() || 'maintenance'
+  }, (context) => {
+    const result = action(context);
+    context.journal('capture', label);
+    return result;
+  });
+}
+
 export function initializeWorkbook(): unknown {
-  return logResult('initializeWorkbook', server().initializeWorkbook());
+  return logResult('initializeWorkbook', withMaintenance('initializeWorkbook', (context) => {
+    const result = initializeActiveWorkbook();
+    // The control tabs exist by now, so this is where a first run seeds the
+    // empty control record (authority still Script Properties until activation).
+    const control = context.initializeControl();
+    return { ...result, control: control ? { created: control.created, generation: control.record.generation } : 'control-tab-absent' };
+  }));
 }
 
 export function checkWorkbookSchema(): unknown {
@@ -350,15 +390,22 @@ export function validateMigrationWorkbook(): unknown {
  * than Session.getActiveUser(), which would require the script to request the
  * userinfo.email scope that this deployment deliberately omits.
  */
+/**
+ * Apply the reviewed migration payload. This is a maintenance write, so it runs
+ * with writers drained — the live gate must be **closed** and the script lock is
+ * held for the whole load — which is the opposite of the request path and the
+ * inverse of this function's older interlock, where the gate had to be open.
+ */
 export function loadMigrationWorkbook(): unknown {
-  const properties = runtimeProperties();
-  const spreadsheet = activeSpreadsheet();
-  if (!properties || !spreadsheet) throw new Error('SpreadsheetApp and PropertiesService are required; run this from the bound Apps Script project');
-  if (properties.getProperty('WRITE_ENABLED') !== 'true') {
-    throw new Error('Refusing to write: set the WRITE_ENABLED script property to "true" first, then run loadMigrationWorkbook again');
-  }
-  const actorId = properties.getProperty('MIGRATION_ACTOR')?.trim() || 'migration';
-  return logResult('loadMigrationWorkbook', applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId }));
+  return logResult('loadMigrationWorkbook', withMaintenance('loadMigrationWorkbook', (context) => {
+    const properties = runtimeProperties();
+    const spreadsheet = activeSpreadsheet();
+    if (!properties || !spreadsheet) throw new Error('SpreadsheetApp and PropertiesService are required; run this from the bound Apps Script project');
+    const actorId = properties.getProperty('MIGRATION_ACTOR')?.trim() || 'migration';
+    const report = applyMigrationPayload(spreadsheet, properties, migrationPayload(), { apply: true, actorId });
+    context.initializeControl();
+    return report;
+  }));
 }
 
 /**

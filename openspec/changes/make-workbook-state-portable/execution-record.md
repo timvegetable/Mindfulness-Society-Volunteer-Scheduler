@@ -203,8 +203,31 @@ check` exit 0; strict OpenSpec validation valid.
   maintenance procedures) and 3.6 (reviewed recovery). The session leaves a
   partial-write failure pending on purpose; 3.6 owns clearing it.
 
+## 2026-09-29 (later still) — tasks 3.4 and 3.6 done
+
+- **3.6** — `evidence/maintenance-and-recovery-2026-09-29.md`. Reviewed recovery:
+  the three decisions with their counter arithmetic, a refused repeat, a
+  mandatory recorded reason, the journal naming the interrupted operation, and a
+  fault-injected failure during recovery followed by a successful retry.
+- **3.4** — same evidence. `withMaintenanceFence` (script lock held, live gate
+  required closed, idempotent control seeding, journal) wraps the editor
+  initializer and the migration loader; validation is now genuinely read-only
+  (it used to initialize, creating tabs, protections and a Settings row); the
+  loader interlock is inverted to the drained posture and the docs record it; and
+  the direct-write reconciliation procedure in `docs/operations.md` is adapted to
+  the control record. The writer inventory was re-run and is recorded there,
+  including the one injectable surface (`createServer({...}).initializeWorkbook()`)
+  that no trampoline or route reaches.
+- Gates: `pnpm test` 49 files / 370 tests; `pnpm run check` exit 0; `pnpm run
+  build` exit 0 with the bundle audit.
+- **Section 3 is complete.** What remains is task 2.4 (private `phamily-env`
+  snapshot interpreter), the bounded staging rehearsal (4.1/4.2), release and
+  rollback artefacts (5.1), the documentation/validation pass (4.3) and the
+  independent reviews.
+
 ## Next eligible action
 
-Tasks 3.4 and 3.6, then task 2.4 if the private snapshot interpreter becomes
-available, then the bounded staging mutation approval request for the 4.1/4.2
-rehearsal.
+Request the bounded staging mutation approval for the task 4.1/4.2 rehearsal and
+prepare its manifest, since section 3 is now complete and the rehearsal is the
+next gate that cannot be satisfied locally. In parallel, task 5.1's release and
+rollback artefacts can be drafted from the implemented protocol.

@@ -35,7 +35,12 @@ export type MigrationValidation = {
 
 export type MigrationLoadReport = {
   schemaVersion: number;
-  initialized: InitializationResult;
+  /**
+   * Present only when the payload was applied. Initialization creates tabs,
+   * headers, protections and a Settings record, so a validation run reports
+   * nothing here rather than mutating the workbook it is inspecting.
+   */
+  initialized?: InitializationResult;
   tables: { tab: string; accepted: number; written: number; revision: number }[];
   rejected: MigrationRejection[];
   problems: string[];
@@ -137,11 +142,10 @@ export function applyMigrationPayload(
   payload: unknown,
   options: { apply: boolean; actorId?: string }
 ): MigrationLoadReport {
-  const initialized = initializeWorkbook(spreadsheet);
   const validation = validateMigrationPayload(payload);
   const report: MigrationLoadReport = {
     schemaVersion: WORKBOOK_SCHEMA_VERSION,
-    initialized,
+    ...(options.apply ? { initialized: initializeWorkbook(spreadsheet) } : {}),
     tables: [],
     rejected: validation.rejected,
     problems: validation.problems,

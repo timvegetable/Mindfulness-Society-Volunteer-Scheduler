@@ -68,6 +68,18 @@ For each direct-write batch:
 5. Re-read through the application and confirm the changed rows are visible, then continue with the acceptance flow.
 6. Restore by repeating steps 2 to 5 from the then-current values. Counters only ever increase.
 
+### Once the workbook carries portable control state
+
+Step 4 changes shape: the counters are no longer bumped by hand in Script Properties, because they no longer live there. The batch still runs under the maintenance fence — script lock held, live gate disabled and verified — and the reconciliation is recorded as a control transition instead:
+
+1. Read the control record and confirm `mutationState` is `idle`; a `pending` mutation means an interrupted write that the reviewed recovery procedure must settle first, not a batch to add to.
+2. Apply the edit, constrained to exact reviewed rows and cells.
+3. Record the batch as a recovery decision against the current record: `not-started` when the edit was reverted, `restored` when rows came back from the snapshot, or `completed` with the touched tabs when the edit is being kept. Each decision advances the generation, and `completed` also advances the global revision and each named tab by exactly one — the same arithmetic step 4 performs above, applied by the protocol rather than by hand.
+4. Re-read through the application and confirm the changed rows and the new revision tuple.
+5. Never write a counter back to a snapshot value, and never edit the control row directly: a hand-edited record is `malformed` to the reader and fails the deployment closed.
+
+The Script Property procedure above remains the procedure for a workbook that has not been activated. Which one applies is a live property of the workbook, not of this document: read `authority` from the control record before choosing.
+
 Two consequences are intended, and acceptance evidence must state them rather than claim the projections are unchanged:
 
 1. The published schedule reports `stale` when the latest completed run's input revision differs from `SCHEDULING_INPUT_REVISION`. Record that verdict, and the run's own input revision, before the batch, and compare it afterwards. A monotonic bump can only make the schedule stale, never current, so a schedule that was already stale is restored to the identical verdict; a schedule that was current is left stale and that difference must be disclosed, or cleared by an approved publish, which creates a new schedule output revision.
