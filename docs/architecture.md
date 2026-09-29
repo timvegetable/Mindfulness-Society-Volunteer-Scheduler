@@ -68,7 +68,7 @@ When an account has multiple roles, the client primary-role projection prefers a
 
 The [integration contract](subsystems/integration.md#request-contract) records the request-local duplicate map; durable replay is not currently guaranteed.
 
-An operation whose policy declares `expectedRevision` is refused with `INVALID_REQUEST` when the caller omits it, before any state is touched, and a supplied value is compared with `DATA_REVISION` under the write lock. All current helpers for operations classified as mutating supply the revision. The supplied revision guards the global operation only: it reaches no per-tab expectation, which handlers read from Script Properties within the same request.
+An operation whose policy declares `expectedRevision` is refused with `INVALID_REQUEST` when the caller omits it, before any state is touched, and a supplied value is compared with `DATA_REVISION` under the write lock. All current helpers for operations classified as mutating supply the revision. The supplied revision guards the global operation only: it reaches no per-tab expectation. Under the Script Properties authority handlers read those expectations from the properties within the same request; under the control authority they come from the request's control record, whose counters the completion transition advances.
 
 ## Persistence and revisions
 
