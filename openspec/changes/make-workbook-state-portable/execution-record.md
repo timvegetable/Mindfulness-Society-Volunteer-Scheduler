@@ -245,8 +245,28 @@ check` exit 0; strict OpenSpec validation valid.
 - The deployed staging Worker does not carry the binding yet, so it serves
   unguarded until the rehearsal's approved redeploy sets it.
 
+## 2026-09-29 — release artefacts prepared, staging approval requested
+
+- `evidence/release-artefacts-2026-09-29.md` — task 5.1's preparation: the server
+  release manifest with its behavioural deltas and deployment order (client
+  first, then server with the authority unset), the workbook migration manifest
+  M1–M4 with per-step verification, the rollback table for before/after
+  activation including the prohibited counter copy-back, the activation
+  verification steps, and the list of production actions that remain
+  unauthorized.
+- `evidence/staging-rehearsal-manifest-2026-09-29.md` — the bounded approval
+  request for tasks 4.1/4.2: two synthetic targets, two individually approved host
+  redeployments, mutations S1–S8 with their expected effects and reversals,
+  snapshots and cleanup, at most 200 further attempts against the retained
+  529/1,000 ledger, reads paced at ≤ 40 per 60 seconds through the shared ledger,
+  and the six verification outputs the rehearsal must produce.
+- Task 5.1 stays unticked: its manifests are prepared, but the production
+  authorizations it sequences are not requested yet and the plan calls for its
+  authorization-dependent portions to stay open.
+
 ## Next eligible action
 
-Prepare the task 5.1 release and rollback artefacts from the implemented
-protocol, and request the bounded staging mutation approval for the task 4.1/4.2
-rehearsal with its manifest.
+Await the staging decision. If approved, implement the rehearsal runner and
+execute S1–S8 under D1/D2; if declined or deferred, continue with the locally
+verifiable remainder (task 2.4's schema-validation half, the task 4.3
+documentation pass, and the independent reviews).
