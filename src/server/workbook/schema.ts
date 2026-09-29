@@ -1,4 +1,4 @@
-export const WORKBOOK_SCHEMA_VERSION = 3;
+export const WORKBOOK_SCHEMA_VERSION = 4;
 
 export type WorkbookTab = {
   name: string;
@@ -25,17 +25,39 @@ export const WORKBOOK_TABS = [
   { name: 'CandidateSchedules', columns: ['id', 'centerId', 'weekday', 'start', 'end', 'timeZone', 'requestedStaffCount', 'status', 'createdBy', 'revision', 'createdAt', 'updatedAt'], protectedColumns: ['id', 'centerId', 'createdBy', 'revision', 'createdAt', 'updatedAt'] }
 ] as const satisfies readonly WorkbookTab[];
 
+/**
+ * Control tabs are schema-defined but deliberately **not** part of
+ * `WORKBOOK_TABS`. The synthetic fixture identity digest is computed over
+ * `WORKBOOK_TABS`, and it is pinned to the deployed staging workbooks and quoted
+ * as cross-campaign evidence; folding protocol metadata into the domain tab list
+ * would silently redefine that identity. Initialization creates and protects
+ * these tabs, `tabDefinition` resolves them, and readers derive their ranges
+ * from the same schema.
+ */
+export const WORKBOOK_CONTROL_TABS = [
+  /**
+   * Portable control metadata: one row, rewritten as a whole by every mutation
+   * lifecycle transition. Every column is protected metadata, and no counter in
+   * it is authoritative until `authority` says so.
+   */
+  { name: 'WorkbookControl', columns: ['protocolVersion', 'authorityEpoch', 'authority', 'generation', 'completedGeneration', 'dataRevision', 'schedulingInputRevision', 'tabRevisions', 'mutationState', 'operationId', 'operationStartedAt', 'operationTabs', 'operationBaseline', 'updatedAt', 'updatedBy'], protectedColumns: ['protocolVersion', 'authorityEpoch', 'authority', 'generation', 'completedGeneration', 'dataRevision', 'schedulingInputRevision', 'tabRevisions', 'mutationState', 'operationId', 'operationStartedAt', 'operationTabs', 'operationBaseline', 'updatedAt', 'updatedBy'] },
+  /** Bounded append-only recovery journal; entries are never rewritten. */
+  { name: 'ControlJournal', columns: ['id', 'generation', 'event', 'operationId', 'actorId', 'tabs', 'before', 'after', 'reason', 'timestamp'], protectedColumns: ['id', 'generation', 'event', 'operationId', 'actorId', 'tabs', 'before', 'after', 'reason', 'timestamp'], appendOnly: true }
+] as const satisfies readonly WorkbookTab[];
+
 /** Every tab name the schema defines; a wider `string` would defeat the allowlist. */
-export type WorkbookTabName = (typeof WORKBOOK_TABS)[number]['name'];
+export type WorkbookTabName = (typeof WORKBOOK_TABS)[number]['name'] | (typeof WORKBOOK_CONTROL_TABS)[number]['name'];
+
+const ALL_TABS: readonly WorkbookTab[] = [...WORKBOOK_TABS, ...WORKBOOK_CONTROL_TABS];
 
 export const WORKBOOK_SCHEMA = {
   version: WORKBOOK_SCHEMA_VERSION,
   metadataKey: 'workbookSchemaVersion',
-  tabs: WORKBOOK_TABS
+  tabs: ALL_TABS
 } as const;
 
 export function tabDefinition(name: string): WorkbookTab {
-  const definition = WORKBOOK_TABS.find((tab) => tab.name === name);
+  const definition = ALL_TABS.find((tab) => tab.name === name);
   if (!definition) throw new Error(`Unknown workbook tab: ${name}`);
   return definition;
 }

@@ -94,3 +94,56 @@ quota and latency acceptance.
 Consume the three delegated reports, verify each against its sources and the
 retained raw data, synthesise the task 1.1 prerequisite assessment, and then
 either unblock implementation or record the precise unresolved condition.
+
+## 2026-09-29 — prerequisites resolved, implementation opened
+
+All three delegated reports came back and each was verified independently before
+acceptance: the CPU assessment's populations against the parent's own queries
+over the retained raw rows (the one number that differed was the parent's
+classifier filing representative-fixture previews as reads, which the delegate's
+per-operation body table resolves), the inventory's property and writer claims
+against the source, and the 503 classification against the platform records.
+Findings were folded in as corrections rather than accepted as written: the
+archived "488 ms per burst preview" divides a 30-request interval by 20, and the
+archived "correlation id present" is not reproducible from the attempt log.
+
+Outcome: every prerequisite condition is resolved rather than conditional-go.
+Gateway CPU, object read CPU, object preview CPU, wall time, correctness, the
+Sheets budget, memory, free-tier consumption and cold coverage are met on
+attributed evidence; the reliability row is met under the predeclared attribution
+rules with one retained platform failure whose recorded mechanism has been
+corrected. Implementation is therefore no longer blocked by task 1.1.
+
+Commits after the checkpoint: `0c21825` (prerequisite evidence and task ticks
+1.1–1.7), `726507c` (tasks 2.1 and 2.2).
+
+## Implementation evidence (tasks 2.1–2.3)
+
+- **2.1, 2.2** — `evidence/workbook-foundation-2026-09-29.md`. Schema-version
+  resolution reads the last parsable record, initialization rewrites in place
+  instead of appending, and the declared protected columns are actually
+  protected. A new initializer contract file fails 10/10 against the pre-fix
+  initializer restored from `HEAD` and passes with the fix. Original tasks 10.24
+  and 10.25 keep their own checkboxes open for their production evidence.
+- **2.3** — `evidence/control-foundation-2026-09-29.md`. Control record codec,
+  typed failure taxonomy, read-side revision provider, completed-generation
+  assertion and idempotent initialization, with 25 tests over malformed,
+  missing, duplicate and unsupported records. Schema version 4 adds the control
+  tabs; they are deliberately outside `WORKBOOK_TABS` because that list defines
+  the fixture identity digest pinned to the deployed staging workbooks — adding
+  them there fails the pinned digest test, which is how the boundary was found.
+- **2.4 is not done.** Its snapshot tooling needs the private `phamily-env`
+  interpreter named in `docs/operations.md`, and its manifest format belongs to
+  the task 5.1 release artefacts.
+
+Validation at `726507c` plus the control work: `pnpm test` 43 files / 298 tests
+passed; `pnpm run test:worker` 8 files / 127 tests passed; `pnpm run check`
+clean; `pnpm run build` with the Apps Script bundle audit passed (Code.js
+500 KB); all three Worker dry-run builds passed, including the gateway bundle
+audit; `openspec validate make-workbook-state-portable --strict` valid.
+
+## Next eligible action
+
+Implement section 3 (writer protocol, reader completed-generation checks, import
+preview reclassification, fenced maintenance paths) and task 2.4, then request
+the bounded staging mutation window the task 4.1/4.2 rehearsal needs.
