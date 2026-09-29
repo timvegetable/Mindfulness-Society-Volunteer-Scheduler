@@ -48,8 +48,11 @@ Unit determination, from the data itself rather than from an assumption:
   GB-s and `sum.activeTime` is active wall-clock microseconds.
 - `sum.cpuTime` is microseconds on the same basis the archived collector
   documented: the burst window 2026-09-29T17:37:50Z–17:39:00Z reports
-  9,758,886 µs, the same 9.759 s the archived preview verdict recorded for that
-  window's 20 preview requests.
+  9,758,886 µs. The archived preview verdict quotes that same 9.759 s, but
+  divides it by 20 burst requests; the interval actually holds 30 requests (the
+  20-request burst plus the first 10 of the sustained phase), so the verdict's
+  "488 ms per burst preview" understates its own denominator (≈325 ms). No
+  figure in this assessment uses that quotient.
 
 ## Measured consumption
 
