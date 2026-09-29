@@ -32,6 +32,8 @@ export type StagingWorkbookApi = {
   addProtectedRange(name: string, range: StagingProtectedRange, description: string, warningOnly: boolean): Promise<{ applied: boolean; reason?: string }>;
   writeTab(name: string, rows: readonly Record<string, unknown>[]): Promise<number>;
   writeControlRow(name: string, row: readonly unknown[]): Promise<number>;
+  appendRow(name: string, values: readonly unknown[]): Promise<number>;
+  clearRow(name: string, rowNumber: number, columns: number): Promise<number>;
   readTabs(names: readonly string[]): Promise<Record<string, unknown[][]>>;
   readAllTabs(): Promise<{ rows: Record<string, unknown[][]>; digests: Record<string, string> }>;
   digest(rowsByTab: Record<string, unknown[][]>): Promise<string>;

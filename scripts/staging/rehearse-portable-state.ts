@@ -13,7 +13,23 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { InMemorySheet, type RecordedProtection } from '../../src/server/workbook/in-memory-sheet.js';
 import { initializeWorkbook, resolveSchemaVersion, type SheetLike, type SpreadsheetLike } from '../../src/server/workbook/initializer.js';
-import { controlRecordFromRows, portableRevisionProvider, type ControlRecord } from '../../src/server/workbook/control.js';
+import {
+  abortMutationRecord,
+  beginMutationRecord,
+  commitMutationRecord,
+  controlOperationId,
+  controlCounters,
+  controlRecordFromRows,
+  emptyControlRecord,
+  portableRevisionProvider,
+  readControlRecord,
+  recoveryTransition,
+  serializeControlRecord,
+  serializeJournalEntry,
+  type ControlRecord,
+  type JournalEvent,
+  type RecoveryDecision
+} from '../../src/server/workbook/control.js';
 import { accessTokenFor } from './google-auth.mjs';
 import { createWorkbookApi, workbookControlTabs, workbookTabs, type StagingProtectedRange } from './workbook.mjs';
 
@@ -32,26 +48,85 @@ type Args = {
   role: Role;
   confirm: boolean;
   baseline?: string;
+  event?: 'begin' | 'complete' | 'abort' | 'recover';
+  decision?: 'completed' | 'not-started' | 'restored';
+  tabs: readonly string[];
+  reason: string;
+  actor: string;
+  authority?: 'script-properties' | 'workbook-control';
+  dataRevision?: number;
+  inputRevision?: number;
+  tabRevisions?: Record<string, number>;
 };
 
-function parseArgs(argv: readonly string[]): Args {
+export function parseArgs(argv: readonly string[]): Args {
   const [command, ...rest] = argv;
-  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify> --role representative|larger [--baseline PATH] --confirm-staging');
+  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify|capture|transition|rollback> --role representative|larger [--baseline PATH] --confirm-staging');
   let role: Role | undefined;
   let confirm = false;
   let baseline: string | undefined;
+  let event: Args['event'];
+  let decision: Args['decision'];
+  let authority: Args['authority'];
+  let dataRevision: number | undefined;
+  let inputRevision: number | undefined;
+  let tabRevisions: Record<string, number> | undefined;
+  const tabs: string[] = [];
+  let reason = '';
+  let actor = 'rehearsal@example.test';
   for (let index = 0; index < rest.length; index += 1) {
     const value = rest[index];
+    const next = (): string => {
+      const candidate = rest[index + 1];
+      if (candidate === undefined) throw new Error(`${value} needs a value.`);
+      index += 1;
+      return candidate;
+    };
     if (value === '--role') {
-      const next = rest[index + 1];
-      if (next !== 'representative' && next !== 'larger') throw new Error('--role must be representative or larger.');
-      role = next;
-      index += 1;
+      const candidate = next();
+      if (candidate !== 'representative' && candidate !== 'larger') throw new Error('--role must be representative or larger.');
+      role = candidate;
     } else if (value === '--baseline') {
-      const next = rest[index + 1];
-      if (!next) throw new Error('--baseline needs a path.');
-      baseline = next;
-      index += 1;
+      baseline = next();
+    } else if (value === '--event') {
+      const candidate = next();
+      if (candidate !== 'begin' && candidate !== 'complete' && candidate !== 'abort' && candidate !== 'recover') throw new Error('--event must be begin, complete, abort or recover.');
+      event = candidate;
+    } else if (value === '--decision') {
+      const candidate = next();
+      if (candidate !== 'completed' && candidate !== 'not-started' && candidate !== 'restored') throw new Error('--decision must be completed, not-started or restored.');
+      decision = candidate;
+    } else if (value === '--data-revision') {
+      const candidate = Number(next());
+      if (!Number.isSafeInteger(candidate) || candidate < 0) throw new Error('--data-revision must be a non-negative integer.');
+      dataRevision = candidate;
+    } else if (value === '--input-revision') {
+      const candidate = Number(next());
+      if (!Number.isSafeInteger(candidate) || candidate < 0) throw new Error('--input-revision must be a non-negative integer.');
+      inputRevision = candidate;
+    } else if (value === '--tab-revisions') {
+      const candidate = next();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(candidate);
+      } catch {
+        throw new Error('--tab-revisions must be a JSON object of tab names to non-negative integers.');
+      }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('--tab-revisions must be a JSON object.');
+      for (const entry of Object.values(parsed)) {
+        if (typeof entry !== 'number' || !Number.isSafeInteger(entry) || entry < 0) throw new Error('--tab-revisions values must be non-negative integers.');
+      }
+      tabRevisions = parsed as Record<string, number>;
+    } else if (value === '--authority') {
+      const candidate = next();
+      if (candidate !== 'script-properties' && candidate !== 'workbook-control') throw new Error('--authority must be script-properties or workbook-control.');
+      authority = candidate;
+    } else if (value === '--tabs') {
+      tabs.push(...next().split(',').map((tab) => tab.trim()).filter(Boolean));
+    } else if (value === '--reason') {
+      reason = next();
+    } else if (value === '--actor') {
+      actor = next();
     } else if (value === '--confirm-staging') {
       confirm = true;
     } else {
@@ -59,7 +134,21 @@ function parseArgs(argv: readonly string[]): Args {
     }
   }
   if (!role) throw new Error('--role is required; the runner addresses workbooks by role, never by raw id.');
-  return { command, role, confirm, ...(baseline ? { baseline } : {}) };
+  return {
+    command,
+    role,
+    confirm,
+    tabs,
+    reason,
+    actor,
+    ...(baseline ? { baseline } : {}),
+    ...(event ? { event } : {}),
+    ...(decision ? { decision } : {}),
+    ...(authority ? { authority } : {}),
+    ...(dataRevision === undefined ? {} : { dataRevision }),
+    ...(inputRevision === undefined ? {} : { inputRevision }),
+    ...(tabRevisions ? { tabRevisions } : {})
+  };
 }
 
 async function loadConfig(): Promise<RehearsalConfig> {
@@ -108,10 +197,6 @@ function mirror(existing: ReadonlyMap<string, unknown[][]>, definitions: Readonl
   return { spreadsheet, sheets };
 }
 
-function dataRows(rows: readonly unknown[][]): unknown[][] {
-  return rows.slice(1);
-}
-
 function tabDigest(rows: unknown[][]): string {
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
@@ -153,7 +238,7 @@ async function commandBaseline(args: Args, api: ReturnType<typeof createWorkbook
   return {
     path,
     tabs: meta.sheets.length,
-    domainRows: Object.fromEntries(domain.filter((name) => rows[name]).map((name) => [name, dataRows(rows[name] ?? []).length])),
+    domainRows: Object.fromEntries(domain.filter((name) => rows[name]).map((name) => [name, (rows[name] ?? []).length])),
     controlTabsPresent: control.filter((name) => meta.sheets.includes(name)),
     domainDigest: payload.domainDigest.slice(0, 16)
   };
@@ -225,14 +310,13 @@ async function commandVerify(args: Args, api: ReturnType<typeof createWorkbookAp
   const verifyDefinitions = new Map<string, readonly string[]>([...(await workbookTabs()), ...(await workbookControlTabs())].map((tab) => [tab.name, tab.columns]));
   const { spreadsheet } = mirror(new Map<string, unknown[][]>(Object.entries(rows)), verifyDefinitions);
   const resolution = resolveSchemaVersion(spreadsheet);
-  const controlRows = rows.WorkbookControl ? dataRows(rows.WorkbookControl) : [];
   let record: ControlRecord | undefined;
   let recordError: string | undefined;
   try {
-    record = controlRows.length > 0 ? controlRecordFromRows(controlRows) : undefined;
+    record = await readRecord(api);
     if (!record) recordError = 'control record is absent';
   } catch (error) {
-    recordError = error instanceof Error ? error.name : 'unknown';
+    recordError = error instanceof Error ? `${error.name}: ${error.message}` : 'unknown';
   }
   const path = await report(`rehearsal-verify-${args.role}`, { role: args.role, at: new Date().toISOString(), resolution, changedDomainTabs: changed, record, recordError, tabs: meta.sheets });
   return {
@@ -251,23 +335,220 @@ async function commandVerify(args: Args, api: ReturnType<typeof createWorkbookAp
   };
 }
 
+/** Reads the control record, or undefined when the workbook has none yet. */
+async function readRecord(api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<ControlRecord | undefined> {
+  const rows = await api.readTabs(['WorkbookControl']);
+  const data = (rows.WorkbookControl ?? []).filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
+  if (data.length === 0) return undefined;
+  return controlRecordFromRows(data);
+}
+
+function mergeMax(current: Readonly<Record<string, number>>, captured: Readonly<Record<string, number>>): Record<string, number> {
+  const merged: Record<string, number> = { ...current };
+  for (const [tab, value] of Object.entries(captured)) merged[tab] = Math.max(merged[tab] ?? 0, value);
+  return merged;
+}
+
+/** Appends the journal entry a transition produced, through the shared codec. */
+async function journal(api: Awaited<ReturnType<typeof createWorkbookApi>>, event: JournalEvent, operationId: string, actorId: string, tabs: readonly string[], before: ControlRecord, after: ControlRecord, reason: string, at: string): Promise<void> {
+  await api.appendRow('ControlJournal', serializeJournalEntry({
+    id: `${event}-${after.generation}-${Date.now()}`,
+    generation: after.generation,
+    event,
+    operationId,
+    actorId,
+    tabs,
+    before: controlCounters(before),
+    after: controlCounters(after),
+    reason,
+    timestamp: at
+  }) as unknown[]);
+}
+
+async function writeRecord(api: Awaited<ReturnType<typeof createWorkbookApi>>, record: ControlRecord): Promise<void> {
+  await api.writeControlRow('WorkbookControl', serializeControlRecord(record));
+}
+
+function tuple(record: ControlRecord) {
+  return {
+    generation: record.generation,
+    completedGeneration: record.completedGeneration,
+    authority: record.authority,
+    authorityEpoch: record.authorityEpoch,
+    mutationState: record.mutationState,
+    dataRevision: record.dataRevision,
+    schedulingInputRevision: record.schedulingInputRevision,
+    tabRevisions: record.tabRevisions,
+    idle: portableRevisionProvider(record).idle
+  };
+}
+
+/**
+ * S3: capture the counters the deployed staging readers serve into the control
+ * record. Nothing is invented: the values are supplied from the deployment
+ * configuration, the counters are taken as `max(captured, current)` so they never
+ * decrease, and the authority epoch advances.
+ */
+async function commandCapture(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  if (args.dataRevision === undefined || args.inputRevision === undefined || !args.tabRevisions) {
+    throw new Error('capture needs --data-revision, --input-revision and --tab-revisions (the values the deployment currently serves).');
+  }
+  const current = await readRecord(api);
+  if (current?.mutationState === 'pending') throw new Error('The record has a pending mutation; recover it before capturing.');
+  const at = new Date().toISOString();
+  const record: ControlRecord = {
+    ...(current ?? emptyControlRecord(at, args.actor)),
+    authorityEpoch: (current?.authorityEpoch ?? 0) + 1,
+    authority: 'workbook-control',
+    dataRevision: Math.max(current?.dataRevision ?? 0, args.dataRevision),
+    schedulingInputRevision: Math.max(current?.schedulingInputRevision ?? 0, args.inputRevision),
+    tabRevisions: mergeMax(current?.tabRevisions ?? {}, args.tabRevisions),
+    mutationState: 'idle',
+    operationId: '',
+    operationStartedAt: '',
+    operationTabs: [],
+    operationBaseline: {},
+    updatedAt: at,
+    updatedBy: args.actor
+  };
+  await writeRecord(api, record);
+  const after = await readRecord(api);
+  await journal(api, 'capture', '', args.actor, [], record, record, 'rehearsal capture', at);
+  const path = await report(`rehearsal-capture-${args.role}`, { role: args.role, at, captured: tuple(record), reread: after ? tuple(after) : undefined });
+  return { path, captured: tuple(record), rereadMatches: after !== undefined && serializeControlRecord(after).join('|') === serializeControlRecord(record).join('|'), apiCalls: api.callCount() };
+}
+
+/** S4-S7: one protocol transition, applied with the production arithmetic. */
+async function commandTransition(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  const current = await readRecord(api);
+  if (!current) throw new Error('The workbook has no control record; run capture first.');
+  const at = new Date().toISOString();
+  const event = args.event;
+  if (!event) throw new Error('transition needs --event begin|complete|abort|recover.');
+  const tabs = args.tabs as never[];
+  let record: ControlRecord;
+  let journalEvent: JournalEvent;
+  let operationId = current.operationId;
+  if (event === 'begin') {
+    if (tabs.length === 0) throw new Error('begin needs --tabs (at least one tab).');
+    operationId = controlOperationId('rehearsal.transition');
+    record = beginMutationRecord(current, { operationId, tabs, actorId: args.actor }, at);
+    journalEvent = 'begin';
+  } else if (event === 'complete') {
+    if (tabs.length === 0) throw new Error('complete needs --tabs (the tabs whose persistence was verified).');
+    record = commitMutationRecord(current, tabs, args.actor, at);
+    journalEvent = 'commit';
+  } else if (event === 'abort') {
+    record = abortMutationRecord(current, args.actor, at);
+    journalEvent = 'abort';
+  } else {
+    if (!args.reason.trim()) throw new Error('recover needs --reason: the reviewed conclusion is part of the transition.');
+    record = recoveryTransition(current, {
+      decision: (args.decision ?? 'restored') as RecoveryDecision,
+      actorId: args.actor,
+      reason: args.reason,
+      ...(tabs.length > 0 ? { committedTabs: tabs } : {})
+    }, at);
+    journalEvent = 'recover';
+  }
+  await writeRecord(api, record);
+  const after = await readRecord(api);
+  await journal(api, journalEvent, operationId, args.actor, tabs, current, record, args.reason, at);
+  const path = await report(`rehearsal-transition-${args.role}`, { role: args.role, at, event, before: tuple(current), after: tuple(record), reread: after ? tuple(after) : undefined });
+  return { path, event, before: tuple(current), after: tuple(record), rereadMatches: after !== undefined && serializeControlRecord(after).join('|') === serializeControlRecord(record).join('|'), apiCalls: api.callCount() };
+}
+
+/**
+ * S7: insert a tagged fixture row, then restore it. The recovery transition is
+ * the point: a restore advances the generation and leaves every counter exactly
+ * where it was, and the row is removed afterwards so the workbook returns to its
+ * baseline.
+ */
+async function commandFixture(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  const tab = args.tabs[0];
+  if (!tab) throw new Error('fixture needs --tabs <Tab> (the tab whose tagged row is inserted and removed).');
+  const definitions = new Map<string, readonly string[]>([...(await workbookTabs()), ...(await workbookControlTabs())].map((entry) => [entry.name, entry.columns]));
+  const columns = definitions.get(tab);
+  if (!columns) throw new Error(`Unknown tab ${tab}.`);
+  const tag = `rehearsal-fixture-${Date.now()}`;
+  const before = await api.readTabs([tab]);
+  const beforeRows = before[tab] ?? [];
+  const cells = columns.map((column) => (column === 'id' ? tag : column === 'active' ? true : ''));
+  await api.appendRow(tab, cells);
+  const inserted = await api.readTabs([tab]);
+  const insertedRows = inserted[tab] ?? [];
+  const rowNumber = beforeRows.length + 2;
+  const path = await report(`rehearsal-fixture-${args.role}`, { role: args.role, at: new Date().toISOString(), tab, tag, rowNumber, rowsBefore: beforeRows.length, rowsAfter: insertedRows.length });
+  return { path, tab, tag, rowNumber, rowsBefore: beforeRows.length, rowsAfter: insertedRows.length, inserted: insertedRows.length === beforeRows.length + 1, apiCalls: api.callCount() };
+}
+
+/** Removes the tagged fixture row inserted by `fixture` and reports the tab digest. */
+async function commandCleanup(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  const tab = args.tabs[0];
+  if (!tab) throw new Error('cleanup needs --tabs <Tab>.');
+  const definitions = new Map<string, readonly string[]>([...(await workbookTabs()), ...(await workbookControlTabs())].map((entry) => [entry.name, entry.columns]));
+  const columns = definitions.get(tab);
+  if (!columns) throw new Error(`Unknown tab ${tab}.`);
+  const rows = (await api.readTabs([tab]))[tab] ?? [];
+  const tagIndex = columns.indexOf('id');
+  const tagRow = rows.findIndex((row) => typeof row[tagIndex] === 'string' && String(row[tagIndex]).startsWith('rehearsal-fixture-'));
+  if (tagRow < 0) return { removed: false, reason: 'no tagged fixture row present', rows: rows.length };
+  await api.clearRow(tab, tagRow + 2, columns.length);
+  const after = (await api.readTabs([tab]))[tab] ?? [];
+  const path = await report(`rehearsal-cleanup-${args.role}`, { role: args.role, at: new Date().toISOString(), tab, clearedRow: tagRow + 2, rowsBefore: rows.length, rowsAfter: after.length, digest: tabDigest(after) });
+  return { path, removed: true, clearedRow: tagRow + 2, rowsBefore: rows.length, rowsAfter: after.length, digest: tabDigest(after), apiCalls: api.callCount() };
+}
+
+/** S8: flip the authority between Script Properties and the control record. */
+async function commandRollback(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  const current = await readRecord(api);
+  if (!current) throw new Error('The workbook has no control record; run capture first.');
+  if (current.mutationState === 'pending') throw new Error('The record has a pending mutation; a rollback must not run over an interrupted write.');
+  if (!args.authority) throw new Error('rollback needs --authority script-properties|workbook-control.');
+  const at = new Date().toISOString();
+  // The design's transition table gives authority activation and rollback a
+  // generation advance as well as an epoch advance, so a reader bracketed across
+  // the switch rejects its snapshot instead of accepting one spanning it.
+  const record: ControlRecord = {
+    ...current,
+    authority: args.authority,
+    authorityEpoch: current.authorityEpoch + 1,
+    generation: current.generation + 1,
+    completedGeneration: current.generation + 1,
+    updatedAt: at,
+    updatedBy: args.actor
+  };
+  await writeRecord(api, record);
+  const after = await readRecord(api);
+  await journal(api, 'rollback', current.operationId, args.actor, current.operationTabs, current, record, `rehearsal authority switch to ${args.authority}`, at);
+  const path = await report(`rehearsal-rollback-${args.role}`, { role: args.role, at, before: tuple(current), after: tuple(record), reread: after ? tuple(after) : undefined });
+  return { path, before: tuple(current), after: tuple(record), rereadMatches: after !== undefined && serializeControlRecord(after).join('|') === serializeControlRecord(record).join('|'), apiCalls: api.callCount() };
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const config = await loadConfig();
   const workbook = config.workbooks[args.role];
   if (!workbook?.spreadsheetId) throw new Error(`No workbook is configured for role ${args.role}.`);
-  if (args.command !== 'baseline' && args.command !== 'verify' && !args.confirm) {
+  const readOnlyCommands = new Set(['baseline', 'verify']);
+  if (!readOnlyCommands.has(args.command) && !args.confirm) {
     throw new Error('Mutating subcommands require --confirm-staging: the rehearsal is approved for the synthetic staging workbooks only.');
   }
   const token = await accessTokenFor(resolve(config.loaderKey), SHEETS_SCOPE);
   const api = await createWorkbookApi({ token, spreadsheetId: workbook.spreadsheetId });
-  const outcome = args.command === 'baseline'
-    ? await commandBaseline(args, api)
-    : args.command === 'initialize'
-      ? await commandInitialize(args, api)
-      : args.command === 'verify'
-        ? await commandVerify(args, api)
-        : (() => { throw new Error(`Unknown subcommand: ${args.command}`); })();
+  const commands: Record<string, () => Promise<unknown>> = {
+    baseline: () => commandBaseline(args, api),
+    initialize: () => commandInitialize(args, api),
+    verify: () => commandVerify(args, api),
+    capture: () => commandCapture(args, api),
+    transition: () => commandTransition(args, api),
+    rollback: () => commandRollback(args, api),
+    fixture: () => commandFixture(args, api),
+    cleanup: () => commandCleanup(args, api)
+  };
+  const run = commands[args.command];
+  if (!run) throw new Error(`Unknown subcommand: ${args.command}`);
+  const outcome = await run();
   console.log(JSON.stringify({ command: args.command, role: args.role, ...outcome as object }, null, 2));
 }
 

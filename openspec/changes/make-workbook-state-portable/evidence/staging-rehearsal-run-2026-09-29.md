@@ -131,3 +131,79 @@ Same run, second target, now that the runner is fixed:
 - Only the representative workbook has been rehearsed so far; the larger fixture,
   the counter transitions (S3–S8), the bracketed reader (D1/D2) and the reader
   checks remain.
+
+## Batch 2 — counter transitions on the representative workbook (S3–S8)
+
+Every step below was applied by the runner through the **production** transition
+functions (`beginMutationRecord`, `commitMutationRecord`, `abortMutationRecord`,
+`recoveryTransition`), and after each write the runner re-read the workbook and
+parsed it with the production codec: `rereadMatches: true` on every step means an
+independent read reproduced the row it had written.
+
+| Step | Generation | State | dataRevision | inputRevision | Tab revisions |
+| --- | --- | --- | --- | --- | --- |
+| S3 capture (epoch 1, `workbook-control`) | 0 | idle | 42 | 5 | every tab 1 |
+| S4 begin (`Assignments`) | 1 | pending | 42 | 5 | unchanged |
+| S5 recover `not-started` | 2 | idle | 42 | 5 | unchanged |
+| S6 begin then complete (`Volunteers`, `Assignments`) | 3 → 4 | pending → idle | **43** | **6** | Volunteers 2, Assignments 2 |
+| S7 begin, tagged fixture row, recover `restored` | 5 → 6 | pending → idle | 43 | 6 | unchanged |
+| S8 rollback to `script-properties` (epoch 4) | 7 | idle | 43 | 6 | unchanged |
+| S8 rollback back to `workbook-control` (epoch 5) | 8 | idle | 43 | 6 | unchanged |
+
+Measured conclusions:
+
+- The capture used the counters the deployment itself serves (42, 5 and the
+  per-tab map from the staging configuration) — nothing was invented, and the
+  counters were taken as `max(captured, current)`.
+- **An abort and a restore advance the generation without moving a counter**
+  (S5 and S7 both left 42/43 and every tab revision untouched). This is the case
+  the completed-snapshot bracket exists for: a reader comparing revisions alone
+  would accept a snapshot spanning an interruption.
+- **Completion moves exactly the right counters** (S6): the global revision by
+  one, the composed scheduling-input revision by one because `Volunteers` is a
+  scheduling input, and each committed tab by one — while `Assignments` alone
+  would not have moved the composed counter.
+- The tagged fixture row was removed and the tab returned to its baseline
+  **byte-for-byte**: the `Centers` digest after cleanup equals the S1 baseline
+  digest exactly.
+- The rollback rehearsal flips the authority with both an epoch advance and a
+  generation advance, so a reader bracketed across the switch rejects its
+  snapshot rather than accepting one that spans it.
+- Final verification: 18 tabs, `Settings` the only changed domain tab, schema 4
+  with one record and no malformed records, control record present with
+  `authority: workbook-control`, `idle: true`, `dataRevision: 43`.
+
+### Protocol behaviour observed as intended
+
+The first attempt at S7 applied the `restored` decision while the record was
+idle and was refused with `OPERATION_MISMATCH` — a restore with no interrupted
+mutation to restore. The step was then run in the correct order (begin, fixture
+row, restore, cleanup). Retention of that refusal is the point: the protocol will
+not let an operator "restore" state that was never fenced.
+
+### Runner defects found in this batch
+
+1. `verify` reported `controlRecordPresent: false` for a record that existed: it
+   dropped the first row of the control tab, the same `A2:`-only misreading as
+   Incident A. Fixed, and the resulting report now shows the record, its
+   authority, its idle state and its counters.
+2. The baseline's per-tab row counts were one short per tab for the same reason
+   (Volunteers printed 39 instead of 40). The row *digest* was always computed
+   from the full read, which is why it matched the archived pin; the counts are
+   now reported correctly.
+3. `rollback` advanced the authority epoch but not the generation. The pinned
+   design gives authority activation and rollback a generation advance as well;
+   the runner now does both, and the step was re-run to produce the compliant
+   sequence in the table above.
+
+### State after batch 2
+
+- Representative workbook: control record authoritative (`workbook-control`,
+  epoch 5, generation 8, idle), counters 43/6, two control tabs, protections
+  applied, domain rows unchanged from the baseline.
+- Larger workbook: initialized (schema 4, control tabs, version record) but not
+  captured; no control record yet.
+- Attempt ledger unchanged at 529 — this batch was Sheets API calls, not harness
+  attempts.
+- Still to come: the two approved host redeployments (D1/D2) and the reader
+  checks, which need a fresh Google ID-token credential.

@@ -313,6 +313,22 @@ export async function createWorkbookApi({ token, spreadsheetId }) {
       }
     },
 
+    /** Clears one row's cells, for removing a tagged fixture row. */
+    async clearRow(name, rowNumber, columns) {
+      const range = `${quoted(name)}!A${rowNumber}:${columnLetters(columns)}${rowNumber}`;
+      await request(`/${spreadsheetId}/values/${encodeURIComponent(range)}:clear`, { method: 'POST', body: JSON.stringify({}) });
+      return 1;
+    },
+
+    /** Appends one row, for the journal. */
+    async appendRow(name, values) {
+      await request(`/${spreadsheetId}/values/${encodeURIComponent(`${quoted(name)}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+        method: 'POST',
+        body: JSON.stringify({ values: [values] })
+      });
+      return 1;
+    },
+
     /** Creates the control tabs and writes their header rows, if missing. */
     async ensureControlTabs() {
       const meta = await this.metadata();
