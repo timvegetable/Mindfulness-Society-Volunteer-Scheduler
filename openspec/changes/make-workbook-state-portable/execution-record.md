@@ -293,9 +293,24 @@ archived pin (`fc05ff65…`), its first initialization pass created the control 
 with 54 protections and zero refusals in 13 calls, and its second pass reported
 `alreadyInitialized` without appending a Settings row.
 
+## 2026-09-29 — S3–S8 counter transitions rehearsed (batch 2)
+
+`evidence/staging-rehearsal-run-2026-09-29.md` (batch 2). Capture wrote the
+counters the deployment itself serves; an abort and a restore each advanced the
+generation with every counter untouched; completion moved the global revision by
+one, the composed scheduling-input revision by one because Volunteers is a
+scheduling input, and each committed tab by one; the tagged fixture row was
+removed and its tab returned byte-for-byte to the baseline digest; and the
+authority rollback pair advanced both the epoch and the generation. Every step
+reported `rereadMatches: true`.
+
+Three runner defects were found and fixed in this batch: `verify` dropped the
+control record row, baseline row counts were one short per tab, and `rollback`
+did not advance the generation. A restore attempted with nothing pending was
+refused with `OPERATION_MISMATCH`, retained as intended protocol behaviour.
+
 ## Next eligible action
 
-Execute the counter transitions S3–S8 on the representative workbook, then the
-two approved host redeployments (D1/D2) and the reader checks. The reader checks need a fresh Google ID-token
-credential: the retained ones expired, so that is the next point at which the
-operator is needed.
+The two approved host redeployments (D1/D2) and the reader checks. The reader
+checks need a fresh Google ID-token credential: the retained ones expired, so the
+operator is needed before that measurement can run.
