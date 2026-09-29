@@ -181,10 +181,30 @@ continued on the same branch.
 Gates after each commit: `pnpm test` 45 files / 331 tests passed; `pnpm run
 check` exit 0; strict OpenSpec validation valid.
 
+## 2026-09-29 (later) — portable authority adaptation: tasks 3.2 and 3.5 done
+
+- **3.2, 3.5** — `evidence/portable-authority-adaptation-2026-09-29.md`. The
+  `CONTROL_AUTHORITY` deployment switch, the request-scoped `PortableSession`,
+  the `beforeCommit` seam that adapts every domain repository at once, the
+  dispatcher `begin`/`settleAfterFailure` hooks, and the guard wiring that
+  brackets named plan reads with two control reads. A portable-authority
+  deployment without the batched read path now refuses to serve instead of
+  hydrating unguarded.
+- The build gate caught a real regression in this batch: an unguarded
+  `globalThis.crypto` access in the new operation-id helper failed the Apps
+  Script bundle audit (`dist/apps-script/Code.js:63 … references unsupported
+  global crypto`). Fixed by using the same `typeof`-guarded access the audit id
+  in `repository.ts` documents.
+- Gates at this commit: `pnpm test` 47 files / 354 tests; `pnpm run check` exit
+  0; `pnpm run build` exit 0 with the bundle audit; `pnpm run test:worker`
+  8 files / 127 tests; three Worker dry-run builds exit 0; strict OpenSpec
+  validation valid.
+- **Still open**: 2.4 (private `phamily-env` interpreter), 3.4 (fenced
+  maintenance procedures) and 3.6 (reviewed recovery). The session leaves a
+  partial-write failure pending on purpose; 3.6 owns clearing it.
+
 ## Next eligible action
 
-Task 3.2: introduce the activated-authority configuration and the request-scoped
-portable session, adapt the repository revision stores and the dispatcher
-lifecycle to it, and wire the completed-snapshot guard into the served read path
-(which is also what completes task 3.5). Then task 3.4 and 3.6, then the staging
-approval request.
+Tasks 3.4 and 3.6, then task 2.4 if the private snapshot interpreter becomes
+available, then the bounded staging mutation approval request for the 4.1/4.2
+rehearsal.

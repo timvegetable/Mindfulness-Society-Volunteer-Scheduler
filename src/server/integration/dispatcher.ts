@@ -36,6 +36,16 @@ export type { EnvelopeValidation, IntegrationErrorDetails, OperationPolicy, Vali
 export type RevisionSource = {
   current(): number;
   advance?(actorId: string, operation: string): number;
+  /**
+   * Called once the write lock is held and the revision check passed, before the
+   * handler runs. The portable authority opens its mutation here.
+   */
+  begin?(actorId: string, operation: string): void;
+  /**
+   * Called when the handler throws. The portable authority aborts a mutation
+   * that changed no rows and leaves one that did pending for reviewed recovery.
+   */
+  settleAfterFailure?(reason: string): void;
 };
 
 export type WriteLock = {
@@ -208,8 +218,21 @@ export class IntegrationDispatcher {
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
         now: this.options.clock?.() ?? new Date().toISOString()
       };
+      if (policy.mutating) this.options.revision?.begin?.(actor.user.id, operation);
       const invoke = () => assertSynchronous(operation, handler(context, payload));
-      const data = this.options.timing ? this.options.timing.derive(invoke) : invoke();
+      let data: unknown;
+      try {
+        data = this.options.timing ? this.options.timing.derive(invoke) : invoke();
+      } catch (error) {
+        if (policy.mutating) {
+          try {
+            this.options.revision?.settleAfterFailure?.('handler failed');
+          } catch {
+            // Settling is best effort: the handler's own failure is the answer.
+          }
+        }
+        throw error;
+      }
       let revision: number | undefined;
       if (policy.mutating && this.options.revision?.advance) revision = this.options.revision.advance(actor.user.id, operation);
       const response: ApiResponse<unknown> = revision === undefined ? { ok: true, data } : { ok: true, data, revision };

@@ -216,7 +216,7 @@ describe('mutation lifecycle', () => {
   it('refuses a completion or abort that does not match the pending operation', () => {
     const { writer } = fixture();
     const { scope } = writer.begin({ operationId: 'op#1', tabs: ['Volunteers'], actorId: 'admin@example.test' });
-    const impostor: MutationScope = { ...scope, operationId: 'op#2', markCommitted: () => undefined, committedTabs: () => ['Volunteers'] };
+    const impostor: MutationScope = { ...scope, operationId: 'op#2', declare: () => undefined, markCommitted: () => undefined, committedTabs: () => ['Volunteers'] };
 
     expectControlError(() => writer.commit(impostor), 'OPERATION_MISMATCH');
     expectControlError(() => writer.abort(impostor, 'not mine'), 'OPERATION_MISMATCH');

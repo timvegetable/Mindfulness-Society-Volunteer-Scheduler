@@ -202,7 +202,18 @@ export class SheetRepository<T extends { id: string }> implements RevisionedRepo
 }
 
 export class RevisionStore {
-  constructor(private readonly backing: { get(): RevisionState; set(value: RevisionState): void; lock?: LockLike }) {}
+  constructor(private readonly backing: {
+    get(): RevisionState;
+    set(value: RevisionState): void;
+    lock?: LockLike;
+    /**
+     * Runs after the expected-revision check and before the rows change. The
+     * portable protocol publishes its in-progress marker here, so a crash
+     * between the marker and the rows leaves a fenced pending state rather than
+     * an unrecorded partial write.
+     */
+    beforeCommit?(): void;
+  }) {}
 
   read(): RevisionState {
     return { ...this.backing.get() };
@@ -213,6 +224,7 @@ export class RevisionStore {
       const current = this.read();
       if (current.number !== expectedRevision) throw new RepositoryError('STALE_REVISION', `Expected revision ${expectedRevision}, current revision is ${current.number}`);
       const nextRevision: RevisionState = { number: current.number + 1, changedAt: now(), changedBy: actorId, source };
+      this.backing.beforeCommit?.();
       const result = action(nextRevision);
       this.backing.set(nextRevision);
       return result;

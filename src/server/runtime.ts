@@ -37,6 +37,8 @@ import type { Center, CenterUser, CandidateSchedule } from './centers/models.js'
 import type { SchedulingRun } from '../shared/domain.js';
 import type { ReadTiming } from './integration/read-timing.js';
 import { BATCH_READ_PLANS, type BatchReadPlan, type BatchReadTab, type WorkbookBatchReader } from './workbook/batch-read.js';
+import type { PortableSession } from './workbook/portable-session.js';
+import type { WorkbookTabName } from './workbook/schema.js';
 
 export type ScriptProperties = {
   getProperty(name: string): string | null;
@@ -166,10 +168,28 @@ function lazySheet(spreadsheet: SpreadsheetLike, name: string): SheetLike {
   };
 }
 
-function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, properties: ScriptProperties, definition: WorkbookTab, codec: { fromRow(row: Record<string, unknown>, context?: SheetValueContext): T; toRow(value: T): Record<string, unknown> }, audit: (entry: AuditEntry) => void, context: SheetValueContext, timing?: ReadTiming): SheetRepository<T> {
+/**
+ * Under the portable authority the counters live in the control record: a read
+ * comes from the request's session (including the commits this request already
+ * made), a tab's rows are fenced by the in-progress marker published before they
+ * change, and the counter itself advances at the completion transition rather
+ * than in Script Properties.
+ */
+function portableRevisionBacking(session: PortableSession, name: WorkbookTabName) {
+  return {
+    get: () => ({ number: session.tabRevision(name), changedAt: now(), changedBy: 'system', source: 'portable-control' }),
+    set: () => { session.registerCommitted(name); },
+    beforeCommit: () => { session.ensureMarked(name); }
+  };
+}
+
+function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, properties: ScriptProperties, definition: WorkbookTab, codec: { fromRow(row: Record<string, unknown>, context?: SheetValueContext): T; toRow(value: T): Record<string, unknown> }, audit: (entry: AuditEntry) => void, context: SheetValueContext, timing?: ReadTiming, session?: PortableSession): SheetRepository<T> {
   const sheet = lazySheet(spreadsheet, definition.name);
   const tracksSchedulingInput = SCHEDULING_INPUT_TABS.has(definition.name);
-  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(repositoryRevision(properties, definition.name, tracksSchedulingInput ? () => advanceSchedulingInputRevision(properties) : undefined)), audit, context, timing ? (tab, action) => timing.hydration(tab, action) : undefined, timing ? (action) => timing.sheetCall(action) : undefined);
+  const backing = session
+    ? portableRevisionBacking(session, definition.name as WorkbookTabName)
+    : repositoryRevision(properties, definition.name, tracksSchedulingInput ? () => advanceSchedulingInputRevision(properties) : undefined);
+  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(backing), audit, context, timing ? (tab, action) => timing.hydration(tab, action) : undefined, timing ? (action) => timing.sheetCall(action) : undefined);
 }
 
 /**
@@ -186,10 +206,10 @@ export function workbookTimeZone(spreadsheet: SpreadsheetLike, properties: Scrip
   return zone || runtimeConfiguration(properties).timeZone;
 }
 
-export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: workbookTimeZone(spreadsheet, properties) }, timing?: ReadTiming): RuntimeRepositories {
+export function repositories(spreadsheet: SpreadsheetLike, properties: ScriptProperties, context: SheetValueContext = { timeZone: workbookTimeZone(spreadsheet, properties) }, timing?: ReadTiming, session?: PortableSession): RuntimeRepositories {
   const auditSheet = lazySheet(spreadsheet, 'AuditLog');
   const audit = auditWriter(auditSheet);
-  const make = <T extends { id: string }>(definition: WorkbookTab, codec: SheetCodec<T>): SheetRepository<T> => makeRepository(spreadsheet, properties, definition, codec, audit, context, timing);
+  const make = <T extends { id: string }>(definition: WorkbookTab, codec: SheetCodec<T>): SheetRepository<T> => makeRepository(spreadsheet, properties, definition, codec, audit, context, timing, session);
   return {
     volunteers: make(tabDefinition('Volunteers'), volunteerCodec),
     recurringAvailability: make(tabDefinition('RecurringAvailability'), recurringAvailabilityCodec),
@@ -408,9 +428,9 @@ export function resolveMailer(services: AppsScriptMailServices): Mailer | undefi
   return mailApp ? { send: ({ to, subject, body }) => mailApp.sendEmail(to.join(','), subject, body) } : undefined;
 }
 
-export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache; timing?: ReadTiming; batchReader?: WorkbookBatchReader } = {}): ProductionRuntime {
+export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache; timing?: ReadTiming; batchReader?: WorkbookBatchReader; session?: PortableSession } = {}): ProductionRuntime {
   const configuration = runtimeConfiguration(properties);
-  const store = repositories(spreadsheet, properties, { timeZone: workbookTimeZone(spreadsheet, properties) }, options.timing);
+  const store = repositories(spreadsheet, properties, { timeZone: workbookTimeZone(spreadsheet, properties) }, options.timing, options.session);
   const batchedRepositories = {
     SchedulingRuns: store.schedulingRuns,
     Assignments: store.assignments,

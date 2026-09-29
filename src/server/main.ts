@@ -5,6 +5,10 @@ import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContex
 import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
 import { createProductionRuntime, runtimeConfiguration } from './runtime.js';
+import { activatedAuthority } from './workbook/authority.js';
+import { createPortableAuthority, type PortableAuthority } from './portable-authority.js';
+import type { PrunableSheetLike } from './workbook/control.js';
+import type { SheetLike, SpreadsheetLike } from './workbook/initializer.js';
 import { applyMigrationPayload } from './workbook/loader.js';
 import { cellBoolean, cellNumber, optionalCellText } from './workbook/sheet-values.js';
 import { UserSchema, type ApiResponse, type User } from '../shared/domain.js';
@@ -239,6 +243,18 @@ function runtimeAppsscriptServices(): { scriptCache?: { get(key: string): string
   return { ...(scriptCache ? { scriptCache } : {}), ...(runtime.Utilities ? { utilities: runtime.Utilities } : {}) };
 }
 
+/**
+ * The control tabs are required the moment the process is activated for the
+ * portable authority: a missing tab must stop the deployment rather than let it
+ * fall back to counters the workbook no longer treats as authoritative.
+ */
+function controlTabs(spreadsheet: SpreadsheetLike): { control: SheetLike; journal: PrunableSheetLike } {
+  const control = spreadsheet.getSheetByName('WorkbookControl');
+  const journal = spreadsheet.getSheetByName('ControlJournal');
+  if (!control || !journal) throw new Error('CONTROL_AUTHORITY is workbook-control but the control tabs are missing; run the approved initialization before serving');
+  return { control, journal };
+}
+
 function defaultServer(timing?: ReadTiming): Server {
   const properties = runtimeProperties();
   const audience = properties?.getProperty('OAUTH_AUDIENCE');
@@ -248,13 +264,24 @@ function defaultServer(timing?: ReadTiming): Server {
   const verifier = scriptCache && utilities
     ? createCachingTokenVerifier({ verifier: createGoogleTokenInfoVerifier({ audience }), cache: scriptCache, digest: createAppsScriptDigest(utilities), audience })
     : createGoogleTokenInfoVerifier({ audience });
-  const revision = runtimeRevisionSource();
   const writeEnabled = properties?.getProperty('WRITE_ENABLED') === 'true';
   const writeLock = writeEnabled ? runtimeWriteLock() : undefined;
   const spreadsheet = (globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof createProductionRuntime>[0] } }).SpreadsheetApp?.getActiveSpreadsheet();
   const sheets = (globalThis as unknown as { Sheets?: unknown }).Sheets;
-  const batchReader = spreadsheet ? runtimeBatchReader(spreadsheet, ADVANCED_SHEETS_READS_ENABLED, sheets, timing) : undefined;
-  const production = properties && spreadsheet ? createProductionRuntime(spreadsheet, properties, { scriptCache, timing, batchReader }) : undefined;
+  const portable: PortableAuthority | undefined = properties && spreadsheet && activatedAuthority(properties) === 'workbook-control'
+    ? createPortableAuthority({ ...controlTabs(spreadsheet), writeEnabled: () => properties.getProperty('WRITE_ENABLED') === 'true' })
+    : undefined;
+  const revision = portable ? portable.revisionSource : runtimeRevisionSource();
+  const reader = spreadsheet ? runtimeBatchReader(spreadsheet, ADVANCED_SHEETS_READS_ENABLED, sheets, timing) : undefined;
+  // Under the portable authority an unbatched read path would hydrate without
+  // the completed-snapshot bracket, so the deployment refuses to serve instead.
+  if (portable && !reader) {
+    throw new Error('CONTROL_AUTHORITY is workbook-control but the batched read path is unavailable; the completed-snapshot check cannot be applied');
+  }
+  const batchReader = portable && reader ? portable.guard(reader) : reader;
+  const production = properties && spreadsheet
+    ? createProductionRuntime(spreadsheet, properties, { scriptCache, timing, batchReader, ...(portable ? { session: portable.session } : {}) })
+    : undefined;
   const handlers: OperationHandlers = production?.handlers ?? {
     [INTEGRATION_OPERATIONS.me]: ({ actor }: HandlerContext) => projectIdentity(actor)
   };

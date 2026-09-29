@@ -1,6 +1,6 @@
 import type { ApiError } from '../../shared/domain.js';
 import type { SheetLike } from './initializer.js';
-import type { LockLike } from './repository.js';
+import { RepositoryError, type LockLike } from './repository.js';
 import { SCHEDULING_INPUT_TABS, tabDefinition, WORKBOOK_TABS, type WorkbookTabName } from './schema.js';
 
 /**
@@ -336,6 +336,16 @@ export function assertAuthority(record: ControlRecord, expected: ControlAuthorit
   }
 }
 
+/**
+ * Translate a control failure into the repository error the dispatcher and the
+ * client already understand, so the transport layer never has to know about the
+ * protocol's own taxonomy.
+ */
+export function toRepositoryError(error: unknown, access: 'read' | 'write'): unknown {
+  if (!(error instanceof ControlError)) return error;
+  return new RepositoryError(controlFailureCode(error.code, access), error.message);
+}
+
 /** Map a control failure onto the API error codes the readers and writers return. */
 export function controlFailureCode(code: ControlFailureCode, access: 'read' | 'write'): ApiError['code'] {
   switch (code) {
@@ -382,10 +392,25 @@ export function controlCounters(record: ControlRecord): Record<string, number> {
   };
 }
 
+function opaqueId(prefix: string): string {
+  // Guarded exactly like the audit id in repository.ts: the Apps Script bundle
+  // audit fails the build when a Node or workerd global is touched unguarded,
+  // and the cast is type-level only because the Workers type program declares
+  // `crypto` as a `const`.
+  if (typeof (globalThis as { crypto?: unknown }).crypto === 'object') {
+    const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+    if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function journalId(): string {
-  const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
-  return `journal-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return opaqueId('journal');
+}
+
+/** Operation identity for the pending marker: operation name plus an opaque id. */
+export function controlOperationId(operation: string): string {
+  return `${operation}#${opaqueId('op')}`;
 }
 
 export function serializeJournalEntry(entry: ControlJournalEntry): unknown[] {
@@ -485,6 +510,26 @@ export function commitMutationRecord(record: ControlRecord, committedTabs: reado
 }
 
 /**
+ * Pure transition: an admitted mutating operation that changed no rows. Nothing
+ * was fenced, so no pending marker is published, but the global revision still
+ * counts the successful operation and the generation moves so a concurrent
+ * reader's bracket cannot straddle it silently.
+ */
+export function recordOperationCompletion(record: ControlRecord, actorId: string, timestamp: string): ControlRecord {
+  if (record.mutationState !== 'idle') {
+    throw new ControlError('PENDING', `A mutation (${record.operationId || 'unknown'}) is already pending`);
+  }
+  return {
+    ...record,
+    generation: record.generation + 1,
+    completedGeneration: record.generation + 1,
+    dataRevision: record.dataRevision + 1,
+    updatedAt: timestamp,
+    updatedBy: actorId
+  };
+}
+
+/**
  * Pure transition: abort. The generation still advances, so a read that started
  * under the pending marker cannot accept its snapshot, while every counter stays
  * exactly where it was — an aborted mutation is not a revision.
@@ -517,6 +562,11 @@ export type MutationScope = {
   readonly tabs: readonly WorkbookTabName[];
   /** The record as read at begin, for reconciliation and diagnostics. */
   readonly baseline: ControlRecord;
+  /**
+   * Declare one more tab may be committed. The widening path calls this after
+   * the marker has been extended; nothing else should.
+   */
+  declare(tab: WorkbookTabName): void;
   /** Register a tab whose rows and audit data persisted. */
   markCommitted(tab: WorkbookTabName): void;
   committedTabs(): readonly WorkbookTabName[];
@@ -525,7 +575,8 @@ export type MutationScope = {
 export type ControlMutationWriterOptions = {
   control: SheetLike;
   journal: PrunableSheetLike;
-  lock: LockLike;
+  /** Omitted when the caller already holds the script lock for the whole mutation. */
+  lock?: LockLike;
   /** Live operational gate. Mutations are refused unless it returns true. */
   writeEnabled: () => boolean;
   /** Authority this writer was activated for; both it and the gate are required. */
@@ -556,13 +607,15 @@ export class ControlMutationWriter {
       const record = beginMutationRecord(current, request, this.timestamp());
       this.transition('begin', record, current, request.actorId, request.tabs, '');
       const committed = new Set<WorkbookTabName>();
+      const declared = new Set<WorkbookTabName>(request.tabs);
       const scope: MutationScope = {
         operationId: request.operationId,
         actorId: request.actorId,
         tabs: [...request.tabs],
         baseline: current,
+        declare: (tab) => { declared.add(tab); },
         markCommitted: (tab) => {
-          if (!request.tabs.includes(tab)) {
+          if (!declared.has(tab)) {
             throw new ControlError('OPERATION_MISMATCH', `Mutation ${request.operationId} committed an undeclared tab: ${tab}`);
           }
           committed.add(tab);
@@ -570,6 +623,26 @@ export class ControlMutationWriter {
         committedTabs: () => [...committed]
       };
       return { scope, record };
+    });
+  }
+
+  /**
+   * Extend the pending marker to another tab before that tab's rows change.
+   * Counters do not move: widening is a declaration, not a transition, and the
+   * completion still advances each committed tab exactly once.
+   */
+  extend(scope: MutationScope, tab: WorkbookTabName): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = this.admit(scope.operationId);
+      if (current.operationTabs.includes(tab)) return { record: current };
+      const record: ControlRecord = {
+        ...current,
+        operationTabs: [...current.operationTabs, tab],
+        updatedAt: this.timestamp(),
+        updatedBy: scope.actorId
+      };
+      this.transition('begin', record, current, scope.actorId, record.operationTabs, `widened to include ${tab}`);
+      return { record };
     });
   }
 
@@ -587,6 +660,19 @@ export class ControlMutationWriter {
       const current = this.admit(scope.operationId);
       const record = abortMutationRecord(current, scope.actorId, this.timestamp());
       this.transition('abort', record, current, scope.actorId, current.operationTabs, reason);
+      return { record };
+    });
+  }
+
+  /**
+   * An admitted mutating operation that changed no rows. Nothing was fenced, so
+   * no marker is published, but the global revision still counts the operation.
+   */
+  completeWithoutRows(actorId: string): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = this.admit(undefined);
+      const record = recordOperationCompletion(current, actorId, this.timestamp());
+      this.transition('commit', record, current, actorId, [], 'no rows changed');
       return { record };
     });
   }
@@ -622,12 +708,14 @@ export class ControlMutationWriter {
   }
 
   private fenced<T>(action: () => T): T {
+    const lock = this.options.lock;
+    if (!lock) return action();
     const timeout = this.options.lockTimeoutMs ?? 10_000;
-    if (!this.options.lock.tryLock(timeout)) throw new ControlError('LOCKED', 'Another write holds the workbook control lock');
+    if (!lock.tryLock(timeout)) throw new ControlError('LOCKED', 'Another write holds the workbook control lock');
     try {
       return action();
     } finally {
-      this.options.lock.releaseLock();
+      lock.releaseLock();
     }
   }
 
