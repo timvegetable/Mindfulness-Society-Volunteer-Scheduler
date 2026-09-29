@@ -302,13 +302,13 @@ function sessionDisplayName(centers: ReadonlyMap<string, Center>, session: Sessi
   return (session.centerId ? centers.get(session.centerId)?.name : undefined) ?? session.title ?? session.centerId ?? session.kind;
 }
 
-type ScheduleRows = {
+export type ScheduleRows = {
   assignments: readonly Assignment[];
   backups: readonly Backup[];
   outputRevision: number;
 };
 
-type ScheduleReadState = {
+export type ScheduleReadState = {
   globalRevision: number;
   schedulingInput: number;
   run: SchedulingRun | undefined;
@@ -322,8 +322,12 @@ type ScheduleReadState = {
  * `revision` is always the global workbook revision used for concurrency
  * control, `inputRevision` is the dedicated scheduling-input counter, and
  * `scheduleRevision` is the output revision of the latest completed run.
+ *
+ * Exported for the schedule-preview parity harness and the local profile
+ * harness, which must time and compare the assembly phase as the handler runs
+ * it; the shape and behavior are identical for in-module callers.
  */
-function scheduleProjection(repositories: RuntimeRepositories, rows: ScheduleRows, state: ScheduleReadState): Record<string, unknown> {
+export function scheduleProjection(repositories: RuntimeRepositories, rows: ScheduleRows, state: ScheduleReadState): Record<string, unknown> {
   const sessions = repositories.sessions.list();
   const projectedSessions = filterSessionsAfterCutoff(
     sessions.filter(isSessionSchedulable),
