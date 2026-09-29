@@ -609,6 +609,51 @@ export function recoveryTransition(record: ControlRecord, request: RecoveryReque
   return abortMutationRecord(record, request.actorId, timestamp);
 }
 
+export type ActivationRequest = {
+  /** Counters read from the outgoing authority, captured before the switch. */
+  captured: {
+    dataRevision: number;
+    schedulingInputRevision: number;
+    tabRevisions: Readonly<Record<string, number>>;
+  };
+  actorId: string;
+  reason: string;
+};
+
+/**
+ * Pure transition for the migration's authority switch. The counters are taken as
+ * `max(captured, current)` in every dimension, so a capture snapshot can never
+ * lower one, and the generation moves so a reader bracketed across the switch
+ * rejects its snapshot instead of accepting one that spans two authorities.
+ */
+export function activationTransition(record: ControlRecord, request: ActivationRequest, timestamp: string): ControlRecord {
+  if (record.mutationState !== 'idle') {
+    throw new ControlError('PENDING', `A mutation (${record.operationId || 'unknown'}) is pending; activate with writers drained and the record idle`);
+  }
+  if (request.reason.trim().length === 0) {
+    throw new ControlError('MALFORMED', 'Activation must record why it is being performed');
+  }
+  const tabRevisions = { ...record.tabRevisions };
+  for (const [tab, value] of Object.entries(request.captured.tabRevisions)) {
+    if (!KNOWN_TABS.has(tab)) throw new ControlError('MALFORMED', `Activation captured an unknown tab: ${tab}`);
+    if (!Number.isSafeInteger(value) || value < 0) throw new ControlError('MALFORMED', `Activation captured a non-integer counter for ${tab}`);
+    tabRevisions[tab] = Math.max(tabRevisions[tab] ?? 0, value);
+  }
+  const generation = record.generation + 1;
+  return {
+    ...record,
+    authority: 'workbook-control',
+    authorityEpoch: record.authorityEpoch + 1,
+    generation,
+    completedGeneration: generation,
+    dataRevision: Math.max(record.dataRevision, request.captured.dataRevision),
+    schedulingInputRevision: Math.max(record.schedulingInputRevision, request.captured.schedulingInputRevision),
+    tabRevisions,
+    updatedAt: timestamp,
+    updatedBy: request.actorId
+  };
+}
+
 export type MutationScope = {
   readonly operationId: string;
   readonly actorId: string;
@@ -730,6 +775,48 @@ export class ControlMutationWriter {
       assertAuthority(current, this.options.authority);
       const record = recoveryTransition(current, request, this.timestamp());
       this.transition('recover', record, current, request.actorId, request.committedTabs ?? current.operationTabs, request.reason);
+      return { record };
+    });
+  }
+
+  /**
+   * The migration's authority switch. Like recovery it is a stopped-service
+   * procedure, so the live gate is expected to be **closed** and is not
+   * consulted; the lock and the authority are still required.
+   */
+  activate(request: ActivationRequest): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = readControlRecord(this.options.control);
+      const record = activationTransition(current, request, this.timestamp());
+      this.transition('activate', record, current, request.actorId, Object.keys(request.captured.tabRevisions), request.reason);
+      return { record };
+    });
+  }
+
+  /**
+   * Reconcile a batch that was applied outside the protocol, as the reviewed
+   * direct-write procedure requires. The batch is fenced first — a marker naming
+   * the tabs it touched — and then settled by the reviewer's decision, so the
+   * record never presents unreconciled rows as current and the arithmetic stays
+   * the protocol's. The live gate is expected to be closed.
+   */
+  reconcile(request: { decision: RecoveryDecision; reason: string; actorId: string; committedTabs: readonly WorkbookTabName[] }): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = readControlRecord(this.options.control);
+      assertAuthority(current, this.options.authority);
+      if (current.mutationState !== 'idle') {
+        throw new ControlError('PENDING', `A mutation (${current.operationId || 'unknown'}) is already pending; settle it before reconciling a batch`);
+      }
+      if (request.committedTabs.length === 0) {
+        throw new ControlError('MALFORMED', 'A reconciliation must name the tabs the batch touched');
+      }
+      if (request.reason.trim().length === 0) {
+        throw new ControlError('MALFORMED', 'A reconciliation must record why it was performed');
+      }
+      const opened = beginMutationRecord(current, { operationId: controlOperationId('direct-write.reconcile'), tabs: request.committedTabs, actorId: request.actorId }, this.timestamp());
+      this.transition('begin', opened, current, request.actorId, [...request.committedTabs], `reconciliation: ${request.reason}`);
+      const record = recoveryTransition(opened, { decision: request.decision, actorId: request.actorId, reason: request.reason, committedTabs: request.committedTabs }, this.timestamp());
+      this.transition('recover', record, opened, request.actorId, [...request.committedTabs], request.reason);
       return { record };
     });
   }

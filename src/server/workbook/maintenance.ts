@@ -1,9 +1,11 @@
 import {
+  CONTROL_COLUMNS,
   ControlError,
   appendJournalEntry,
   controlCounters,
   initializeControlRecord,
   readControlRecord,
+  serializeControlRecord,
   type ControlAuthority,
   type ControlJournalEntry,
   type ControlRecord,
@@ -81,20 +83,30 @@ export function withMaintenanceFence<T>(options: MaintenanceFenceOptions, action
           if (error instanceof ControlError && error.code === 'MISSING') return;
           throw error;
         }
-        const counters = controlCounters(record);
-        const entry: ControlJournalEntry = {
-          id: `${event}-${record.generation}`,
-          generation: record.generation,
+        // A maintenance action changes structure or rows, so it is a mutation as
+        // far as a reader is concerned: the generation advances, which is what
+        // makes a reader bracketed across it reject its snapshot. Counters are
+        // left alone — the caller's own transition owns any counter movement.
+        const next: ControlRecord = {
+          ...record,
+          generation: record.generation + 1,
+          completedGeneration: record.generation + 1,
+          updatedAt: now(),
+          updatedBy: actorId
+        };
+        appendJournalEntry(journal, {
+          id: `${event}-${next.generation}`,
+          generation: next.generation,
           event,
           operationId: record.operationId,
           actorId,
           tabs: record.operationTabs,
-          before: counters,
-          after: counters,
+          before: controlCounters(record),
+          after: controlCounters(next),
           reason: label,
-          timestamp: now()
-        };
-        appendJournalEntry(journal, entry);
+          timestamp: next.updatedAt
+        } satisfies ControlJournalEntry);
+        control.getRange(2, 1, 1, CONTROL_COLUMNS.length).setValues([serializeControlRecord(next)]);
       }
     };
     return action(context);

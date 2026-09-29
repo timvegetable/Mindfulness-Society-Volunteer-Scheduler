@@ -166,3 +166,25 @@ describe('migration validation is pure', () => {
     expect(report.applied).toBe(true);
   });
 });
+
+describe('maintenance actions are mutations to a reader', () => {
+  it('advances the generation when it journals, so a bracketed read cannot straddle it', () => {
+    const control = sheet('WorkbookControl');
+    const journal = sheet('ControlJournal');
+    seedRecord(control);
+    const before = readControlRecord(control);
+
+    withMaintenanceFence({ lock: openLock(), writeEnabled: () => false, controlSheet: () => control, journalSheet: () => journal, actorId: 'operator@example.test', now: () => NOW }, (context) => {
+      context.journal('capture', 'initializeWorkbook');
+    });
+
+    const after = readControlRecord(control);
+    expect(after.generation).toBe(before.generation + 1);
+    expect(after.completedGeneration).toBe(after.generation);
+    // Counters are the caller's business, not the fence's.
+    expect(after.dataRevision).toBe(before.dataRevision);
+    const rows = journal.values.slice(1);
+    expect(rows[0]?.[1]).toBe(after.generation);
+    expect(rows[0]?.[2]).toBe('capture');
+  });
+});

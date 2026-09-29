@@ -205,3 +205,86 @@ describe('reviewed recovery', () => {
     expect(journal.values.slice(1).map((row) => row[2])).toEqual(['recover', 'recover']);
   });
 });
+
+describe('authority activation', () => {
+  function healthy() {
+    const control = tab('WorkbookControl');
+    const journal = tab('ControlJournal');
+    const row = serializeControlRecord({ ...emptyControlRecord(NOW, 'operator'), generation: 3, completedGeneration: 3, dataRevision: 40, schedulingInputRevision: 4, tabRevisions: { Volunteers: 3 } });
+    control.getRange(2, 1, 1, row.length).setValues([row]);
+    return { control, journal };
+  }
+
+  it('switches authority with max(captured, current) counters and a new epoch and generation', () => {
+    const { control, journal } = healthy();
+    const activation = writer({ control, journal });
+
+    const { record } = activation.activate({
+      captured: { dataRevision: 42, schedulingInputRevision: 5, tabRevisions: { Volunteers: 1, Sessions: 2 } },
+      actorId: 'operator@example.test',
+      reason: 'captured live counters with writers drained'
+    });
+
+    expect(record).toMatchObject({
+      authority: 'workbook-control',
+      authorityEpoch: 1,
+      generation: 4,
+      completedGeneration: 4,
+      // Captured values win when they are higher …
+      dataRevision: 42,
+      schedulingInputRevision: 5,
+      // … and never lower an existing counter.
+      tabRevisions: { Volunteers: 3, Sessions: 2 }
+    });
+    expect(journal.values.slice(1).map((row) => row[2])).toEqual(['activate']);
+  });
+
+  it('refuses to activate over a pending mutation, without a reason, or with an unknown tab', () => {
+    const pending = interrupted();
+    const pendingWriter = writer({ control: pending.control, journal: pending.journal });
+    expectControlError(() => pendingWriter.activate({ captured: { dataRevision: 1, schedulingInputRevision: 1, tabRevisions: {} }, actorId: 'operator@example.test', reason: 'activate' }), 'PENDING');
+
+    const { control, journal } = healthy();
+    const activation = writer({ control, journal });
+    expectControlError(() => activation.activate({ captured: { dataRevision: 1, schedulingInputRevision: 1, tabRevisions: {} }, actorId: 'operator@example.test', reason: '  ' }), 'MALFORMED');
+    expectControlError(() => activation.activate({ captured: { dataRevision: 1, schedulingInputRevision: 1, tabRevisions: { NotATab: 1 } }, actorId: 'operator@example.test', reason: 'activate' }), 'MALFORMED');
+  });
+});
+
+describe('direct-write reconciliation', () => {
+  function idle() {
+    const control = tab('WorkbookControl');
+    const journal = tab('ControlJournal');
+    const row = serializeControlRecord({ ...emptyControlRecord(NOW, 'operator'), authority: AUTHORITY, authorityEpoch: 1, generation: 2, completedGeneration: 2, dataRevision: 43, schedulingInputRevision: 6, tabRevisions: { Volunteers: 2 } });
+    control.getRange(2, 1, 1, row.length).setValues([row]);
+    return { control, journal };
+  }
+
+  it('fences the batch and settles it with the reviewed decision', () => {
+    const { control, journal } = idle();
+    const reconciliation = writer({ control, journal });
+
+    const { record } = reconciliation.reconcile({ decision: 'completed', reason: 'tagged fixture rows kept; rows verified', actorId: 'operator@example.test', committedTabs: ['Centers'] });
+
+    expect(record).toMatchObject({
+      mutationState: 'idle',
+      // begin then complete: two transitions.
+      generation: 4,
+      completedGeneration: 4,
+      dataRevision: 44,
+      tabRevisions: { Volunteers: 2, Centers: 1 }
+    });
+    expect(journal.values.slice(1).map((row) => row[2])).toEqual(['begin', 'recover']);
+  });
+
+  it('refuses a reconciliation with no tabs or no reason, and one over a pending mutation', () => {
+    const first = idle();
+    const reconciliation = writer({ control: first.control, journal: first.journal });
+    expectControlError(() => reconciliation.reconcile({ decision: 'restored', reason: 'reverted', actorId: 'operator@example.test', committedTabs: [] }), 'MALFORMED');
+    expectControlError(() => reconciliation.reconcile({ decision: 'restored', reason: '  ', actorId: 'operator@example.test', committedTabs: ['Centers'] }), 'MALFORMED');
+
+    const pending = interrupted();
+    const pendingWriter = writer({ control: pending.control, journal: pending.journal });
+    expectControlError(() => pendingWriter.reconcile({ decision: 'restored', reason: 'reverted', actorId: 'operator@example.test', committedTabs: ['Centers'] }), 'PENDING');
+  });
+});
