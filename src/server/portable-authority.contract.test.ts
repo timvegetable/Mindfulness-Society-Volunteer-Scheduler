@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { InMemorySpreadsheet, type InMemorySheet } from './workbook/in-memory-sheet.js';
 import { emptyControlRecord, readControlRecord, serializeControlRecord, type ControlAuthority } from './workbook/control.js';
 import { createPortableAuthority } from './portable-authority.js';
+import { createIntegrationDispatcher, INTEGRATION_OPERATIONS } from './integration/dispatcher.js';
+import { MemoryTokenVerifier, MemoryUserDirectory } from './integration/auth.js';
 import { RepositoryError } from './workbook/repository.js';
 import type { BatchReadPlan, BatchReadRows } from './workbook/batch-read.js';
 
@@ -144,5 +146,54 @@ describe('guarded batch reads', () => {
       expect(error).toBeInstanceOf(RepositoryError);
       expect((error as RepositoryError).code).toBe('UNAVAILABLE');
     }
+  });
+});
+
+describe('served reads under the request-level bracket', () => {
+  const claims = { iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-1', email: 'admin@example.test', email_verified: true, exp: 4102444800 };
+  const user = { id: 'admin@example.test', email: 'admin@example.test', roles: ['administrator'] as const, active: true, revision: 0 };
+
+  function dispatcherWith(handler: () => unknown) {
+    const fixture = authority();
+    const dispatcher = createIntegrationDispatcher({
+      verifier: new MemoryTokenVerifier({ credential: claims }),
+      users: new MemoryUserDirectory([user as unknown as Parameters<typeof MemoryUserDirectory.prototype.set>[0]]),
+      handlers: { [INTEGRATION_OPERATIONS.adminSchedule]: handler },
+      revision: fixture.portable.revisionSource
+    });
+    return { dispatcher, ...fixture };
+  }
+
+  const request = { operation: INTEGRATION_OPERATIONS.adminSchedule, payload: {}, idempotencyKey: 'bracket-check-1', credential: 'credential' };
+
+  it('serves a read that nothing disturbed', () => {
+    const { dispatcher, portable } = dispatcherWith(() => {
+      portable.session.registerRead('Assignments');
+      return { sessions: [] };
+    });
+
+    expect(dispatcher.dispatch(request)).toMatchObject({ ok: true, data: { sessions: [] } });
+  });
+
+  it('refuses a read whose workbook moved while it was hydrating', () => {
+    const { dispatcher, portable, control } = dispatcherWith(() => {
+      portable.session.registerRead('Assignments');
+      // Another writer completes between the hydration and the response.
+      const moved = serializeControlRecord({ ...readControlRecord(control), generation: 7, completedGeneration: 7, dataRevision: 6 });
+      control.getRange(2, 1, 1, moved.length).setValues([moved]);
+      return { sessions: [] };
+    });
+
+    expect(dispatcher.dispatch(request)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+  });
+
+  it('refuses a read whose control record became unusable meanwhile', () => {
+    const { dispatcher, portable, control } = dispatcherWith(() => {
+      portable.session.registerRead('Assignments');
+      control.getRange(2, 8).setValue('not json');
+      return { sessions: [] };
+    });
+
+    expect(dispatcher.dispatch(request)).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE' } });
   });
 });

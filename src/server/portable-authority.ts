@@ -77,7 +77,8 @@ export function createPortableAuthority(options: PortableAuthorityOptions): Port
     current: () => session.dataRevision(),
     begin: (actorId, operation) => { session.bind(actorId, operation); },
     advance: () => session.commit().dataRevision,
-    settleAfterFailure: (reason) => { session.settleAfterFailure(reason); }
+    settleAfterFailure: (reason) => { session.settleAfterFailure(reason); },
+    settleRead: () => { session.settleRead(); }
   };
 
   return {
@@ -87,14 +88,18 @@ export function createPortableAuthority(options: PortableAuthorityOptions): Port
     guard: (reader) => ({
       read(plan) {
         try {
-          return withCompletedSnapshot({
+          const snapshot = withCompletedSnapshot({
             // Two reads straddle the hydration: the first establishes the
             // generation, the second proves nothing completed in between.
             readControl: () => readControlRecord(options.control),
             hydrate: () => reader.read(plan),
             tabs: BATCH_READ_PLANS[plan],
             authority: 'workbook-control'
-          }).data;
+          });
+          // These tabs are bracketed; the request-level check must not pay for
+          // them a second time.
+          session.markBracketed(BATCH_READ_PLANS[plan]);
+          return snapshot.data;
         } catch (error) {
           throw toRepositoryError(error, 'read');
         }

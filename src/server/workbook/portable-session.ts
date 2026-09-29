@@ -2,7 +2,10 @@ import {
   CONTROL_PROTOCOL_VERSION,
   ControlError,
   ControlMutationWriter,
+  assertAuthority,
+  assertCompletedGeneration,
   controlOperationId,
+  portableRevisionProvider,
   readControlRecord,
   toRepositoryError,
   type ControlRecord,
@@ -45,6 +48,10 @@ export class PortableSession {
   private scope: MutationScope | undefined;
   private readonly markedTabs = new Set<string>();
   private readonly committed = new Map<string, number>();
+  /** Tabs hydrated outside a planned, already-bracketed read. */
+  private readonly unbracketedReads = new Set<string>();
+  private readonly bracketedTabs = new Set<string>();
+  private anchor: ControlRecord | undefined;
 
   constructor(private readonly options: PortableSessionOptions) {
     this.cached = options.initialRecord;
@@ -94,6 +101,48 @@ export class PortableSession {
 
   schedulingInputRevision(): number {
     return this.record().schedulingInputRevision;
+  }
+
+  /**
+   * Record that this request is about to hydrate `tab`, taking the admission
+   * anchor on the first such read. Planned reads call `markBracketed` instead:
+   * they are already bracketed by two control reads of their own, and anchoring
+   * them again would buy the same guarantee for two more reads.
+   */
+  registerRead(tab: WorkbookTabName): void {
+    if (this.bracketedTabs.has(tab)) return;
+    try {
+      this.anchor ??= readControlRecord(this.options.control);
+    } catch (error) {
+      throw toRepositoryError(error, 'read');
+    }
+    this.unbracketedReads.add(tab);
+  }
+
+  /** Tabs a completed plan read already bracketed for this request. */
+  markBracketed(tabs: readonly WorkbookTabName[]): void {
+    for (const tab of tabs) this.bracketedTabs.add(tab);
+  }
+
+  /**
+   * Close an admitted read: compare the admission anchor with the record now, for
+   * the tabs hydrated outside a planned bracket. A mutation that began, completed
+   * or recovered during the request changes the generation, so the caller refuses
+   * the response instead of serving rows from two generations.
+   */
+  settleRead(): void {
+    if (this.unbracketedReads.size === 0 || !this.anchor) return;
+    try {
+      const after = readControlRecord(this.options.control);
+      assertAuthority(after, 'workbook-control');
+      assertCompletedGeneration(
+        portableRevisionProvider(this.anchor),
+        portableRevisionProvider(after),
+        [...this.unbracketedReads] as WorkbookTabName[]
+      );
+    } catch (error) {
+      throw toRepositoryError(error, 'read');
+    }
   }
 
   /**

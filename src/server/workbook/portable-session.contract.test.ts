@@ -316,3 +316,52 @@ describe('payload revisions under the portable authority', () => {
     expect(projection.revision).toBe(999);
   });
 });
+
+describe('request-level read bracket', () => {
+  it('anchors an unbracketed read and refuses when the workbook moved during it', () => {
+    const { session: portable, control } = session();
+    portable.bind('admin@example.test', 'volunteer.dashboard.read');
+
+    portable.registerRead('Assignments');
+    // A writer completes while the rows are being read.
+    const moved = serializeControlRecord({ ...readControlRecord(control), generation: 9, completedGeneration: 9, dataRevision: 6 });
+    control.getRange(2, 1, 1, moved.length).setValues([moved]);
+
+    expectRepositoryError(() => portable.settleRead(), 'STALE_REVISION');
+  });
+
+  it('accepts a read that nothing disturbed, and one whose tabs were already bracketed', () => {
+    const untouched = session();
+    untouched.session.bind('admin@example.test', 'volunteer.dashboard.read');
+    untouched.session.registerRead('Assignments');
+    expect(() => untouched.session.settleRead()).not.toThrow();
+
+    // A planned read is bracketed by its own two control reads, so the
+    // request-level check neither anchors nor compares it.
+    const planned = session();
+    planned.session.bind('admin@example.test', 'admin.schedule.read');
+    planned.session.markBracketed(['Assignments', 'SchedulingRuns']);
+    planned.session.registerRead('Assignments');
+    const moved = serializeControlRecord({ ...readControlRecord(planned.control), generation: 9, completedGeneration: 9 });
+    planned.control.getRange(2, 1, 1, moved.length).setValues([moved]);
+    expect(() => planned.session.settleRead()).not.toThrow();
+  });
+
+  it('refuses a read whose record became unusable meanwhile', () => {
+    const { session: portable, control } = session();
+    portable.bind('admin@example.test', 'volunteer.dashboard.read');
+    portable.registerRead('Assignments');
+    control.getRange(2, 8).setValue('not json');
+
+    expectRepositoryError(() => portable.settleRead(), 'UNAVAILABLE');
+  });
+
+  it('does nothing when no domain tab was hydrated', () => {
+    const { session: portable, control } = session();
+    portable.bind('admin@example.test', 'session.me');
+    const moved = serializeControlRecord({ ...readControlRecord(control), generation: 9, completedGeneration: 9 });
+    control.getRange(2, 1, 1, moved.length).setValues([moved]);
+
+    expect(() => portable.settleRead()).not.toThrow();
+  });
+});

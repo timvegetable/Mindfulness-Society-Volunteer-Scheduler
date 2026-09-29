@@ -189,7 +189,16 @@ function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, 
   const backing = session
     ? portableRevisionBacking(session, definition.name as WorkbookTabName)
     : repositoryRevision(properties, definition.name, tracksSchedulingInput ? () => advanceSchedulingInputRevision(properties) : undefined);
-  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(backing), audit, context, timing ? (tab, action) => timing.hydration(tab, action) : undefined, timing ? (action) => timing.sheetCall(action) : undefined);
+  // The read hook both times the hydration and, under the portable authority,
+  // reports the tab to the session: a tab hydrated outside a planned bracket is
+  // what the request-level check has to compare at the end of the request.
+  const onRead = session || timing
+    ? <R>(tab: string, action: () => R): R => {
+        if (session) session.registerRead(tab as WorkbookTabName);
+        return timing ? timing.hydration(tab, action) : action();
+      }
+    : undefined;
+  return new SheetRepository(sheet, definition.columns, codec, new RevisionStore(backing), audit, context, onRead, timing ? (action) => timing.sheetCall(action) : undefined);
 }
 
 /**

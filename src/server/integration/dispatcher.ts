@@ -42,10 +42,16 @@ export type RevisionSource = {
    */
   begin?(actorId: string, operation: string): void;
   /**
-   * Called when the handler throws. The portable authority aborts a mutation
-   * that changed no rows and leaves one that did pending for reviewed recovery.
+   * Called when the handler throws. The portable authority leaves a published
+   * marker pending for reviewed recovery and never clears it here.
    */
   settleAfterFailure?(reason: string): void;
+  /**
+   * Called before a successful non-mutating response is returned: the portable
+   * authority compares its admission anchor with the record now, so a write that
+   * completed during the read cannot be served as one consistent dataset.
+   */
+  settleRead?(): void;
 };
 
 export type WriteLock = {
@@ -234,7 +240,12 @@ export class IntegrationDispatcher {
         throw error;
       }
       let revision: number | undefined;
-      if (policy.mutating && this.options.revision?.advance) revision = this.options.revision.advance(actor.user.id, operation);
+      if (policy.mutating && this.options.revision?.advance) {
+        revision = this.options.revision.advance(actor.user.id, operation);
+      } else if (!policy.mutating) {
+        // A read answers only if the workbook held still while it was read.
+        this.options.revision?.settleRead?.();
+      }
       const response: ApiResponse<unknown> = revision === undefined ? { ok: true, data } : { ok: true, data, revision };
       this.requests.set(requestKey, { fingerprint: requestFingerprint, storedAt: Date.now(), response });
       if (this.options.timing) this.options.timing.succeeded = true;
