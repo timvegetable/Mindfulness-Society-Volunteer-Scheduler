@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { InMemoryProperties, InMemorySpreadsheet, type InMemorySheet } from './in-memory-sheet.js';
 import { ControlError, emptyControlRecord, readControlRecord, serializeControlRecord, type ControlAuthority } from './control.js';
 import { PortableSession } from './portable-session.js';
-import { repositories } from '../runtime.js';
+import { createProductionRuntime, repositories } from '../runtime.js';
+import { INTEGRATION_OPERATIONS } from '../integration/request-policy.js';
 import { RepositoryError } from './repository.js';
 import type { Volunteer } from '../../shared/domain.js';
 
@@ -273,5 +274,45 @@ describe('revision kinds stay distinct', () => {
     // outputRevision is the row's own value, not one of the control counters.
     expect(runRow[2]).toBe(7);
     expect(record.tabRevisions.SchedulingRuns).toBe(1);
+  });
+});
+
+describe('payload revisions under the portable authority', () => {
+  const actor = {
+    email: 'admin@example.test',
+    user: { id: 'admin@example.test', email: 'admin@example.test', roles: ['administrator'] as const, active: true, revision: 0 },
+    claims: { iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-1', email: 'admin@example.test', email_verified: true, exp: 4102444800 }
+  };
+
+  it('reports the control record counters, never the retired Script Properties', () => {
+    const { spreadsheet, control, journal } = activated();
+    const portable = new PortableSession({ control, journal, writeEnabled: () => true, now: () => NOW });
+    portable.bind('admin@example.test', 'center.candidate.read');
+    const properties = new InMemoryProperties();
+    // Legacy counters that stopped advancing once the authority moved: if a
+    // payload reported these, every client's expected revision would freeze.
+    properties.setProperty('DATA_REVISION', '999');
+    properties.setProperty('SCHEDULING_INPUT_REVISION', '777');
+    const runtime = createProductionRuntime(spreadsheet, properties, { session: portable });
+
+    const handler = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidate];
+    if (!handler) throw new Error('the candidate read handler is not composed');
+    const projection = handler({ actor: actor as never, operation: INTEGRATION_OPERATIONS.centerCandidate, idempotencyKey: 'portable-revision-1', now: NOW }, {}) as { revision: number };
+
+    expect(projection.revision).toBe(5);
+    expect(projection.revision).toBe(portable.dataRevision());
+  });
+
+  it('still reports Script Properties when no session is installed', () => {
+    const { spreadsheet } = activated();
+    const properties = new InMemoryProperties();
+    properties.setProperty('DATA_REVISION', '999');
+    const runtime = createProductionRuntime(spreadsheet, properties);
+
+    const handler = runtime.handlers[INTEGRATION_OPERATIONS.centerCandidate];
+    if (!handler) throw new Error('the candidate read handler is not composed');
+    const projection = handler({ actor: actor as never, operation: INTEGRATION_OPERATIONS.centerCandidate, idempotencyKey: 'legacy-revision-1', now: NOW }, {}) as { revision: number };
+
+    expect(projection.revision).toBe(999);
   });
 });

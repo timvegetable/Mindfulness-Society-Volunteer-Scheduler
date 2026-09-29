@@ -430,7 +430,8 @@ export function resolveMailer(services: AppsScriptMailServices): Mailer | undefi
 
 export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties: ScriptProperties, options: { scriptCache?: ScriptCache; timing?: ReadTiming; batchReader?: WorkbookBatchReader; session?: PortableSession } = {}): ProductionRuntime {
   const configuration = runtimeConfiguration(properties);
-  const store = repositories(spreadsheet, properties, { timeZone: workbookTimeZone(spreadsheet, properties) }, options.timing, options.session);
+  const session = options.session;
+  const store = repositories(spreadsheet, properties, { timeZone: workbookTimeZone(spreadsheet, properties) }, options.timing, session);
   const batchedRepositories = {
     SchedulingRuns: store.schedulingRuns,
     Assignments: store.assignments,
@@ -479,11 +480,18 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
   const fetcher = endpoint && urlFetch ? new WhenIsGoodFetcher({ endpoint, fetch: (url) => { const response = urlFetch.fetch(url); return { ok: response.getResponseCode() >= 200 && response.getResponseCode() < 300, status: response.getResponseCode(), text: () => response.getContentText() }; }, parserOptions: { defaultTimeZone: configuration.timeZone } }) : undefined;
   const centerWorkflow = createCenterWorkflow({ centers: store.centers, users: store.centerUsers, candidates: store.candidates, sessions: store.sessions, coverage: { volunteers: { list: () => hydratedVolunteers(store) }, exceptions: store.exceptions, assignments: store.assignments, sessions: store.sessions } });
   // Reads report the global workbook revision for concurrency control; schedule
-  // staleness is derived from the dedicated scheduling-input counter.
+  // staleness is derived from the dedicated scheduling-input counter. Under the
+  // portable authority both come from the request's control record: the Script
+  // Properties stopped advancing when the repositories began committing to the
+  // record, so reporting them would freeze every client's expected revision at
+  // the captured value — and would be an independent counter the specification
+  // forbids.
   const globalRevision = (): number => {
+    if (session) return session.dataRevision();
     const value = Number(properties.getProperty('DATA_REVISION') ?? '0');
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   };
+  const inputRevision = (): number => (session ? session.schedulingInputRevision() : schedulingInputRevision(properties));
   const computeSchedule = (inputRevision: number, previous: SchedulingRun | undefined, actorId: string, startedAt: string) => {
     const schedulingStore = new SchedulingStore({ inputRevision, currentRevision: previous?.outputRevision ?? 0 });
     return runScheduling(schedulingStore, {
@@ -528,9 +536,9 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
         ...projection,
         recurringAvailability: projection.volunteer.recurringAvailability,
         revision: globalRevision(),
-        inputRevision: schedulingInputRevision(properties),
+        inputRevision: inputRevision(),
         scheduleRevision: completed?.outputRevision ?? null,
-        stale: completed ? completed.inputRevision !== schedulingInputRevision(properties) : false
+        stale: completed ? completed.inputRevision !== inputRevision() : false
       };
     },
     [INTEGRATION_OPERATIONS.recurringAvailabilityUpdate]: ({ actor }, payload) => {
@@ -549,7 +557,7 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
       const before = options.batchReader ? revisionSnapshot() : undefined;
       primeBatch('publishedSchedule');
       const run = latestCompletedRun(store.schedulingRuns.list());
-      const projection = scheduleProjection(store, { assignments: store.assignments.list(), backups: store.backups.list(), outputRevision: run?.outputRevision ?? 0 }, { globalRevision: globalRevision(), schedulingInput: schedulingInputRevision(properties), run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
+      const projection = scheduleProjection(store, { assignments: store.assignments.list(), backups: store.backups.list(), outputRevision: run?.outputRevision ?? 0 }, { globalRevision: globalRevision(), schedulingInput: inputRevision(), run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
       if (before) assertBatchStable(before);
       return projection;
     },
@@ -558,21 +566,21 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
     [INTEGRATION_OPERATIONS.adminSchedulePreview]: ({ now: requestNow }) => {
       const before = options.batchReader ? revisionSnapshot() : undefined;
       primeBatch('schedulePreview');
-      const inputRevision = schedulingInputRevision(properties);
+      const currentInputRevision = inputRevision();
       const previous = latestCompletedRun(store.schedulingRuns.list());
-      const result = computeSchedule(inputRevision, previous, 'administrator-preview', requestNow);
+      const result = computeSchedule(currentInputRevision, previous, 'administrator-preview', requestNow);
       const projection = scheduleProjection(
         store,
         { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision },
-        { globalRevision: globalRevision(), schedulingInput: inputRevision, run: previous, preview: true, computedAt: requestNow, schedulingTimeZone: configuration.timeZone }
+        { globalRevision: globalRevision(), schedulingInput: currentInputRevision, run: previous, preview: true, computedAt: requestNow, schedulingTimeZone: configuration.timeZone }
       );
       if (before) assertBatchStable(before);
       return projection;
     },
     [INTEGRATION_OPERATIONS.adminScheduleRerun]: ({ actor, now: requestNow }) => {
-      const inputRevision = schedulingInputRevision(properties);
+      const currentInputRevision = inputRevision();
       const previous = latestCompletedRun(store.schedulingRuns.list());
-      const result = computeSchedule(inputRevision, previous, actor.user.id, requestNow);
+      const result = computeSchedule(currentInputRevision, previous, actor.user.id, requestNow);
       const beforeAssignments = store.assignments.list();
       const beforeBackups = store.backups.list();
       try {
@@ -584,7 +592,7 @@ export function createProductionRuntime(spreadsheet: SpreadsheetLike, properties
         try { store.backups.replace(beforeBackups, store.backups.revision().number, actor.user.id, 'schedule-rollback'); } catch { /* preserve original error */ }
         throw error;
       }
-      return scheduleProjection(store, { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision }, { globalRevision: globalRevision(), schedulingInput: inputRevision, run: result.run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
+      return scheduleProjection(store, { assignments: result.schedule.assignments, backups: result.schedule.backups, outputRevision: result.schedule.revision }, { globalRevision: globalRevision(), schedulingInput: currentInputRevision, run: result.run, preview: false, computedAt: requestNow, schedulingTimeZone: configuration.timeZone });
     },
     [INTEGRATION_OPERATIONS.adminImportPreview]: ({ actor }, payload) => {
       if (!fetcher) throw new IntegrationError('UNAVAILABLE', 'WhenIsGood endpoint is not configured');
