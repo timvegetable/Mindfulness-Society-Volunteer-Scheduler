@@ -104,3 +104,17 @@ Do not push or deploy unless explicitly asked. Leave unrelated housekeeping edit
 * Deployment and rollback: `docs/deployment.md`
 * Production operations and revision bookkeeping: `docs/operations.md`
 * Security and configuration: `docs/security.md`
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as GitHub issues on `timvegetable/Mindfulness-Society-Volunteer-Scheduler` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles use their default label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: optionally `CONTEXT.md` at the repo root, plus `docs/adr/` for decisions. See `docs/agents/domain.md`.

@@ -9,6 +9,8 @@ dist/
 .omp/
 .codex/
 .minimax/
+.zcode/
+.agents/
 .jspace/
 # Local tool wiring, not part of the project.
 .mcp.json
