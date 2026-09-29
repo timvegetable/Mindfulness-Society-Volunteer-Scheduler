@@ -30,11 +30,124 @@ Add a schema-defined control tab rather than overloading the defective append-on
 
 Migrate captured counters without decreasing them. Switch authority once under a maintenance gate; do not maintain two independent writable sources of truth. Old Properties can be retained as an explicitly non-authoritative rollback artifact. Both adapters use the same provider interface. Inventory each Script Property as portable domain policy, deployment identity/configuration, secret, cache or operational gate. Workbook-derived policy stays versioned; service-account keys and signing material stay in secrets. Keep live WRITE_ENABLED and portable writer fencing as separate checks, both required for mutation admission.
 
+### Pinned control schema and counter transitions (task 1.2)
+
+This pins the physical protocol before implementation. It is a design record derived from the task 1.1 inventory; the inventory, not this section, owns what exists today.
+
+**Physical layout.** Schema version 3 → 4 adds two tabs. `WorkbookControl` holds exactly one data row; `ControlJournal` is append-only with bounded retention. Counters stay inside the one control row, so one row write is the atomic logical unit and no transition can leave a partially updated counter set.
+
+`WorkbookControl` row 2, in column order:
+
+| Column | Type | Meaning and bounds |
+| --- | --- | --- |
+| `protocolVersion` | integer | Exactly `1`. Any other value is unsupported. |
+| `authorityEpoch` | integer ≥ 0 | Advances by one on each authority transition (capture, activation, rollback). Never decreases. |
+| `authority` | `script-properties` \| `workbook-control` | Which store currently authorizes revisions. |
+| `generation` | integer ≥ 0 | Advances by one on every mutation lifecycle transition, including abort and recovery. |
+| `completedGeneration` | integer ≥ 0 | The generation of the last transition that left the protocol idle; equals `generation` while idle. |
+| `dataRevision` | integer ≥ 0 | Successful global operations; the value the API reports as `revision`. |
+| `schedulingInputRevision` | integer ≥ 0 | The scheduling-input counter. |
+| `tabRevisions` | JSON object | Schema tab name → counter, only for tabs with a committed write. ≤ 4,096 bytes, ≤ 15 keys, schema names only. |
+| `mutationState` | `idle` \| `pending` | `pending` means a mutation began and never recorded completion. |
+| `operationId` | string | `<operation>#<opaque id>` of the in-flight mutation, ≤ 128 characters, empty while idle. Carries no actor or credential material. |
+| `operationStartedAt` | ISO instant | Begin timestamp, empty while idle. |
+| `operationTabs` | JSON array | Tabs the in-flight mutation may commit; ≤ 15 schema names. |
+| `operationBaseline` | JSON object | The revision tuple captured at begin, ≤ 4,096 bytes; recovery reconciles against it and never writes it back as current. |
+| `updatedAt` | ISO instant | Last control write. |
+| `updatedBy` | string | Actor id or `system`, ≤ 200 characters. |
+
+`ControlJournal` columns: `id`, `generation`, `event` (`capture` \| `activate` \| `begin` \| `commit` \| `abort` \| `recover` \| `rollback`), `operationId`, `actorId`, `tabs`, `before`, `after`, `reason`, `timestamp`. Retention is bounded at 200 rows and 2,048 bytes per row; pruning happens under the writer lock, oldest first, and never removes an entry referenced by the pending mutation.
+
+**Atomic update boundaries.** The control record is one row and every transition rewrites the whole row in one range write; no transition writes a subset of its columns. A mutation is a begin row write, then domain row writes and the audit append, then one completion row write. The journal entry is appended before the control row it describes, so a crash between the two leaves an auditable attempt rather than an unexplained counter jump.
+
+**Counter transitions.** `+1` means exactly one increment under the writer lock; `—` means unchanged.
+
+| Transition | `generation` | `completedGeneration` | `dataRevision` | `schedulingInputRevision` | `tabRevisions` | `mutationState` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Initialize or capture | — | = `generation` | captured value, or `0` | captured value, or `0` | captured values | `idle` |
+| Begin | +1 | — | — | — | — | `pending` |
+| Complete after full persistence | +1 | = `generation` | +1 | +1 when a committed tab is a scheduling input | +1 per committed tab | `idle` |
+| Abort with no row change | +1 | = `generation` | — | — | — | `idle` |
+| Recovery: persistence had completed | +1 | = `generation` | +1 | +1 when applicable | +1 per committed tab | `idle` |
+| Recovery: rows restored from snapshot | +1 | = `generation` | — | — | — | `idle` |
+| Authority activation or rollback | +1 | = `generation` | `max(captured, current)` | `max(captured, current)` | `max(captured, current)` per tab | `idle` |
+
+Activation takes `max(captured, current)` so a capture snapshot can never lower a counter. Recovery never resets a counter to a snapshot value; the restore transition records what was restored in the journal and leaves every counter at its then-current value.
+
+**Failure conditions after activation.** Detection and response, using existing API error codes:
+
+| Condition | Detected by | Response |
+| --- | --- | --- |
+| Control tab missing | schema tab absent | `UNAVAILABLE` |
+| Control record missing | header present, no data row | `UNAVAILABLE` |
+| Duplicate control record | more than one data row | `UNAVAILABLE` |
+| Unsupported protocol | `protocolVersion` ≠ 1 | `UNAVAILABLE` |
+| Malformed record | non-integer or negative counter, unknown tab name in `tabRevisions`, unparseable JSON, unknown `mutationState`, `completedGeneration` ≠ `generation` while idle | `UNAVAILABLE` |
+| Authority mismatch | `authority` ≠ the activated mode, or `authorityEpoch` older than the process recorded | `UNAVAILABLE` |
+| Mutation pending | `mutationState` = `pending` | `CONFLICT` for writes; `UNAVAILABLE` for reads |
+| Generation changed across a read | second control read differs from the first | `STALE_REVISION` |
+
+Missing or malformed metadata never resolves to zero, and no path falls back to Script Properties after activation.
+
+### Portable reader control read plan (task 1.7)
+
+Sequence for one served request: control read, then fresh `Users` authorization, then the named domain batch, then a second control read. `Users` is never cached and is never covered by a control check. Acceptance requires both control reads to parse, the protocol and authority to be supported, both reads to be idle, and the tuples (`generation`, `completedGeneration`, `dataRevision`, `schedulingInputRevision`, and `tabRevisions` for consumed tabs) to be identical.
+
+Reads paid per path, measured as Sheets read requests:
+
+| Path | Control | `Users` | Domain batch | Total |
+| --- | ---: | ---: | ---: | ---: |
+| Rejected: invalid, pending, unsupported or missing control state | 1 | 0 | 0 | 1 |
+| Rejected: unauthenticated or unauthorized | 2 | 1 | 0 | 2 |
+| Served identity read (`session.me`) | 2 | 1 | 0 | 3 |
+| Served domain read (Schedule, Insights cache hit or miss) | 2 | 1 | 1 | 4 |
+| Rejected: generation changed after hydration | 2 | 1 | 1 | 4 |
+
+The archived staging topology observed one identity read and two reads for domain or preview work, without control checks; those counts are not portable-state evidence and must not be carried into production claims. The portable plan costs two extra reads on every served path, and the rejection paths above are measured, not assumed: a path that costs more than its row is a finding, not a rounding difference.
+
+Quota and latency acceptance for the added checks: the `Sheets.Spreadsheets.Values.batchGet` and `spreadsheets.values.get` quota is per requesting identity, so a single service account serving all browsers sustains `60 / reads-per-request` served reads per minute — 20 identity reads or 15 domain reads with the counts above, against 60 and 30 without the control checks. Harness and browser probes therefore share the existing rolling read ledger, and control reads are counted in it. Latency acceptance is the unchanged contract threshold applied to the served read (warm p99 ≤ 1,500 ms per read operation per fixture), with the control-read contribution reported separately; no latency claim is made from the added reads until task 4.1 measures them. Correctness precedes a one-call target: reducing the plan to a single control read would end the completed-generation guarantee and is not an option.
+
 ### Writer protocol and consistent reads
 
 Apps Script remains the only writer and holds its script lock for the entire operation. Before changing any rows, it persists an in-progress marker and a new generation with operation identity and affected tabs. Completion publishes final counters and a completed generation only after domain/audit persistence succeeds. Where legacy operations cannot be atomically committed, store enough protected recovery evidence to restore/reconcile; a crash leaves the marker pending. Ordinary traffic must not clear a pending marker or report partial rows as current.
 
 Readers fetch completed control state, hydrate named ranges, then re-read control state. They accept only the same supported, completed generation and revision tuple. A concurrent transition, pending operation, unknown epoch, or malformed metadata returns a controlled stale/unavailable response. Protocol protection assumes all writers participate; manual Sheet edits cannot be made transactional by metadata and remain governed by the exceptional-write procedure.
+
+### Property classification and the rollback boundary (task 1.3)
+
+Every Script Property the codebase reads, mapped to exactly one storage/authority category. `get`/`set` sites are the production ones; test-only writers are not inventory entries.
+
+| Property | Read at | Written by | Category | After activation |
+| --- | --- | --- | --- | --- |
+| `TIME_ZONE` | `src/server/runtime.ts` (`runtimeConfiguration`) | operator | Portable domain policy | Versioned workbook state; both readers resolve the same value |
+| `DISPLAY_INCREMENT_MINUTES` | `src/server/runtime.ts` | operator | Portable domain policy | Versioned workbook state |
+| `OPERATING_HOURS_START` / `OPERATING_HOURS_END` | `src/server/runtime.ts` | operator | Portable domain policy | Versioned workbook state |
+| `DATA_REVISION` | `src/server/main.ts`, `src/server/runtime.ts` | `src/server/main.ts` (dispatcher commit) | Revision authority | Superseded by the control record's `dataRevision` |
+| `SCHEDULING_INPUT_REVISION` | `src/server/runtime.ts` | `src/server/runtime.ts` (scheduling-input commit) | Revision authority | Superseded by the control record's `schedulingInputRevision` |
+| `TAB_REVISION_<TabName>` | `src/server/runtime.ts` (per repository) | `src/server/runtime.ts` (per tab commit) | Revision authority | Superseded by the control record's `tabRevisions` |
+| `WRITE_ENABLED` | `src/server/main.ts`, dispatcher | operator | Operational gate | Unchanged: a separate live gate, and both it and portable fencing are required to admit a mutation |
+| `OAUTH_AUDIENCE`, `PUBLIC_OAUTH_CLIENT_ID` | `src/server/main.ts` | operator | Deployment identity/configuration | Unchanged: per-deployment identity inputs, never workbook state |
+| `WHENISGOOD_ENDPOINT` | `src/server/runtime.ts` | operator | Deployment configuration | Unchanged: external integration endpoint used by the writer only |
+| `ADMINISTRATOR_RECIPIENTS` | `src/server/runtime.ts` | operator | Deployment configuration | Unchanged: notification routing for the writer only |
+| `MIGRATION_ACTOR` | `src/server/main.ts` (loader) | operator | Deployment configuration | Unchanged: actor label for maintenance runs |
+
+Secrets are not in this table because none lives in Script Properties. Service-account keys, signing material and OAuth client secrets stay in the platform secret stores (`wrangler secret`, the Cloud provider's secret handling) and in private local configuration; they are never written into a cell, the control tab, or public config. Caches (the Insights dataset in `CacheService`, the request-local duplicate map) never authorize a request and never carry revision authority; the existing contract tests hold that boundary.
+
+A portable-domain-policy change is a maintenance mutation, not an ordinary edit: it advances the control record's generation and is journalled, so a read in flight cannot accept a snapshot that straddles a policy change. Where the portable policy physically lives is decided with task 2.1's deterministic Settings resolution; the binding requirement here is only that both readers resolve the same value from workbook state, and that a change is fenced.
+
+**Rollback boundary.** Before activation, rollback is a redeploy of the previous server build and changes no authority. After activation, the eligible writable rollback is a protocol-compatible legacy release that reads the control record; the pre-activation build is not eligible as a writable endpoint because it would advance only Script Properties and silently fork the revision authority. Reverting authority to Script Properties is a separate, separately approved action requiring a stopped-writer reconciliation from the then-current control counters and any pending journal entry — never by copying the retained captured numbers back.
+
+**Tools and deployments that must stay disabled.** The staging gateway and Durable Object host (read-only by construction), the `codex/read-api-prototype` branch prototype (local transport evidence only), `loadMigrationWorkbook` and every editor entrypoint that can initialize or migrate (`validateMigrationWorkbook` calls `initializeWorkbook` even with `apply: false`), and any deployment whose only revision update is a Script Property write. Each stays unavailable as a writable path until it participates in the control protocol or runs under a stopped-service reconciliation.
+
+### Recovery of an interrupted mutation (design for task 3.6)
+
+A pending marker is never cleared by ordinary traffic. Recovery is a reviewed maintenance action with one of three decisions, each recorded as a `recover` journal entry naming the actor, the reason, and the revision tuple before and after:
+
+1. **Persistence had completed.** Every affected tab validates through its codec against the intended post-commit state and the audit append is present. Recovery applies the completion transition, so counters advance exactly as a successful mutation would have.
+2. **Rows were never changed.** Every affected tab matches `operationBaseline` and no audit row exists for the operation. Recovery applies the abort transition; counters do not move.
+3. **Rows are partial or ambiguous.** Recovery restores the affected rows from the approved snapshot export, then records the restore transition. Counters are never reset to snapshot values and the journal records what was restored, because a restore is a new change, not an undo of the counter history.
+
+Recovery is refused when the journal already records a completion or abort for the same `operationId`, when the protocol version is unsupported, or when the authority epoch does not match the activated mode — a repeated recovery therefore sees an idle protocol and stops instead of advancing counters twice. At most one mutation may be pending at a time; no new mutation is admitted until recovery leaves the protocol idle. The diagnosis inputs are the control row (`operationId`, `operationStartedAt`, `operationTabs`, `operationBaseline`), the journal entries for that window, the audit rows, and a workbook snapshot export; all of them stay in private storage except the sanitised tuple summary recorded in the journal.
 
 ### Audit every mutation path
 
