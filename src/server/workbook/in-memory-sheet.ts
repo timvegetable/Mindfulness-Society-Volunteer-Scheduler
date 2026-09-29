@@ -57,6 +57,7 @@ export class InMemorySheet {
   getLastRow(): number { return this.values.length; }
   getRange(row: number, column: number, rows = 1, columns = 1): InMemoryRange { return new InMemoryRange(this, row, column, rows, columns); }
   appendRow(row: Row): void { this.values.push([...row]); }
+  deleteRows(rowPosition: number, howMany: number): void { this.values.splice(rowPosition - 1, howMany); }
 }
 
 export class InMemorySpreadsheet {

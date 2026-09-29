@@ -48,6 +48,14 @@ export const WORKBOOK_CONTROL_TABS = [
 /** Every tab name the schema defines; a wider `string` would defeat the allowlist. */
 export type WorkbookTabName = (typeof WORKBOOK_TABS)[number]['name'] | (typeof WORKBOOK_CONTROL_TABS)[number]['name'];
 
+/**
+ * Scheduling input tabs. Their tab revisions compose into a dedicated monotonic
+ * counter so a change to an unrelated tab never marks the published schedule
+ * stale, and a change to a scheduling input always does. Declared here so the
+ * runtime and the control protocol advance the same set.
+ */
+export const SCHEDULING_INPUT_TABS: ReadonlySet<string> = new Set(['Volunteers', 'RecurringAvailability', 'AvailabilityExceptions', 'Sessions']);
+
 const ALL_TABS: readonly WorkbookTab[] = [...WORKBOOK_TABS, ...WORKBOOK_CONTROL_TABS];
 
 export const WORKBOOK_SCHEMA = {

@@ -28,7 +28,7 @@ import {
 import { RevisionStore, SheetRepository, type AuditEntry, type RevisionedRepository, type SheetCodec } from './workbook/repository.js';
 import type { SheetValueContext } from './workbook/sheet-values.js';
 import { hydratedVolunteers } from './workbook/hydration.js';
-import { tabDefinition, type WorkbookTab } from './workbook/schema.js';
+import { SCHEDULING_INPUT_TABS, tabDefinition, type WorkbookTab } from './workbook/schema.js';
 import type { SpreadsheetLike, SheetLike } from './workbook/initializer.js';
 import type { Mailer, RecurringAvailabilityRecord } from './self-service/types.js';
 import type { AuthoritativeAvailabilityRecord, ImportedAvailabilityRecord } from './imports/types.js';
@@ -110,14 +110,7 @@ function now(): string {
   return new Date().toISOString();
 }
 
-/**
- * Scheduling input tabs. Their tab revisions compose into a dedicated monotonic
- * counter so a change to an unrelated tab (mappings, candidates, audit) never
- * marks the published schedule stale, and a change to a scheduling input always
- * does — even when that tab's own revision is not the highest in the workbook.
- */
 const SCHEDULING_INPUT_REVISION_KEY = 'SCHEDULING_INPUT_REVISION';
-const SCHEDULING_INPUT_TABS: ReadonlySet<string> = new Set(['Volunteers', 'RecurringAvailability', 'AvailabilityExceptions', 'Sessions']);
 
 export function schedulingInputRevision(properties: ScriptProperties): number {
   const value = Number(properties.getProperty(SCHEDULING_INPUT_REVISION_KEY) ?? '0');

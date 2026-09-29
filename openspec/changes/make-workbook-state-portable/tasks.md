@@ -28,7 +28,8 @@
 
 ## 3. Legacy Writer and Reader Protocol
 
-- [ ] 3.1 Implement script-lock plus live gate/authority checks and durable pending/completed generation transitions; test failure before rows, mid-write and before final completion.
+- [x] 3.1 Implement script-lock plus live gate/authority checks and durable pending/completed generation transitions; test failure before rows, mid-write and before final completion.
+  - Evidence (2026-09-29): `evidence/mutation-lifecycle-2026-09-29.md`; fenced `ControlMutationWriter` plus pure begin/commit/abort transitions in `src/server/workbook/control.ts`, 17 tests in `control-mutation.contract.test.ts` covering a closed gate, wrong authority, a held lock, a crash before rows, a mid-write abort, a mismatched completion and the exact counter rules. Repository and dispatcher integration is task 3.2/3.5.
 - [ ] 3.2 Adapt repository commits, scheduling publication/compensation, availability/cancellation, candidates, imports and refresh to the protocol; verify global/tab/input/output revisions remain distinct.
 - [ ] 3.3 Reclassify import preview staging as a mutation, require expectedRevision, and adapt its authenticated client revision source; test write-disabled/read-only/missing/stale requests with zero persistence.
 - [ ] 3.4 Adapt initializer, loader, diagnostics that can initialize, and direct-write reconciliation to fenced maintenance procedures; confirm the inventory has no unaccounted writer.

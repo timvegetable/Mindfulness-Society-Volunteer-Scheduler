@@ -1,6 +1,7 @@
 import type { ApiError } from '../../shared/domain.js';
 import type { SheetLike } from './initializer.js';
-import { tabDefinition, WORKBOOK_TABS, type WorkbookTabName } from './schema.js';
+import type { LockLike } from './repository.js';
+import { SCHEDULING_INPUT_TABS, tabDefinition, WORKBOOK_TABS, type WorkbookTabName } from './schema.js';
 
 /**
  * Portable control metadata: the versioned record that lets an independent
@@ -39,7 +40,10 @@ export type ControlFailureCode =
   | 'UNSUPPORTED'
   | 'AUTHORITY_MISMATCH'
   | 'PENDING'
-  | 'GENERATION_CHANGED';
+  | 'GENERATION_CHANGED'
+  | 'OPERATION_MISMATCH'
+  | 'GATE_CLOSED'
+  | 'LOCKED';
 
 export class ControlError extends Error {
   readonly code: ControlFailureCode;
@@ -74,6 +78,8 @@ export type ControlRecord = {
 const CONTROL_COLUMNS = tabDefinition('WorkbookControl').columns;
 export { CONTROL_COLUMNS };
 const KNOWN_TABS: ReadonlySet<string> = new Set(WORKBOOK_TABS.map((tab) => tab.name));
+/** The baseline tuple carries the composed counters beside the per-tab ones. */
+const BASELINE_RESERVED_KEYS: ReadonlySet<string> = new Set(['dataRevision', 'schedulingInputRevision']);
 
 function malformed(field: string, detail: string): never {
   throw new ControlError('MALFORMED', `Workbook control field ${field} ${detail}`);
@@ -93,7 +99,7 @@ function text(value: unknown, field: string, maxLength: number): string {
   return value;
 }
 
-function counterMap(value: unknown, field: string, limitBytes: number): Record<string, number> {
+function counterMap(value: unknown, field: string, limitBytes: number, reservedKeys: ReadonlySet<string> = new Set()): Record<string, number> {
   if (value === null || value === undefined || value === '') return {};
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
   if (typeof serialized !== 'string') malformed(field, 'must be a JSON object');
@@ -107,7 +113,7 @@ function counterMap(value: unknown, field: string, limitBytes: number): Record<s
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) malformed(field, 'must be a JSON object');
   const output: Record<string, number> = {};
   for (const [key, entry] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!KNOWN_TABS.has(key)) malformed(field, `names an unknown tab: ${key}`);
+    if (!KNOWN_TABS.has(key) && !reservedKeys.has(key)) malformed(field, `names an unknown tab: ${key}`);
     output[key] = counter(entry, `${field}.${key}`);
   }
   return output;
@@ -168,7 +174,7 @@ export function parseControlRow(row: readonly unknown[]): ControlRecord {
   const operationId = text(at('operationId'), 'operationId', 128);
   const operationStartedAt = text(at('operationStartedAt'), 'operationStartedAt', 64);
   const operationTabs = stringList(at('operationTabs'), 'operationTabs', CONTROL_LIMITS.operationTabsBytes);
-  const operationBaseline = counterMap(at('operationBaseline'), 'operationBaseline', CONTROL_LIMITS.operationBaselineBytes);
+  const operationBaseline = counterMap(at('operationBaseline'), 'operationBaseline', CONTROL_LIMITS.operationBaselineBytes, BASELINE_RESERVED_KEYS);
   if (mutationState === 'pending') {
     if (operationId === '') malformed('operationId', 'is required while a mutation is pending');
     if (operationTabs.length === 0) malformed('operationTabs', 'must name at least one tab while a mutation is pending');
@@ -335,6 +341,297 @@ export function controlFailureCode(code: ControlFailureCode, access: 'read' | 'w
   switch (code) {
     case 'GENERATION_CHANGED': return 'STALE_REVISION';
     case 'PENDING': return access === 'write' ? 'CONFLICT' : 'UNAVAILABLE';
+    case 'OPERATION_MISMATCH':
+    case 'LOCKED': return 'CONFLICT';
     default: return 'UNAVAILABLE';
+  }
+}
+
+/**
+ * Mutation lifecycle. A mutation is begin → domain writes → completion, and a
+ * crash anywhere leaves the pending marker in place: dead traffic must never
+ * clear it, and a reader that sees it rejects the snapshot. Counters advance on
+ * exactly one transition — completion — so an abort moves the generation
+ * without moving a revision, which is why readers compare the whole tuple and
+ * not only the revision.
+ */
+
+export type JournalEvent = 'capture' | 'activate' | 'begin' | 'commit' | 'abort' | 'recover' | 'rollback';
+
+export const JOURNAL_COLUMNS = tabDefinition('ControlJournal').columns;
+
+export type ControlJournalEntry = {
+  id: string;
+  generation: number;
+  event: JournalEvent;
+  operationId: string;
+  actorId: string;
+  tabs: readonly string[];
+  before: Readonly<Record<string, number>>;
+  after: Readonly<Record<string, number>>;
+  reason: string;
+  timestamp: string;
+};
+
+/** The revision tuple a journal entry records, for before/after comparison. */
+export function controlCounters(record: ControlRecord): Record<string, number> {
+  return {
+    dataRevision: record.dataRevision,
+    schedulingInputRevision: record.schedulingInputRevision,
+    ...sortKeys(record.tabRevisions)
+  };
+}
+
+function journalId(): string {
+  const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
+  return `journal-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export function serializeJournalEntry(entry: ControlJournalEntry): unknown[] {
+  const byColumn: Record<(typeof JOURNAL_COLUMNS)[number], unknown> = {
+    id: entry.id,
+    generation: entry.generation,
+    event: entry.event,
+    operationId: entry.operationId,
+    actorId: entry.actorId,
+    tabs: entry.tabs.length === 0 ? '' : JSON.stringify([...entry.tabs]),
+    before: Object.keys(entry.before).length === 0 ? '' : JSON.stringify(sortKeys(entry.before)),
+    after: Object.keys(entry.after).length === 0 ? '' : JSON.stringify(sortKeys(entry.after)),
+    reason: entry.reason,
+    timestamp: entry.timestamp
+  };
+  return JOURNAL_COLUMNS.map((column) => byColumn[column]);
+}
+
+/** A sheet that can prune: the maintenance journal is bounded by row count. */
+export type PrunableSheetLike = SheetLike & { deleteRows?(rowPosition: number, howMany: number): void };
+
+/**
+ * Append one journal entry, pruning oldest-first past the retention ceiling when
+ * the sheet supports it. An entry that cannot be written inside its byte
+ * ceiling is refused rather than truncated: a truncated recovery record is worse
+ * than none.
+ */
+export function appendJournalEntry(sheet: PrunableSheetLike, entry: ControlJournalEntry): void {
+  const row = serializeJournalEntry(entry);
+  if (byteLength(JSON.stringify(row)) > CONTROL_LIMITS.journalEntryBytes) {
+    throw new ControlError('MALFORMED', `Workbook control journal entry exceeds ${CONTROL_LIMITS.journalEntryBytes} bytes`);
+  }
+  const lastRow = sheet.getLastRow();
+  sheet.getRange(lastRow + 1, 1, 1, JOURNAL_COLUMNS.length).setValues([row]);
+  if (typeof sheet.deleteRows !== 'function') return;
+  const dataRows = sheet.getLastRow() - 1;
+  if (dataRows > CONTROL_LIMITS.journalEntries) {
+    sheet.deleteRows(2, dataRows - CONTROL_LIMITS.journalEntries);
+  }
+}
+
+export type ControlMutationRequest = {
+  /** `<operation>#<opaque id>`; carries no actor or credential material. */
+  operationId: string;
+  /** Tabs this mutation may commit; a commit of an undeclared tab is refused. */
+  tabs: readonly WorkbookTabName[];
+  actorId: string;
+};
+
+/** Pure transition: publish the in-progress marker before any row changes. */
+export function beginMutationRecord(record: ControlRecord, request: ControlMutationRequest, timestamp: string): ControlRecord {
+  if (record.mutationState !== 'idle') {
+    throw new ControlError('PENDING', `A mutation (${record.operationId || 'unknown'}) is already pending`);
+  }
+  if (request.operationId.trim().length === 0 || request.operationId.length > 128) {
+    throw new ControlError('MALFORMED', 'A mutation requires an operation id of at most 128 characters');
+  }
+  if (request.tabs.length === 0) throw new ControlError('MALFORMED', 'A mutation must declare at least one affected tab');
+  return {
+    ...record,
+    generation: record.generation + 1,
+    mutationState: 'pending',
+    operationId: request.operationId,
+    operationStartedAt: timestamp,
+    operationTabs: [...request.tabs],
+    operationBaseline: controlCounters(record),
+    updatedAt: timestamp,
+    updatedBy: request.actorId
+  };
+}
+
+/**
+ * Pure transition: completion, after domain rows and audit data persisted. The
+ * global revision advances once, the scheduling-input revision advances when a
+ * committed tab is a scheduling input, and each committed tab advances by one.
+ */
+export function commitMutationRecord(record: ControlRecord, committedTabs: readonly WorkbookTabName[], actorId: string, timestamp: string): ControlRecord {
+  requirePending(record);
+  const tabRevisions = { ...record.tabRevisions };
+  for (const tab of new Set(committedTabs)) tabRevisions[tab] = (tabRevisions[tab] ?? 0) + 1;
+  const touchesSchedulingInput = committedTabs.some((tab) => SCHEDULING_INPUT_TABS.has(tab));
+  return {
+    ...record,
+    generation: record.generation + 1,
+    completedGeneration: record.generation + 1,
+    dataRevision: record.dataRevision + 1,
+    schedulingInputRevision: record.schedulingInputRevision + (touchesSchedulingInput ? 1 : 0),
+    tabRevisions,
+    mutationState: 'idle',
+    operationId: '',
+    operationStartedAt: '',
+    operationTabs: [],
+    operationBaseline: {},
+    updatedAt: timestamp,
+    updatedBy: actorId
+  };
+}
+
+/**
+ * Pure transition: abort. The generation still advances, so a read that started
+ * under the pending marker cannot accept its snapshot, while every counter stays
+ * exactly where it was — an aborted mutation is not a revision.
+ */
+export function abortMutationRecord(record: ControlRecord, actorId: string, timestamp: string): ControlRecord {
+  requirePending(record);
+  return {
+    ...record,
+    generation: record.generation + 1,
+    completedGeneration: record.generation + 1,
+    mutationState: 'idle',
+    operationId: '',
+    operationStartedAt: '',
+    operationTabs: [],
+    operationBaseline: {},
+    updatedAt: timestamp,
+    updatedBy: actorId
+  };
+}
+
+function requirePending(record: ControlRecord): void {
+  if (record.mutationState !== 'pending') {
+    throw new ControlError('OPERATION_MISMATCH', 'No mutation is pending; there is nothing to complete or abort');
+  }
+}
+
+export type MutationScope = {
+  readonly operationId: string;
+  readonly actorId: string;
+  readonly tabs: readonly WorkbookTabName[];
+  /** The record as read at begin, for reconciliation and diagnostics. */
+  readonly baseline: ControlRecord;
+  /** Register a tab whose rows and audit data persisted. */
+  markCommitted(tab: WorkbookTabName): void;
+  committedTabs(): readonly WorkbookTabName[];
+};
+
+export type ControlMutationWriterOptions = {
+  control: SheetLike;
+  journal: PrunableSheetLike;
+  lock: LockLike;
+  /** Live operational gate. Mutations are refused unless it returns true. */
+  writeEnabled: () => boolean;
+  /** Authority this writer was activated for; both it and the gate are required. */
+  authority: ControlAuthority;
+  now?: () => string;
+  /** Script-lock wait, in milliseconds. */
+  lockTimeoutMs?: number;
+};
+
+/**
+ * The fenced writer side of the protocol: script lock, live gate, authority and
+ * the durable pending/completed transitions. `begin` refuses unless the live
+ * gate is open, the authority is this writer's, the record is idle and the lock
+ * is held; the pending row is written before the caller touches any domain row,
+ * so a crash at any later point leaves an auditable marker rather than a silent
+ * partial change.
+ */
+export class ControlMutationWriter {
+  private readonly options: ControlMutationWriterOptions;
+
+  constructor(options: ControlMutationWriterOptions) {
+    this.options = options;
+  }
+
+  begin(request: ControlMutationRequest): { scope: MutationScope; record: ControlRecord } {
+    return this.fenced(() => {
+      const current = this.admit(undefined);
+      const record = beginMutationRecord(current, request, this.timestamp());
+      this.transition('begin', record, current, request.actorId, request.tabs, '');
+      const committed = new Set<WorkbookTabName>();
+      const scope: MutationScope = {
+        operationId: request.operationId,
+        actorId: request.actorId,
+        tabs: [...request.tabs],
+        baseline: current,
+        markCommitted: (tab) => {
+          if (!request.tabs.includes(tab)) {
+            throw new ControlError('OPERATION_MISMATCH', `Mutation ${request.operationId} committed an undeclared tab: ${tab}`);
+          }
+          committed.add(tab);
+        },
+        committedTabs: () => [...committed]
+      };
+      return { scope, record };
+    });
+  }
+
+  commit(scope: MutationScope): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = this.admit(scope.operationId);
+      const record = commitMutationRecord(current, scope.committedTabs(), scope.actorId, this.timestamp());
+      this.transition('commit', record, current, scope.actorId, scope.committedTabs(), '');
+      return { record };
+    });
+  }
+
+  abort(scope: MutationScope, reason: string): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = this.admit(scope.operationId);
+      const record = abortMutationRecord(current, scope.actorId, this.timestamp());
+      this.transition('abort', record, current, scope.actorId, current.operationTabs, reason);
+      return { record };
+    });
+  }
+
+  /** Read the record under the lock, refusing anything this writer may not touch. */
+  private admit(operationId: string | undefined): ControlRecord {
+    if (!this.options.writeEnabled()) {
+      throw new ControlError('GATE_CLOSED', 'The live write gate is closed; no mutation may begin');
+    }
+    const current = readControlRecord(this.options.control);
+    assertAuthority(current, this.options.authority);
+    if (operationId !== undefined && (current.mutationState !== 'pending' || current.operationId !== operationId)) {
+      throw new ControlError('OPERATION_MISMATCH', `Pending mutation ${current.operationId || '(none)'} does not match ${operationId}`);
+    }
+    return current;
+  }
+
+  /** Journal first, then the control row: a crash between them leaves an auditable attempt. */
+  private transition(event: JournalEvent, record: ControlRecord, previous: ControlRecord, actorId: string, tabs: readonly string[], reason: string): void {
+    appendJournalEntry(this.options.journal, {
+      id: journalId(),
+      generation: record.generation,
+      event,
+      operationId: record.operationId === '' ? previous.operationId : record.operationId,
+      actorId,
+      tabs,
+      before: controlCounters(previous),
+      after: controlCounters(record),
+      reason,
+      timestamp: record.updatedAt
+    });
+    this.options.control.getRange(2, 1, 1, CONTROL_COLUMNS.length).setValues([serializeControlRecord(record)]);
+  }
+
+  private fenced<T>(action: () => T): T {
+    const timeout = this.options.lockTimeoutMs ?? 10_000;
+    if (!this.options.lock.tryLock(timeout)) throw new ControlError('LOCKED', 'Another write holds the workbook control lock');
+    try {
+      return action();
+    } finally {
+      this.options.lock.releaseLock();
+    }
+  }
+
+  private timestamp(): string {
+    return this.options.now?.() ?? new Date().toISOString();
   }
 }
