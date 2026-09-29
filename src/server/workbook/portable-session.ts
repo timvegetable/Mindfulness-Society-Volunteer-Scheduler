@@ -3,11 +3,10 @@ import {
   ControlError,
   ControlMutationWriter,
   controlOperationId,
-  portableRevisionProvider,
   readControlRecord,
+  toRepositoryError,
   type ControlRecord,
   type MutationScope,
-  type PortableRevisionProvider,
   type PrunableSheetLike
 } from './control.js';
 import type { SheetLike } from './initializer.js';
@@ -68,8 +67,12 @@ export class PortableSession {
 
   /** The record as read at admission, refreshed after every transition. */
   record(): ControlRecord {
-    this.cached ??= readControlRecord(this.options.control);
-    return this.cached;
+    try {
+      this.cached ??= readControlRecord(this.options.control);
+      return this.cached;
+    } catch (error) {
+      throw toRepositoryError(error, 'read');
+    }
   }
 
   protocolVersion(): number {
@@ -78,7 +81,11 @@ export class PortableSession {
 
   /** Counters the repositories must use, including this request's own commits. */
   tabRevision(tab: WorkbookTabName): number {
-    return (this.record().tabRevisions[tab] ?? 0) + (this.committed.get(tab) ?? 0);
+    try {
+      return (this.record().tabRevisions[tab] ?? 0) + (this.committed.get(tab) ?? 0);
+    } catch (error) {
+      throw toRepositoryError(error, 'read');
+    }
   }
 
   dataRevision(): number {
@@ -89,27 +96,20 @@ export class PortableSession {
     return this.record().schedulingInputRevision;
   }
 
-  /** A provider over the in-request counters, for the completed-snapshot bracket. */
-  provider(): PortableRevisionProvider {
-    const record = this.record();
-    const tabRevisions = { ...record.tabRevisions };
-    for (const [tab, increment] of this.committed) tabRevisions[tab] = (tabRevisions[tab] ?? 0) + increment;
-    return portableRevisionProvider({
-      ...record,
-      tabRevisions,
-      // A marker written during this request is visible to a reader bracket in
-      // the same request, during which nothing else may complete.
-      mutationState: this.scope ? 'pending' : record.mutationState,
-      ...(this.scope ? { operationId: this.scope.operationId, operationTabs: [...this.scope.tabs] } : {})
-    });
-  }
-
   /**
    * Publish or widen the in-progress marker. Called after the expected-revision
    * check and before the rows of `tab` change, so a crash between the two leaves
    * a fenced pending state.
    */
   ensureMarked(tab: WorkbookTabName): void {
+    try {
+      this.ensureMarkedInternal(tab);
+    } catch (error) {
+      throw toRepositoryError(error, 'write');
+    }
+  }
+
+  private ensureMarkedInternal(tab: WorkbookTabName): void {
     const bound = this.bound;
     if (!bound) {
       throw new ControlError('OPERATION_MISMATCH', 'The portable session has no admitted operation; a maintenance path must open one explicitly');
@@ -130,7 +130,11 @@ export class PortableSession {
 
   /** Register a tab whose rows and audit data persisted. */
   registerCommitted(tab: WorkbookTabName): void {
-    this.scope?.markCommitted(tab);
+    try {
+      this.scope?.markCommitted(tab);
+    } catch (error) {
+      throw toRepositoryError(error, 'write');
+    }
     this.committed.set(tab, (this.committed.get(tab) ?? 0) + 1);
     this.cached = undefined;
   }
@@ -149,28 +153,38 @@ export class PortableSession {
    * global revision, because the dispatcher admits it as a successful operation.
    */
   commit(): ControlRecord {
-    const bound = this.bound;
-    if (!bound) {
-      throw new ControlError('OPERATION_MISMATCH', 'The portable session has no admitted operation to complete');
+    let record: ControlRecord;
+    try {
+      const bound = this.bound;
+      if (!bound) {
+        throw new ControlError('OPERATION_MISMATCH', 'The portable session has no admitted operation to complete');
+      }
+      record = this.scope
+        ? this.writer.commit(this.scope).record
+        : this.writer.completeWithoutRows(bound.actorId).record;
+    } catch (error) {
+      throw toRepositoryError(error, 'write');
     }
-    const record = this.scope
-      ? this.writer.commit(this.scope).record
-      : this.writer.completeWithoutRows(bound.actorId).record;
     this.cached = record;
+    // This request's own commits are part of the record now; keeping them here
+    // would count them twice for anything that reads a revision afterwards.
+    this.committed.clear();
+    this.scope = undefined;
+    this.markedTabs.clear();
     return record;
   }
 
   /**
-   * Settle a handler failure. A mutation that never changed a row is aborted so
-   * the next request is not blocked; one that already changed rows stays pending
-   * on purpose, because clearing it would present a partially written workbook
-   * as current. That state is for the reviewed recovery procedure.
+   * Settle a handler failure. **Nothing is cleared automatically.** The marker is
+   * published immediately before the first row write, so its existence means rows
+   * may already have changed — including when the failure happened inside the
+   * write itself (a failed cell write or audit append). Aborting on the strength
+   * of "no tab registered its commit" would present a partially written workbook
+   * as current, which is the opposite of the protocol's rule. A failure that never
+   * published a marker needs no settlement at all; one that did is for the
+   * reviewed recovery procedure, which records its reason.
    */
-  settleAfterFailure(reason: string): ControlRecord | undefined {
-    if (!this.scope || this.hasRowChanges()) return undefined;
-    const record = this.writer.abort(this.scope, reason).record;
-    this.cached = record;
-    this.scope = undefined;
-    return record;
+  settleAfterFailure(_reason: string): ControlRecord | undefined {
+    return undefined;
   }
 }

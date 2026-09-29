@@ -72,16 +72,18 @@ describe('portable revision source', () => {
     expect(readControlRecord(control)).toMatchObject({ mutationState: 'idle', dataRevision: 6 });
   });
 
-  it('aborts a failure that changed no rows and leaves a partial write pending', () => {
-    const settled = authority();
-    settled.portable.revisionSource.begin?.('admin@example.test', 'admin.schedule.rerun');
-    settled.portable.revisionSource.settleAfterFailure?.('handler failed');
-    expect(readControlRecord(settled.control).mutationState).toBe('idle');
+  it('never clears a published marker on failure, and leaves an untouched record alone', () => {
+    // No write path reached a repository: nothing was published, so there is
+    // nothing to settle and the record is unchanged.
+    const untouched = authority();
+    untouched.portable.revisionSource.begin?.('admin@example.test', 'admin.schedule.rerun');
+    untouched.portable.revisionSource.settleAfterFailure?.('handler failed');
+    expect(readControlRecord(untouched.control)).toMatchObject({ mutationState: 'idle', generation: 0 });
 
+    // A published marker always stays pending: the rows may already have changed.
     const partial = authority();
     partial.portable.revisionSource.begin?.('admin@example.test', 'admin.schedule.rerun');
     partial.portable.session.ensureMarked('Assignments');
-    partial.portable.session.registerCommitted('Assignments');
     partial.portable.revisionSource.settleAfterFailure?.('handler failed');
     expect(readControlRecord(partial.control).mutationState).toBe('pending');
   });

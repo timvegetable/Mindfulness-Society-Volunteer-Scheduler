@@ -3,6 +3,7 @@ import { InMemoryProperties, InMemorySpreadsheet, type InMemorySheet } from './i
 import { ControlError, emptyControlRecord, readControlRecord, serializeControlRecord, type ControlAuthority } from './control.js';
 import { PortableSession } from './portable-session.js';
 import { repositories } from '../runtime.js';
+import { RepositoryError } from './repository.js';
 import type { Volunteer } from '../../shared/domain.js';
 
 const NOW = '2026-09-29T12:00:00.000Z';
@@ -46,6 +47,18 @@ function expectControlError(action: () => unknown, code: string): void {
     return;
   }
   throw new Error(`Expected a ControlError with code ${code}`);
+}
+
+/** The transport-facing contract: the API code the design pins for the failure. */
+function expectRepositoryError(action: () => unknown, code: string): void {
+  try {
+    action();
+  } catch (error) {
+    expect(error).toBeInstanceOf(RepositoryError);
+    expect((error as RepositoryError).code).toBe(code);
+    return;
+  }
+  throw new Error(`Expected a RepositoryError with code ${code}`);
 }
 
 const volunteer: Volunteer = {
@@ -146,42 +159,45 @@ describe('portable session marker', () => {
   it('refuses a row change under a closed live gate', () => {
     const { session: portable } = session({ writeEnabled: false });
 
-    expectControlError(() => portable.ensureMarked('Volunteers'), 'GATE_CLOSED');
+    // The session reports through the transport's taxonomy: a closed gate is
+    // UNAVAILABLE to the caller, not a protocol-shaped internal error.
+    expectRepositoryError(() => portable.ensureMarked('Volunteers'), 'UNAVAILABLE');
   });
 
   it('refuses a row change that no admitted operation opened', () => {
     const { control, journal } = activated();
     const unbound = new PortableSession({ control, journal, writeEnabled: () => true, now: () => NOW });
 
-    expectControlError(() => unbound.ensureMarked('Volunteers'), 'OPERATION_MISMATCH');
-    expectControlError(() => unbound.commit(), 'OPERATION_MISMATCH');
+    expectRepositoryError(() => unbound.ensureMarked('Volunteers'), 'CONFLICT');
+    expectRepositoryError(() => unbound.commit(), 'CONFLICT');
   });
 
   it('refuses a commit for a tab the marker never declared', () => {
     const { session: portable } = session();
     portable.ensureMarked('Volunteers');
 
-    expectControlError(() => portable.registerCommitted('Assignments'), 'OPERATION_MISMATCH');
+    expectRepositoryError(() => portable.registerCommitted('Assignments'), 'CONFLICT');
   });
 });
 
 describe('portable session failure settlement', () => {
-  it('aborts a failure that changed no rows, so the next request is not blocked', () => {
+  it('leaves a published marker pending, because a marker means rows may have changed', () => {
+    // The marker is written immediately before the first row write, so its
+    // existence covers the window in which the write itself can fail — aborting
+    // here would present a partially written workbook as current.
     const { session: portable, control } = session();
     portable.ensureMarked('Volunteers');
 
-    const record = portable.settleAfterFailure('validation refused the payload');
-
-    expect(record).toMatchObject({ mutationState: 'idle', generation: 2, dataRevision: 5, tabRevisions: { Volunteers: 3 } });
-    expect(readControlRecord(control).mutationState).toBe('idle');
+    expect(portable.settleAfterFailure('the handler threw inside the write')).toBeUndefined();
+    expect(readControlRecord(control)).toMatchObject({ mutationState: 'pending', generation: 1, dataRevision: 5, tabRevisions: { Volunteers: 3 } });
   });
 
-  it('leaves a failure that changed rows pending for reviewed recovery', () => {
+  it('leaves a failure that registered a commit pending too', () => {
     const { session: portable, control } = session();
     portable.ensureMarked('Volunteers');
     portable.registerCommitted('Volunteers');
 
-    expect(portable.settleAfterFailure('the handler threw mid-write')).toBeUndefined();
+    expect(portable.settleAfterFailure('the audit append failed')).toBeUndefined();
     expect(readControlRecord(control).mutationState).toBe('pending');
   });
 
