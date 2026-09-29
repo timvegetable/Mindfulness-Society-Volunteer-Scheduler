@@ -82,6 +82,16 @@ The Pages workflow renders public config from `SCHEDULING_PRIVATE_CONFIG_JSON`, 
 
 Verify the deployed page loads the intended hashed client asset and safe `config.json`, signs in with intended test roles, reaches the pinned Apps Script URL, and renders no private configuration or cross-role data.
 
+## Portable-state release (2026-09-29, not yet deployed)
+
+A release carrying the [portable-state change](../openspec/changes/make-workbook-state-portable/tasks.md) has three additional ordering rules, recorded in full in that change's [release artefacts](../openspec/changes/make-workbook-state-portable/evidence/release-artefacts-2026-09-29.md):
+
+1. **Client before server.** The new server requires `expectedRevision` on import preview; a new client against the old server is safe because the old dispatcher accepts and ignores the field, while the reverse order breaks preview for anyone still on the old client until they reload.
+2. **Deploy the server with `CONTROL_AUTHORITY` unset.** Behaviour is then byte-for-byte the previous release: Script Properties stay authoritative and any control record is ignored. Activation is a separate, separately approved step in one drained window (gate verified false, script lock held): initialize the workbook, capture the live counters into the record, then set `CONTROL_AUTHORITY=workbook-control`.
+3. **Initialize and load only under the maintenance fence.** `initializeWorkbook` and `loadMigrationWorkbook` now require the live gate to be **closed**; the loader's interlock is the inverse of earlier releases, so a run against a deployment whose gate is open is refused rather than proceeding.
+
+Run `inspectControlState()` in the editor before and after the activation window: it reports the control tabs, their header agreement, whether the record reads, its authority and state, and the journal row count, and it writes nothing.
+
 ## Rollback
 
 `scripts/rollback.mjs` is deliberately a checklist generator, not an automatic rollback. Prepare it with the prior schedule revision, snapshot, and static artifact:
