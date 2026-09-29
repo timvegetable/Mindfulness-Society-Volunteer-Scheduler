@@ -1,13 +1,14 @@
 import { createGoogleTokenInfoVerifier, MemoryUserDirectory, type UserDirectory } from './integration/auth.js';
 import { createAppsScriptDigest, createCachingTokenVerifier, type AppsScriptDigestService } from './integration/claim-cache.js';
-import { createAppsScriptAdapters, type AppsScriptAdapterOptions, type AppsScriptRequest, type JsonOutput } from './integration/adapters.js';
-import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type OperationHandlers, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
+import { createAppsScriptAdapters, serializeApiResponse, type AppsScriptAdapterOptions, type AppsScriptRequest, type JsonOutput } from './integration/adapters.js';
+import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, mapUnknownError, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type OperationHandlers, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
 import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
 import { inspectControlState as inspectWorkbookControlState } from './workbook/control-inspection.js';
 import { createProductionRuntime, runtimeConfiguration } from './runtime.js';
 import { activatedAuthority } from './workbook/authority.js';
-import { createPortableAuthority, type PortableAuthority } from './portable-authority.js';
+import { RepositoryError } from './workbook/repository.js';
+import { createPortableAuthority, portableReadiness, type PortableAuthority } from './portable-authority.js';
 import type { PrunableSheetLike } from './workbook/control.js';
 import type { SheetLike, SpreadsheetLike } from './workbook/initializer.js';
 import { withMaintenanceFence, type MaintenanceContext } from './workbook/maintenance.js';
@@ -256,7 +257,12 @@ function runtimeAppsscriptServices(): { scriptCache?: { get(key: string): string
 function controlTabs(spreadsheet: SpreadsheetLike): { control: SheetLike; journal: PrunableSheetLike } {
   const control = spreadsheet.getSheetByName('WorkbookControl');
   const journal = spreadsheet.getSheetByName('ControlJournal');
-  if (!control || !journal) throw new Error('CONTROL_AUTHORITY is workbook-control but the control tabs are missing; run the approved initialization before serving');
+  if (!control || !journal) {
+    // The dispatcher maps RepositoryError, so a missing control tab reaches the
+    // caller as the UNAVAILABLE response the design names rather than as a
+    // platform error page.
+    throw new RepositoryError('UNAVAILABLE', 'The workbook control tabs are missing; run the approved initialization before serving.');
+  }
   return { control, journal };
 }
 
@@ -273,16 +279,15 @@ function defaultServer(timing?: ReadTiming): Server {
   const writeLock = writeEnabled ? runtimeWriteLock() : undefined;
   const spreadsheet = (globalThis as unknown as { SpreadsheetApp?: { getActiveSpreadsheet(): Parameters<typeof createProductionRuntime>[0] } }).SpreadsheetApp?.getActiveSpreadsheet();
   const sheets = (globalThis as unknown as { Sheets?: unknown }).Sheets;
-  const portable: PortableAuthority | undefined = properties && spreadsheet && activatedAuthority(properties) === 'workbook-control'
+  const reader = spreadsheet ? runtimeBatchReader(spreadsheet, ADVANCED_SHEETS_READS_ENABLED, sheets, timing) : undefined;
+  const authority = properties ? activatedAuthority(properties) : 'script-properties';
+  const hasControlTabs = Boolean(spreadsheet?.getSheetByName('WorkbookControl') && spreadsheet?.getSheetByName('ControlJournal'));
+  const readiness = portableReadiness({ authority, hasSpreadsheet: Boolean(spreadsheet), hasControlTabs, hasBatchReader: Boolean(reader) });
+  if (!readiness.ready) throw new RepositoryError('UNAVAILABLE', readiness.message);
+  const portable: PortableAuthority | undefined = readiness.portable && spreadsheet && properties
     ? createPortableAuthority({ ...controlTabs(spreadsheet), writeEnabled: () => properties.getProperty('WRITE_ENABLED') === 'true' })
     : undefined;
   const revision = portable ? portable.revisionSource : runtimeRevisionSource();
-  const reader = spreadsheet ? runtimeBatchReader(spreadsheet, ADVANCED_SHEETS_READS_ENABLED, sheets, timing) : undefined;
-  // Under the portable authority an unbatched read path would hydrate without
-  // the completed-snapshot bracket, so the deployment refuses to serve instead.
-  if (portable && !reader) {
-    throw new Error('CONTROL_AUTHORITY is workbook-control but the batched read path is unavailable; the completed-snapshot check cannot be applied');
-  }
   const batchReader = portable && reader ? portable.guard(reader) : reader;
   const production = properties && spreadsheet
     ? createProductionRuntime(spreadsheet, properties, { scriptCache, timing, batchReader, ...(portable ? { session: portable.session } : {}) })
@@ -489,8 +494,19 @@ export function doPost(event: AppsScriptRequest): JsonOutput | string {
       if ('idempotencyKey' in parsed && typeof parsed.idempotencyKey === 'string' && /^read-probe-[0-9]{13}-[a-z0-9]{8,16}$/.test(parsed.idempotencyKey)) probeId = parsed.idempotencyKey;
     }
   } catch { /* malformed input is reported as invalid */ }
-  try { return defaultServer(timing).doPost(event); }
-  finally { if (operation === INTEGRATION_OPERATIONS.adminSchedule || operation === INTEGRATION_OPERATIONS.adminInsights) timing.report(operation, timing.succeeded, probeId); }
+  try {
+    return defaultServer(timing).doPost(event);
+  } catch (error) {
+    // A configuration or control-state failure while building the server used to
+    // escape as a platform error page. It now answers with the coded envelope the
+    // design names, and logs one bounded line so the failure is still visible.
+    const mapped = mapUnknownError(error);
+    console.error(`server construction refused: ${mapped.code}: ${mapped.message}`);
+    return serializeApiResponse(
+      { ok: false, error: { code: mapped.code, message: mapped.message, ...(mapped.details === undefined ? {} : { details: mapped.details }) } },
+      { timing }
+    );
+  } finally { if (operation === INTEGRATION_OPERATIONS.adminSchedule || operation === INTEGRATION_OPERATIONS.adminInsights) timing.report(operation, timing.succeeded, probeId); }
 }
 
 export function unauthorizedResponse(): ApiResponse<never> {

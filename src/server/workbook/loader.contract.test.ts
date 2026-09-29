@@ -110,3 +110,28 @@ describe('migration loader', () => {
     expect(report.problems.join(' ')).toContain('payload');
   });
 });
+
+describe('migration loading under the portable authority', () => {
+  it('refuses to apply once the workbook is activated, before writing anything', () => {
+    const { spreadsheet } = load({ volunteers: [volunteer], centers: [center], sessions: [session], users: [user] }, false);
+    const properties = new InMemoryProperties();
+    properties.setProperty('CONTROL_AUTHORITY', 'workbook-control');
+
+    // Applying is refused: the loader would write rows and legacy counters
+    // outside the protocol and fork the revision authority.
+    expect(() => applyMigrationPayload(spreadsheet, properties, { volunteers: [volunteer], centers: [center], sessions: [session], users: [user] }, { apply: true, actorId: 'operator@example.test' })).toThrowError(/portable authority/u);
+    expect(dataRows(spreadsheet, 'Volunteers')).toBe(0);
+    expect(properties.getProperty('TAB_REVISION_Volunteers')).toBeNull();
+  });
+
+  it('still validates without writing under the portable authority', () => {
+    const { spreadsheet } = load({ volunteers: [volunteer], centers: [center], sessions: [session], users: [user] }, false);
+    const properties = new InMemoryProperties();
+    properties.setProperty('CONTROL_AUTHORITY', 'workbook-control');
+
+    const report = applyMigrationPayload(spreadsheet, properties, { volunteers: [volunteer], centers: [center], sessions: [session], users: [user] }, { apply: false });
+
+    expect(report.applied).toBe(false);
+    expect(report.tables.map((table) => table.written)).toEqual([0, 0, 0, 0]);
+  });
+});

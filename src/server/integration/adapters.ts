@@ -33,6 +33,15 @@ function jsonText(response: ApiResponse<unknown>): string {
   return JSON.stringify(response);
 }
 
+/**
+ * Serialises one API response exactly as the adapters do, so a caller that has to
+ * answer without a dispatcher — a server that refused to be constructed, for
+ * instance — still returns the platform's normal JSON shape.
+ */
+export function serializeApiResponse(response: ApiResponse<unknown>, options: AppsScriptAdapterOptions): JsonOutput | string {
+  return output(response, options);
+}
+
 function output(response: ApiResponse<unknown>, options: AppsScriptAdapterOptions): JsonOutput | string {
   if (options.timing) return options.timing.measure('responseConstruction', () => rawOutput(response, options));
   return rawOutput(response, options);

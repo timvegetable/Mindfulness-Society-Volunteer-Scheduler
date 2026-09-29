@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StagingConfigurationError, allowedOrigins, googleIdentityConfiguration, optionalBinding, requiredBinding } from './config.js';
+import { StagingConfigurationError, allowedOrigins, googleIdentityConfiguration, optionalBinding, requiredBinding, controlAuthority } from './config.js';
 import { INTEGRATION_OPERATIONS } from '../server/integration/request-policy.js';
 import { READ_API_OPERATIONS } from './read-api.js';
 
@@ -87,5 +87,28 @@ describe('staging identity configuration', () => {
       expect(error?.message).not.toContain('SECRETBODY');
       expect(error?.message).not.toContain(value);
     }
+  });
+});
+
+describe('staging control authority binding', () => {
+  // The Worker mirrors the Apps Script CONTROL_AUTHORITY property: absent means
+  // the legacy authority and no bracket; the literal selects the protocol; a typo
+  // is a configuration fault rather than a silent downgrade to unguarded reads.
+  it('treats an absent or blank binding as the legacy authority', () => {
+    expect(controlAuthority({})).toBe('script-properties');
+    expect(controlAuthority({ STAGING_CONTROL_AUTHORITY: '  ' })).toBe('script-properties');
+    expect(controlAuthority({ STAGING_CONTROL_AUTHORITY: 'script-properties' })).toBe('script-properties');
+  });
+
+  it('selects the portable authority for the exact literal', () => {
+    expect(controlAuthority({ STAGING_CONTROL_AUTHORITY: 'workbook-control' })).toBe('workbook-control');
+  });
+
+  it.each(['Workbook-Control', 'portable', 'true'])('refuses %s instead of serving unguarded', (value) => {
+    expect(() => controlAuthority({ STAGING_CONTROL_AUTHORITY: value })).toThrowError(/STAGING_CONTROL_AUTHORITY/u);
+  });
+
+  it('refuses a non-string binding', () => {
+    expect(() => controlAuthority({ STAGING_CONTROL_AUTHORITY: 1 })).toThrowError(/STAGING_CONTROL_AUTHORITY/u);
   });
 });

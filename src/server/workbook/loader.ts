@@ -3,7 +3,9 @@ import type { Center } from '../centers/models.js';
 import { CenterSchema } from '../centers/models.js';
 import type { Session, User, Volunteer } from '../../shared/domain.js';
 import { SessionSchema, UserSchema, VolunteerSchema } from '../../shared/domain.js';
+import { activatedAuthority } from './authority.js';
 import { initializeWorkbook, type InitializationResult, type SpreadsheetLike } from './initializer.js';
+import { RepositoryError } from './repository.js';
 import { repositories, type RuntimeRepositories, type ScriptProperties } from '../runtime.js';
 import { WORKBOOK_SCHEMA_VERSION } from './schema.js';
 
@@ -142,6 +144,12 @@ export function applyMigrationPayload(
   payload: unknown,
   options: { apply: boolean; actorId?: string }
 ): MigrationLoadReport {
+  if (options.apply && activatedAuthority(properties) === 'workbook-control') {
+    // The loader writes domain rows and legacy Script Property counters. After
+    // activation that would fork the revision authority: the control record's
+    // generation and counters would not move while clients keep reading them.
+    throw new RepositoryError('UNAVAILABLE', 'This workbook is activated for the portable authority; the migration loader would write outside the protocol. Use the reviewed reconciliation procedure instead.');
+  }
   const validation = validateMigrationPayload(payload);
   const report: MigrationLoadReport = {
     schemaVersion: WORKBOOK_SCHEMA_VERSION,
