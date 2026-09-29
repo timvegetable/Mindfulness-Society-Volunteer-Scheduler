@@ -378,3 +378,21 @@ The deployed reader checks, still waiting on the operator's fresh Google ID toke
 at `staging-local/credential-rehearsal.txt` (the sign-in page is served on
 `http://localhost:8788/`). Everything else the workflow can do locally is done;
 the final brief follows.
+
+## 2026-09-29 — final brief
+
+`evidence/final-brief-2026-09-29.md`. Outcome: **Blocked on one input** — the
+deployed reader checks need a fresh Google ID token that only the operator can
+produce (the sign-in page is served at `http://localhost:8788/` and writes
+`staging-local/credential-rehearsal.txt`). Every other piece is complete and
+verified: prerequisites resolved, sections 2 and 3 implemented, the workbook half
+of the rehearsal executed against the real synthetic workbooks, release and
+rollback artefacts prepared, and both independent reviews resolved.
+
+Production activation, pushes, paid services and archiving were never performed.
+
+Validation at the final commit: `pnpm test` 54 files / 433 tests;
+`pnpm run test:worker` 8 files / 138 tests; `pnpm run check` exit 0;
+`pnpm run build` exit 0 with the Apps Script bundle audit; three Worker dry-run
+builds exit 0; snapshot self-test 82 checks; strict OpenSpec validation valid;
+`git diff --check` clean.
