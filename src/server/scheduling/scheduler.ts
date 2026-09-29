@@ -7,7 +7,7 @@ import {
   type Shortfall,
   type Volunteer
 } from '../../shared/domain.js';
-import { intervalsOverlap, isAvailableForSession } from '../../shared/time.js';
+import { createIntervalMemo, intervalsOverlap, isAvailableForSession, type IntervalMemo } from '../../shared/time.js';
 import { validateSessionInputs, type SchedulingInputError } from './inputs.js';
 import { Temporal } from '@js-temporal/polyfill';
 
@@ -59,7 +59,25 @@ type OccupiedSession = { sessionId: string; session: Session };
 type VolunteerMap = Map<string, Volunteer>;
 type Occupancy = Map<string, OccupiedSession[]>;
 
+/**
+ * Request-local indexes over the scheduler's hot-path tables. The computation
+ * used to re-scan the whole exceptions array per (session, volunteer) pair and
+ * the whole assignments array per session; grouping each table once per
+ * request removes those scans while every grouped list keeps the source
+ * array's order, so candidate order, tie-breaks and outputs are unchanged.
+ */
+type SchedulingIndexes = {
+  /** Exceptions grouped by volunteer id, in source order. */
+  exceptionsByVolunteer: Map<string, AvailabilityException[]>;
+  /** Assigned rows grouped by session id, in source order. */
+  assignmentsBySession: Map<string, Assignment[]>;
+  occupancy: Occupancy;
+  memo: IntervalMemo;
+};
+
 const DEFAULT_CREATED_AT = '1970-01-01T00:00:00.000Z';
+/** Volunteers without exceptions all share one list, so memo identity holds. */
+const NO_EXCEPTIONS: readonly AvailabilityException[] = [];
 
 function isSchedulableVolunteer(volunteer: Volunteer): volunteer is Volunteer & { readinessRank: 1 | 2 | 3 } {
   return isRankEligible(volunteer)
@@ -116,31 +134,56 @@ function addOccupancy(occupancy: Occupancy, volunteerId: string, session: Sessio
   occupancy.set(volunteerId, rows);
 }
 
-function removeSessionOccupancy(occupancy: Occupancy, sessionId: string): void {
-  for (const [volunteerId, rows] of occupancy) {
+function indexExceptionsByVolunteer(exceptions: readonly AvailabilityException[]): Map<string, AvailabilityException[]> {
+  const byVolunteer = new Map<string, AvailabilityException[]>();
+  for (const exception of exceptions) {
+    const rows = byVolunteer.get(exception.volunteerId);
+    if (rows) rows.push(exception);
+    else byVolunteer.set(exception.volunteerId, [exception]);
+  }
+  return byVolunteer;
+}
+
+function indexAssignmentsBySession(assignments: readonly Assignment[]): Map<string, Assignment[]> {
+  const bySession = new Map<string, Assignment[]>();
+  for (const assignment of assignments) {
+    if (assignment.status !== 'assigned') continue;
+    const rows = bySession.get(assignment.sessionId);
+    if (rows) rows.push(assignment);
+    else bySession.set(assignment.sessionId, [assignment]);
+  }
+  return bySession;
+}
+
+/**
+ * Removes the one evaluated session's occupancy rows by looking its volunteers
+ * up in the assignment index, instead of walking every volunteer's rows. A
+ * volunteer keeps its remaining rows in the same order the whole-map walk left
+ * them, and a volunteer whose rows are all gone leaves the map, exactly as
+ * before.
+ */
+function removeSessionOccupancy(occupancy: Occupancy, assignmentsBySession: ReadonlyMap<string, readonly Assignment[]>, sessionId: string): void {
+  for (const assignment of assignmentsBySession.get(sessionId) ?? NO_ASSIGNMENTS) {
+    const rows = occupancy.get(assignment.volunteerId);
+    if (!rows) continue;
     const remaining = rows.filter((row) => row.sessionId !== sessionId);
-    if (remaining.length === 0) occupancy.delete(volunteerId);
-    else occupancy.set(volunteerId, remaining);
+    if (remaining.length === 0) occupancy.delete(assignment.volunteerId);
+    else occupancy.set(assignment.volunteerId, remaining);
   }
 }
 
-function hasOverlap(session: Session, occupancy: Occupancy, volunteerId: string): boolean {
+const NO_ASSIGNMENTS: readonly Assignment[] = [];
+
+function hasOverlap(session: Session, occupancy: Occupancy, volunteerId: string, memo?: IntervalMemo): boolean {
   const rows = occupancy.get(volunteerId) ?? [];
   return rows.some((row) => session.date === row.session.date
-    && intervalsOverlap(session, row.session, session.date));
+    && intervalsOverlap(session, row.session, session.date, memo));
 }
 
 function sortedCandidates(candidates: readonly CandidateVolunteer[]): CandidateVolunteer[] {
   return [...candidates].sort((left, right) => left.rank - right.rank
     || Number(right.continuity) - Number(left.continuity)
     || stableCompare(left.volunteerId, right.volunteerId));
-}
-
-function sessionAssignments(
-  session: Session,
-  assignments: readonly Assignment[]
-): Assignment[] {
-  return assignments.filter((assignment) => assignment.sessionId === session.id && assignment.status === 'assigned');
 }
 
 function buildOccupancy(
@@ -163,20 +206,19 @@ function buildOccupancy(
 function candidateRows(
   session: Session,
   volunteers: readonly Volunteer[],
-  exceptions: readonly AvailabilityException[],
-  occupancy: Occupancy,
-  assignments: readonly Assignment[]
+  indexes: SchedulingIndexes
 ): CandidateVolunteer[] {
-  const sameSessionIds = new Set(sessionAssignments(session, assignments).map((assignment) => assignment.volunteerId));
+  const { memo } = indexes;
+  const sameSessionIds = new Set((indexes.assignmentsBySession.get(session.id) ?? NO_ASSIGNMENTS).map((assignment) => assignment.volunteerId));
   const candidates: CandidateVolunteer[] = [];
   const seenVolunteerIds = new Set<string>();
   for (const volunteer of volunteers) {
     if (seenVolunteerIds.has(volunteer.id)) continue;
     seenVolunteerIds.add(volunteer.id);
     if (!isSchedulableVolunteer(volunteer)) continue;
-    const volunteerExceptions = exceptions.filter((exception) => exception.volunteerId === volunteer.id);
-    if (!isAvailableForSession(session, volunteer.recurringAvailability, volunteerExceptions)) continue;
-    if (hasOverlap(session, occupancy, volunteer.id)) continue;
+    const volunteerExceptions = indexes.exceptionsByVolunteer.get(volunteer.id) ?? NO_EXCEPTIONS;
+    if (!isAvailableForSession(session, volunteer.recurringAvailability, volunteerExceptions, memo)) continue;
+    if (hasOverlap(session, indexes.occupancy, volunteer.id, memo)) continue;
     candidates.push({
       volunteerId: volunteer.id,
       rank: volunteer.readinessRank,
@@ -205,10 +247,16 @@ export function rankEligibleCandidates(
   const assignments = options.assignments ?? options.currentAssignments ?? options.existingAssignments ?? [];
   const volunteerMap = new Map(volunteers.map((volunteer) => [volunteer.id, volunteer]));
   const occupancy = buildOccupancy(allSessions, assignments, volunteerMap);
+  const indexes: SchedulingIndexes = {
+    exceptionsByVolunteer: indexExceptionsByVolunteer(options.exceptions ?? options.availabilityExceptions ?? []),
+    assignmentsBySession: indexAssignmentsBySession(assignments),
+    occupancy,
+    memo: createIntervalMemo()
+  };
   // An existing assignment to the evaluated session is not a conflict with
   // itself; it is continuity evidence instead.
-  removeSessionOccupancy(occupancy, validated.id);
-  return candidateRows(validated, volunteers, options.exceptions ?? options.availabilityExceptions ?? [], occupancy, assignments);
+  removeSessionOccupancy(occupancy, indexes.assignmentsBySession, validated.id);
+  return candidateRows(validated, volunteers, indexes);
 }
 export const eligibleCandidatesForSession = rankEligibleCandidates;
 
@@ -275,23 +323,36 @@ export function scheduleSessions(
     : inputOrVolunteers as SchedulerInput;
   const volunteers = [...input.volunteers];
   const asOf = Temporal.Instant.from(input.asOf);
+  const schedulingTimeZone = input.schedulingTimeZone;
   const validatedSessions = validateSessionInputs(input.sessions);
   const exceptions = input.exceptions ?? input.availabilityExceptions ?? [];
   const assignments = input.assignments ?? input.currentAssignments ?? input.existingAssignments ?? [];
+  // Session start instants are memoized per request: the committed filter, the
+  // cutoff split and the projection all read the same instants.
+  const startInstants = new Map<Session, Temporal.Instant>();
+  const startInstantOf = (session: Session): Temporal.Instant => {
+    let instant = startInstants.get(session);
+    if (instant === undefined) {
+      instant = sessionStartInstant(session, schedulingTimeZone ?? session.timeZone);
+      startInstants.set(session, instant);
+    }
+    return instant;
+  };
   const committedInputs = validatedSessions.filter(isCommittedSession);
   const committedSessions = committedInputs
-    .filter((session) => Temporal.Instant.compare(sessionStartInstant(session, input.schedulingTimeZone ?? session.timeZone), asOf) > 0)
+    .filter((session) => Temporal.Instant.compare(startInstantOf(session), asOf) > 0)
     .sort(sessionOrder);
   const excludedCutoffSessionIds = committedInputs
-    .filter((session) => Temporal.Instant.compare(sessionStartInstant(session, input.schedulingTimeZone ?? session.timeZone), asOf) <= 0)
+    .filter((session) => Temporal.Instant.compare(startInstantOf(session), asOf) <= 0)
     .map((session) => session.id)
     .sort((left, right) => stableCompare(left, right));
+  const excludedCutoffIds = new Set(excludedCutoffSessionIds);
   const excludedProposedSessionIds = validatedSessions
     .filter((session) => session.kind === 'univ100' && session.status === 'proposed')
     .map((session) => session.id)
     .sort((left, right) => stableCompare(left, right));
   const excludedSessionIds = validatedSessions
-    .filter((session) => !isCommittedSession(session) || excludedCutoffSessionIds.includes(session.id))
+    .filter((session) => !isCommittedSession(session) || excludedCutoffIds.has(session.id))
     .map((session) => session.id)
     .sort((left, right) => stableCompare(left, right));
   const ineligibleVolunteerIds = volunteers
@@ -301,7 +362,12 @@ export function scheduleSessions(
   const scheduleRevision = input.scheduleRevision ?? 0;
   const createdAt = input.createdAt ?? DEFAULT_CREATED_AT;
   const volunteerMap = new Map(volunteers.map((volunteer) => [volunteer.id, volunteer]));
-  const occupancy = buildOccupancy(committedSessions, assignments, volunteerMap);
+  const indexes: SchedulingIndexes = {
+    exceptionsByVolunteer: indexExceptionsByVolunteer(exceptions),
+    assignmentsBySession: indexAssignmentsBySession(assignments),
+    occupancy: buildOccupancy(committedSessions, assignments, volunteerMap),
+    memo: createIntervalMemo()
+  };
   const priorAssignments = new Map<string, Assignment>();
   for (const assignment of assignments) {
     if (assignment.status === 'assigned') priorAssignments.set(assignmentKey(assignment.sessionId, assignment.volunteerId), assignment);
@@ -318,12 +384,12 @@ export function scheduleSessions(
   };
 
   for (const session of committedSessions) {
-    removeSessionOccupancy(occupancy, session.id);
-    const candidates = candidateRows(session, volunteers, exceptions, occupancy, assignments);
+    removeSessionOccupancy(indexes.occupancy, indexes.assignmentsBySession, session.id);
+    const candidates = candidateRows(session, volunteers, indexes);
     const selected = candidates.slice(0, session.requiredStaffCount);
     for (const candidate of selected) {
       result.assignments.push(createAssignment(session, candidate.volunteerId, scheduleRevision, createdAt, priorAssignments));
-      addOccupancy(occupancy, candidate.volunteerId, session);
+      addOccupancy(indexes.occupancy, candidate.volunteerId, session);
     }
     if (selected.length < session.requiredStaffCount) {
       result.shortfalls.push({
