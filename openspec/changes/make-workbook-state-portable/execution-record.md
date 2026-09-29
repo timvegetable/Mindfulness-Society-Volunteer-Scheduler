@@ -318,3 +318,28 @@ the six read checks with their expected codes and read counts, D2). Nothing has
 been deployed or claimed in the meantime. Two independent reviews — spec
 compliance and repository standards — are running against the branch and their
 findings are processed before the final brief.
+
+## 2026-09-29 — task 2.4 complete; an earlier blocker claim corrected
+
+`evidence/snapshot-control-state-2026-09-29.md`. The snapshot tooling validates
+the control headers, records a bounded control summary in the private baseline and
+compares it under the protocol's rules; `docs/operations.md` pins the private
+manifest fields. Verified end to end against a real export of the representative
+staging workbook (describe, baseline, compare-identical, and a counter that moved
+backwards failing with exit 1) plus 26 new self-test checks (82 total).
+
+**Correction**: this campaign twice recorded task 2.4 as blocked on "the private
+`phamily-env` interpreter, which this session cannot invoke". That was wrong — the
+interpreter exists and runs. The claim is corrected in place here and in the
+release artefacts rather than quietly dropped.
+
+Section 2 is now complete, and section 3 was completed earlier. What remains is
+the deployed reader checks (waiting on the operator's fresh ID token at
+`staging-local/credential-rehearsal.txt`; the sign-in page is served on
+`http://localhost:8788/`), the two independent reviews running with a tighter
+scope, and the final brief.
+
+## Next eligible action
+
+Run the reader checks (D1, the six checks, D2) as soon as the token file exists;
+otherwise process the reviews' findings and prepare the final brief.
