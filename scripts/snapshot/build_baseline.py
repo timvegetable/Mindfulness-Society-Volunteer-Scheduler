@@ -4,7 +4,8 @@
 Usage:
   <snapshot-python> scripts/snapshot/build_baseline.py <snapshot.xlsx> <baseline.json>
 
-Prints only tab names, row counts, and file digests. Never prints cell values.
+Prints only tab names, row counts, control-state status and file digests. Never
+prints cell values.
 Refuses to write a baseline when the snapshot has a missing tab, a schema
 mismatch, or a duplicate/blank stable identifier.
 """
@@ -28,6 +29,12 @@ def main() -> int:
     print(f"snapshot sha256: {model['sha256']}")
     for tab, payload in model["tabs"].items():
         print(f"  {tab}: key={payload['keyColumn']} rows={payload['rowCount']}")
+    control = model.get("control", {})
+    if control.get("present"):
+        status = f"record reads (authority={control['authority']})" if control.get("record") else f"record UNUSABLE ({control.get('reason')})"
+        print(f"  control state: {status}, journal rows={control.get('journalEntries', 0)}")
+    else:
+        print("  control state: no control tabs (the workbook is not initialized)")
     print(f"baseline written: {destination}")
     return 0
 

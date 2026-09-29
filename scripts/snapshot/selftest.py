@@ -275,11 +275,114 @@ def test_append_only() -> None:
     check("audit growth summarized", any("append-only" in s for s in report["summary"]))
 
 
+
+def control_frame(**overrides) -> pd.DataFrame:
+    """One valid control record as a frame, with optional field overrides."""
+    row = {
+        "protocolVersion": 1, "authorityEpoch": 1, "authority": "workbook-control",
+        "generation": 4, "completedGeneration": 4, "dataRevision": 43, "schedulingInputRevision": 6,
+        "tabRevisions": '{"Volunteers": 2}', "mutationState": "idle", "operationId": "",
+        "operationStartedAt": "", "operationTabs": "", "operationBaseline": "",
+        "updatedAt": "2026-09-29T00:00:00.000Z", "updatedBy": "operator@example.test",
+    }
+    row.update(overrides)
+    return pd.DataFrame([row], columns=snapshot_lib.CONTROL_COLUMNS)
+
+
+def control_model(state: dict) -> dict:
+    built = model({"Volunteers": [volunteer("vol-1")]})
+    built["control"] = state
+    return built
+
+
+def test_control_state_parsing() -> None:
+    valid = snapshot_lib.read_control_state({"WorkbookControl": control_frame()})
+    check("control: valid record parsed", valid.get("record") is True)
+    check("control: authority reported", valid.get("authority") == "workbook-control")
+    check("control: counters read", (valid.get("dataRevision"), valid.get("schedulingInputRevision")) == (43, 6))
+    check("control: tab counters parsed", valid.get("tabRevisions") == {"Volunteers": 2})
+    check("control: header agreement reported", valid.get("headerMatches") is True)
+
+    absent = snapshot_lib.read_control_state({})
+    check("control: absence is not an error", absent.get("present") is False and "reason" not in absent)
+
+    empty = snapshot_lib.read_control_state({"WorkbookControl": pd.DataFrame(columns=snapshot_lib.CONTROL_COLUMNS)})
+    check("control: empty tab has no record", empty.get("record") is False and empty.get("reason") == "no record")
+
+    duplicate = pd.concat([control_frame(), control_frame()], ignore_index=True)
+    check("control: duplicate records refused", snapshot_lib.read_control_state({"WorkbookControl": duplicate}).get("reason") == "duplicate records")
+
+    unsupported = snapshot_lib.read_control_state({"WorkbookControl": control_frame(protocolVersion=2)})
+    check("control: unsupported version refused", unsupported.get("reason") == "unsupported protocol version")
+
+    non_integral = snapshot_lib.read_control_state({"WorkbookControl": control_frame(dataRevision="forty-three")})
+    check("control: non-integral counter refused", non_integral.get("record") is False and "dataRevision" in str(non_integral.get("reason")))
+    # The reason names the field; the offending cell is never echoed.
+    check("control: offending value not echoed", "forty-three" not in str(non_integral))
+
+    inconsistent = snapshot_lib.read_control_state({"WorkbookControl": control_frame(mutationState="idle", generation=5)})
+    check("control: idle generation mismatch refused", "completedGeneration" in str(inconsistent.get("reason")))
+
+    bad_json = snapshot_lib.read_control_state({"WorkbookControl": control_frame(tabRevisions="{oops")})
+    check("control: unparseable tab counters refused", "not valid JSON" in str(bad_json.get("reason")))
+
+    drifted = snapshot_lib.read_control_state({"WorkbookControl": control_frame().rename(columns={"dataRevision": "renamed"})})
+    check("control: drifted header reported", drifted.get("headerMatches") is False)
+    problems = snapshot_lib.validate_structure({"WorkbookControl": control_frame().rename(columns={"dataRevision": "renamed"})})
+    # The domain tabs are missing here too, so only the control problem is asserted.
+    check("control: validate_structure rejects a drifted control header", any("WorkbookControl" in problem for problem in problems))
+
+    journal = pd.DataFrame([{"id": "entry-1"}], columns=snapshot_lib.JOURNAL_COLUMNS)
+    counted = snapshot_lib.read_control_state({"WorkbookControl": control_frame(), "ControlJournal": journal})
+    check("control: journal rows counted, contents not carried", counted.get("journalEntries") == 1 and "id" not in counted)
+
+
+def test_control_monotonicity() -> None:
+    def valid(**overrides) -> dict:
+        state = {
+            "present": True, "record": True, "headerMatches": True, "authority": "workbook-control",
+            "authorityEpoch": 1, "generation": 4, "completedGeneration": 4, "mutationState": "idle",
+            "dataRevision": 43, "schedulingInputRevision": 6, "tabRevisions": {"Volunteers": 2}, "journalEntries": 2,
+        }
+        state.update(overrides)
+        return state
+
+    identical = snapshot_lib.compare_models(control_model(valid()), control_model(valid()))
+    check("control: unchanged state is clean", identical["failures"] == [] and any("counters monotonic" in s for s in identical["summary"]))
+
+    decreased = snapshot_lib.compare_models(control_model(valid()), control_model(valid(dataRevision=42)))
+    check("control: a decreasing counter is a failure", any("dataRevision decreased" in f for f in decreased["failures"]))
+
+    earlier = snapshot_lib.compare_models(control_model(valid()), control_model(valid(generation=3, completedGeneration=3)))
+    check("control: a decreasing generation is a failure", any("generation decreased" in f for f in earlier["failures"]))
+
+    tab_regressed = snapshot_lib.compare_models(control_model(valid()), control_model(valid(tabRevisions={"Volunteers": 1})))
+    check("control: a decreasing tab counter is a failure", any("Volunteers" in f for f in tab_regressed["failures"]))
+
+    broken = snapshot_lib.compare_models(control_model(valid()), control_model({"present": True, "record": False, "reason": "duplicate records"}))
+    check("control: a record that became unusable is a failure", any("became unusable" in f and "duplicate records" in f for f in broken["failures"]))
+
+    switched = snapshot_lib.compare_models(control_model(valid()), control_model(valid(authority="script-properties", authorityEpoch=2)))
+    check("control: an authority switch is a note, not a failure", switched["failures"] == [] and any("authority" in n for n in switched["notes"]))
+
+    pending = snapshot_lib.compare_models(control_model(valid()), control_model(valid(mutationState="pending", generation=5)))
+    check("control: a pending marker is a note", pending["failures"] == [] and any("pending mutation" in n for n in pending["notes"]))
+
+    absent = snapshot_lib.compare_models(control_model({"present": False}), control_model({"present": False}))
+    check("control: absent in both is a note", absent["failures"] == [] and any("not initialized" in n for n in absent["notes"]))
+
+    vanished = snapshot_lib.compare_models(control_model({"present": True, "record": True}), control_model({"present": False}))
+    check("control: a vanished control tab is a failure", any("missing from the restored workbook" in f for f in vanished["failures"]))
+
+    shrunk = snapshot_lib.compare_models(control_model(valid()), control_model(valid(journalEntries=1)))
+    check("control: a shrinking journal is a note", shrunk["failures"] == [] and any("prunes oldest-first" in n for n in shrunk["notes"]))
+
+
 def main() -> int:
     for test in (test_canonicalization, test_multiset_settings, test_keyed_duplicate_refused,
                  test_canonicalization_is_idempotent, test_schema_mismatch_refused, test_comparison, test_fixture_tag,
                  test_acceptance_generated_rows_are_excluded, test_tag_filter_does_not_hide_real_damage,
-                 test_append_only):
+                 test_append_only, test_control_state_parsing, test_control_monotonicity):
         test()
     print(f"passed: {PASSED}")
     if FAILED:

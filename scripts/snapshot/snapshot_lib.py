@@ -15,6 +15,7 @@ import datetime as dt
 import hashlib
 import json
 import math
+import numbers
 from typing import Any
 
 import pandas as pd
@@ -84,6 +85,23 @@ COMPARISON_IGNORE = REVISION_COLUMNS | BOOKKEEPING_COLUMNS
 
 # Rows are preserved, not compared, on append-only tabs.
 APPEND_ONLY_TABS = {"AuditLog"}
+
+# Portable control state (schema version 4). These two tabs are deliberately
+# outside EXPECTED_COLUMNS: protocol metadata is not a domain row, and the
+# operational comparison must not treat it as one. A workbook that has not been
+# initialized simply has neither tab, which is not a structural problem.
+CONTROL_TAB = "WorkbookControl"
+JOURNAL_TAB = "ControlJournal"
+CONTROL_COLUMNS = [
+    "protocolVersion", "authorityEpoch", "authority", "generation", "completedGeneration",
+    "dataRevision", "schedulingInputRevision", "tabRevisions", "mutationState", "operationId",
+    "operationStartedAt", "operationTabs", "operationBaseline", "updatedAt", "updatedBy",
+]
+JOURNAL_COLUMNS = ["id", "generation", "event", "operationId", "actorId", "tabs", "before", "after", "reason", "timestamp"]
+CONTROL_PROTOCOL_VERSION = 1
+CONTROL_AUTHORITIES = ("script-properties", "workbook-control")
+CONTROL_STATES = ("idle", "pending")
+CONTROL_COUNTER_FIELDS = ("dataRevision", "schedulingInputRevision")
 
 
 def sha256_file(path: str) -> str:
@@ -197,7 +215,104 @@ def validate_structure(sheets: dict[str, pd.DataFrame]) -> list[str]:
         actual = [str(c) for c in frame.columns]
         if actual != columns:
             problems.append(f"schema mismatch on {tab}: {actual} != {columns}")
+    # A control tab may legitimately be absent (the workbook is not initialized);
+    # when it is present its header must match the schema, or nothing downstream
+    # can trust the record.
+    for tab, columns in ((CONTROL_TAB, CONTROL_COLUMNS), (JOURNAL_TAB, JOURNAL_COLUMNS)):
+        frame = sheets.get(tab)
+        if frame is None:
+            continue
+        actual = [str(c) for c in frame.columns]
+        if actual != columns:
+            problems.append(f"schema mismatch on {tab}: header does not match the control schema")
     return problems
+
+
+class ControlProblem(Exception):
+    """Raised while reading a control record; the message names the field only."""
+
+
+def _control_counter(row: Any, field: str) -> int:
+    value = row.get(field)
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        # A missing or non-integral cell is a structural failure; its value is
+        # never echoed, because it may be anything the Sheet happens to hold.
+        raise ControlProblem(f"{field} is not a non-negative integer")
+    if int(value) < 0:
+        raise ControlProblem(f"{field} is negative")
+    return int(value)
+
+
+def read_control_state(sheets: dict[str, pd.DataFrame]) -> dict[str, Any]:
+    """Summarise the portable control state without carrying cell values.
+
+    Returns presence, header agreement, the record's bounded protocol fields, and
+    a short reason when the record cannot be read. Journal *contents* are reduced
+    to a row count: entries hold reason text and counter tuples, and the
+    comparison never needs them.
+    """
+    frame = sheets.get(CONTROL_TAB)
+    journal = sheets.get(JOURNAL_TAB)
+    state: dict[str, Any] = {
+        "present": frame is not None,
+        "journalPresent": journal is not None,
+        "journalEntries": 0 if journal is None else int(journal.dropna(how="all").shape[0]),
+    }
+    if frame is None:
+        return state
+    state["headerMatches"] = [str(c) for c in frame.columns] == CONTROL_COLUMNS
+    data = frame.dropna(how="all")
+    if data.shape[0] == 0:
+        return {**state, "record": False, "reason": "no record"}
+    if data.shape[0] > 1:
+        return {**state, "record": False, "reason": "duplicate records"}
+    row = data.iloc[0]
+    try:
+        if _control_counter(row, "protocolVersion") != CONTROL_PROTOCOL_VERSION:
+            raise ControlProblem("unsupported protocol version")
+        authority = row.get("authority")
+        if authority not in CONTROL_AUTHORITIES:
+            raise ControlProblem("unknown authority")
+        mutation_state = row.get("mutationState")
+        if mutation_state not in CONTROL_STATES:
+            raise ControlProblem("unknown mutation state")
+        generation = _control_counter(row, "generation")
+        completed_generation = _control_counter(row, "completedGeneration")
+        authority_epoch = _control_counter(row, "authorityEpoch")
+        data_revision = _control_counter(row, "dataRevision")
+        scheduling_input_revision = _control_counter(row, "schedulingInputRevision")
+        if mutation_state == "idle" and completed_generation != generation:
+            raise ControlProblem("completedGeneration does not equal generation while idle")
+        raw_tabs = row.get("tabRevisions")
+        tab_revisions: dict[str, int] = {}
+        if isinstance(raw_tabs, str) and raw_tabs.strip():
+            try:
+                parsed = json.loads(raw_tabs)
+            except json.JSONDecodeError as error:
+                raise ControlProblem("tab counters are not valid JSON") from error
+            if not isinstance(parsed, dict):
+                raise ControlProblem("tab counters are not an object")
+            for name, value in parsed.items():
+                if isinstance(value, bool) or not isinstance(value, numbers.Integral) or int(value) < 0:
+                    raise ControlProblem("a tab counter is not a non-negative integer")
+                tab_revisions[str(name)] = int(value)
+        elif raw_tabs is not None and not (isinstance(raw_tabs, float) and math.isnan(raw_tabs)) and raw_tabs != "":
+            raise ControlProblem("tab counters are not text")
+    except ControlProblem as problem:
+        return {**state, "record": False, "reason": str(problem)}
+    return {
+        **state,
+        "record": True,
+        "authority": str(authority),
+        "authorityEpoch": authority_epoch,
+        "generation": generation,
+        "completedGeneration": completed_generation,
+        "mutationState": str(mutation_state),
+        "dataRevision": data_revision,
+        "schedulingInputRevision": scheduling_input_revision,
+        "tabRevisions": tab_revisions,
+        "journalEntries": state["journalEntries"],
+    }
 
 
 def _projection(columns: list[str], canonical: dict[str, list[Any]], index: int) -> str:
@@ -251,7 +366,7 @@ def build_model(path: str) -> dict[str, Any]:
     problems = validate_structure(sheets)
     if problems:
         raise ValueError("; ".join(problems))
-    model: dict[str, Any] = {"sha256": sha256_file(path), "tabs": {}}
+    model: dict[str, Any] = {"sha256": sha256_file(path), "tabs": {}, "control": read_control_state(sheets)}
     for tab in EXPECTED_COLUMNS:
         rows = normalize_tab(tab, sheets[tab])
         model["tabs"][tab] = {"keyColumn": KEY_COLUMN[tab], "rowCount": len(rows), "rows": rows}
@@ -320,4 +435,61 @@ def compare_models(
         if not missing and not extra and not changed:
             summary.append(f"{tab}: key={key_column} rows={len(after)} identical")
 
+    failures.extend(_compare_control(baseline.get("control"), restored.get("control"), notes, summary))
+
     return {"failures": failures, "notes": notes, "summary": summary}
+
+
+def _compare_control(before: Any, after: Any, notes: list[str], summary: list[str]) -> list[str]:
+    """Compare portable control state under the protocol's own rules.
+
+    Failures are reserved for what the protocol forbids: a counter or generation
+    that moves backwards, a usable record that becomes unusable, or a protected
+    header that drifts. An authority switch, a growing journal and a pending
+    marker are reported as notes, because a maintenance window may legitimately
+    leave them — and the values themselves are never printed.
+    """
+    failures: list[str] = []
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        notes.append("control state: not recorded in one of the snapshots; monotonicity not assessed")
+        return failures
+    if not before.get("present") and not after.get("present"):
+        notes.append("control state: absent in both snapshots (the workbook is not initialized)")
+        return failures
+    if before.get("present") and not after.get("present"):
+        failures.append("control state: the control tab is missing from the restored workbook")
+        return failures
+    if after.get("headerMatches") is False:
+        failures.append("control state: the control header no longer matches the schema")
+    if before.get("record") and not after.get("record"):
+        failures.append(f"control state: the record became unusable ({after.get('reason', 'unknown reason')})")
+        return failures
+    if not after.get("record"):
+        notes.append(f"control state: no usable record ({after.get('reason', 'unknown reason')}); monotonicity not assessed")
+        return failures
+    if not before.get("record"):
+        notes.append("control state: the baseline holds no usable record; monotonicity not assessed")
+        return failures
+
+    for field in CONTROL_COUNTER_FIELDS:
+        if int(after.get(field, 0)) < int(before.get(field, 0)):
+            failures.append(f"control state: {field} decreased")
+    if int(after.get("generation", 0)) < int(before.get("generation", 0)):
+        failures.append("control state: the generation decreased")
+    before_tabs = before.get("tabRevisions") or {}
+    after_tabs = after.get("tabRevisions") or {}
+    for tab, value in sorted(before_tabs.items()):
+        if int(after_tabs.get(tab, 0)) < int(value):
+            failures.append(f"control state: the tab revision for {tab} decreased")
+    if after.get("authority") != before.get("authority"):
+        notes.append(f"control state: authority {before.get('authority')} -> {after.get('authority')} (the protocol permits this only under a reviewed switch)")
+    if after.get("mutationState") == "pending":
+        notes.append("control state: the restored workbook holds a pending mutation; a reviewed recovery must settle it")
+    if int(after.get("journalEntries", 0)) < int(before.get("journalEntries", 0)):
+        notes.append("control state: the journal shrank; the writer prunes oldest-first at its ceiling")
+    if not failures:
+        summary.append(
+            f"control state: authority={after.get('authority')} state={after.get('mutationState')} "
+            f"journalRows={after.get('journalEntries', 0)} (counters monotonic; contents not compared)"
+        )
+    return failures

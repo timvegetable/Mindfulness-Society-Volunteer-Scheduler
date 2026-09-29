@@ -5,7 +5,9 @@ Usage:
   <snapshot-python> scripts/snapshot/describe_snapshot.py <snapshot.xlsx>
 
 Prints worksheet names, row counts, and whether each header matches
-`src/server/workbook/schema.ts`. Never prints cell values. Exits non-zero when a
+`src/server/workbook/schema.ts`, plus the portable control state (tabs present,
+header agreement, whether the record reads, its authority and mutation state, and
+the retained journal row count). Never prints cell values. Exits non-zero when a
 required worksheet is missing or its header does not match, so a snapshot that
 cannot be trusted as a restoration reference is rejected before use.
 """
@@ -23,7 +25,8 @@ def main() -> int:
     path = sys.argv[1]
     sheets = snapshot_lib.load_sheets(path)
 
-    unexpected = sorted(name for name in sheets if name not in snapshot_lib.EXPECTED_COLUMNS)
+    known = set(snapshot_lib.EXPECTED_COLUMNS) | {snapshot_lib.CONTROL_TAB, snapshot_lib.JOURNAL_TAB}
+    unexpected = sorted(name for name in sheets if name not in known)
     print(f"sha256: {snapshot_lib.sha256_file(path)}")
     print(f"worksheets: {len(sheets)}")
     for name in snapshot_lib.EXPECTED_COLUMNS:
@@ -34,6 +37,17 @@ def main() -> int:
         print(f"  {name}: rows={len(frame)} columns={len(frame.columns)}")
     for name in unexpected:
         print(f"  {name}: not part of the workbook schema (ignored), rows={len(sheets[name])}")
+
+    control = snapshot_lib.read_control_state(sheets)
+    if not control.get("present"):
+        print("  control: no control tabs (the workbook is not initialized)")
+    else:
+        print(f"  WorkbookControl: present, header={'ok' if control.get('headerMatches') else 'MISMATCH'}")
+        print(f"  ControlJournal: present={control.get('journalPresent')} rows={control.get('journalEntries')}")
+        if control.get("record"):
+            print(f"  control record: reads (authority={control['authority']}, state={control['mutationState']})")
+        else:
+            print(f"  control record: UNUSABLE ({control.get('reason', 'unknown reason')})")
 
     problems = snapshot_lib.validate_structure(sheets)
     if problems:

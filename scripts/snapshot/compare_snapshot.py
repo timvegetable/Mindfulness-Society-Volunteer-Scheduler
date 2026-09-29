@@ -8,8 +8,12 @@ Usage:
 Exit codes: 0 = zero substantive difference, 1 = substantive difference, 2 = unusable input.
 
 Revision metadata and bookkeeping columns are reported separately and never fail
-the run unless --strict-bookkeeping is passed. Reported row identifiers are
-truncated SHA-1 digests, so output carries no cell contents or identities.
+the run unless --strict-bookkeeping is passed. Portable control state is compared
+under the protocol's own rules: a counter or generation that moves backwards, a
+usable record that becomes unusable, or a drifted control header is a failure,
+while an authority switch, a shrinking journal and a pending marker are notes.
+Reported row identifiers are truncated SHA-1 digests, so output carries no cell
+contents or identities.
 """
 from __future__ import annotations
 

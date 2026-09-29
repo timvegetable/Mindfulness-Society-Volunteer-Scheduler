@@ -24,7 +24,8 @@
   - Evidence (2026-09-29): `evidence/workbook-foundation-2026-09-29.md`; original task [10.25](../volunteer-session-scheduling/tasks.md) stays open for its live-workbook verification. The data-column protection test is the regression against the header-only behaviour.
 - [x] 2.3 Implement control metadata codecs/revision provider and idempotent initialization with tests for malformed, missing, duplicate and unsupported records.
   - Evidence (2026-09-29): `evidence/control-foundation-2026-09-29.md`; codec, provider and idempotent initialization in `src/server/workbook/control.ts` with 25 tests in `control.contract.test.ts`; schema version 3 → 4 with `WORKBOOK_CONTROL_TABS` kept out of the fixture-identity digest.
-- [ ] 2.4 Extend snapshot/schema validation and private recovery manifests to include control state without committing private exports or journal contents.
+- [x] 2.4 Extend snapshot/schema validation and private recovery manifests to include control state without committing private exports or journal contents.
+  - Evidence (2026-09-29): `evidence/snapshot-control-state-2026-09-29.md`; the snapshot tooling now validates the control headers, records a bounded control summary in the private baseline, and compares it under the protocol rules (counter/generation decreases, a record that became unusable and a drifted header are failures; an authority switch, a shrinking journal and a pending marker are notes). Verified end to end against a real export of the representative staging workbook and by 26 new checks in `scripts/snapshot/selftest.py` (82 total). The private manifest fields are pinned in `docs/operations.md`.
 
 ## 3. Legacy Writer and Reader Protocol
 
