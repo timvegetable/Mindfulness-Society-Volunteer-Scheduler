@@ -530,8 +530,7 @@ async function main(): Promise<void> {
   const config = await loadConfig();
   const workbook = config.workbooks[args.role];
   if (!workbook?.spreadsheetId) throw new Error(`No workbook is configured for role ${args.role}.`);
-  const readOnlyCommands = new Set(['baseline', 'verify']);
-  if (!readOnlyCommands.has(args.command) && !args.confirm) {
+  if (requiresStagingConfirmation(args.command) && !args.confirm) {
     throw new Error('Mutating subcommands require --confirm-staging: the rehearsal is approved for the synthetic staging workbooks only.');
   }
   const token = await accessTokenFor(resolve(config.loaderKey), SHEETS_SCOPE);
@@ -552,4 +551,16 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ command: args.command, role: args.role, ...outcome as object }, null, 2));
 }
 
-await main();
+/**
+ * Which subcommands mutate the synthetic workbooks and therefore require the
+ * explicit confirmation flag. Pure, so the guard can be tested without running
+ * anything against a workbook.
+ */
+export function requiresStagingConfirmation(command: string): boolean {
+  return !READ_ONLY_COMMANDS.has(command);
+}
+
+export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set(['baseline', 'verify']);
+
+const invokedDirectly = process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split('/').pop() ?? '');
+if (invokedDirectly) await main();
