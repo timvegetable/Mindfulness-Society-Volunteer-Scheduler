@@ -35,6 +35,12 @@ export type SheetsReadClientOptions = Readonly<{
 export type SheetsReadClient = Readonly<{
   /** Fetches schema-derived ranges for the given tabs and validates the response. */
   readTabs(tabs: readonly BatchReadTab[]): Promise<BatchReadRows>;
+  /**
+   * The same validated batch for any schema tab, including the ones a plan never
+   * names: the staging reader fetches the authorization table and, when the
+   * portable authority is active, the control record together.
+   */
+  readNamedTabs(tabs: readonly WorkbookTabName[]): Promise<ReadonlyMap<WorkbookTabName, readonly (readonly unknown[])[]>>;
   /** Fetches one non-batch tab (the authorization table) as raw rows. */
   readTab(name: WorkbookTabName): Promise<readonly (readonly unknown[])[]>;
   /** Number of Sheets API requests issued, for the measurement record. */
@@ -83,6 +89,9 @@ export function createSheetsReadClient(options: SheetsReadClientOptions): Sheets
 
   return {
     async readTabs(tabs: readonly BatchReadTab[]): Promise<BatchReadRows> {
+      return (await this.readNamedTabs(tabs)) as BatchReadRows;
+    },
+    async readNamedTabs(tabs: readonly WorkbookTabName[]): Promise<ReadonlyMap<WorkbookTabName, readonly (readonly unknown[])[]>> {
       if (tabs.length === 0) return new Map();
       const payload = await request(batchGetUrl(spreadsheetId, batchGetRequestForTabs(tabs)));
       try {

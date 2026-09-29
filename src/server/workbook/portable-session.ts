@@ -112,7 +112,14 @@ export class PortableSession {
   registerRead(tab: WorkbookTabName): void {
     if (this.bracketedTabs.has(tab)) return;
     try {
-      this.anchor ??= readControlRecord(this.options.control);
+      const anchor = (this.anchor ??= readControlRecord(this.options.control));
+      // Refuse before hydrating rather than after: a pending mutation means the
+      // rows would be discarded, and the read plan prices this at one read. A
+      // marker this request published itself is the writer's own, so a mutation
+      // in progress keeps reading its own rows.
+      if (this.scope === undefined && !portableRevisionProvider(anchor).idle) {
+        throw new ControlError('PENDING', 'A mutation is in progress; the snapshot would not be current');
+      }
     } catch (error) {
       throw toRepositoryError(error, 'read');
     }

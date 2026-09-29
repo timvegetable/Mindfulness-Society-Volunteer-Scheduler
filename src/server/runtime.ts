@@ -194,7 +194,11 @@ function makeRepository<T extends { id: string }>(spreadsheet: SpreadsheetLike, 
   // what the request-level check has to compare at the end of the request.
   const onRead = session || timing
     ? <R>(tab: string, action: () => R): R => {
-        if (session) session.registerRead(tab as WorkbookTabName);
+        // `Users` is the authorization table, not a domain tab: the design keeps
+        // it outside the completed-snapshot bracket, so it never anchors a read
+        // and a control-state problem is reported as a control failure rather
+        // than as an authorization-read failure.
+        if (session && tab !== 'Users') session.registerRead(tab as WorkbookTabName);
         return timing ? timing.hydration(tab, action) : action();
       }
     : undefined;

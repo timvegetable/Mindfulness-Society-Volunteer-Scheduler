@@ -1,4 +1,4 @@
-import { assertAuthority, assertCompletedGeneration, portableRevisionProvider, type ControlAuthority, type ControlRecord } from './control.js';
+import { ControlError, assertAuthority, assertCompletedGeneration, portableRevisionProvider, type ControlAuthority, type ControlRecord } from './control.js';
 import type { WorkbookTabName } from './schema.js';
 
 /**
@@ -37,6 +37,17 @@ function readAndCheck(readControl: () => ControlRecord, authority: ControlAuthor
 }
 
 /**
+ * Refuse before hydrating when the first control read already shows a pending
+ * mutation: waiting until after hydration would pay for the domain read only to
+ * discard it, and the read plan prices that rejection at one control read.
+ */
+function assertIdleBeforeHydration(record: ControlRecord): void {
+  if (!portableRevisionProvider(record).idle) {
+    throw new ControlError('PENDING', 'A mutation is in progress; the snapshot would not be current');
+  }
+}
+
+/**
  * Run `hydrate` between two control reads. Any failure throws before the data is
  * returned, so a caller cannot accidentally serve rows from a snapshot that
  * straddled a mutation; `controlFailureCode` maps the thrown `ControlError` onto
@@ -44,6 +55,7 @@ function readAndCheck(readControl: () => ControlRecord, authority: ControlAuthor
  */
 export function withCompletedSnapshot<T>(options: CompletedSnapshotOptions<T>): CompletedSnapshot<T> {
   const before = readAndCheck(options.readControl, options.authority);
+  assertIdleBeforeHydration(before);
   const data = options.hydrate();
   const after = readAndCheck(options.readControl, options.authority);
   assertCompletedGeneration(portableRevisionProvider(before), portableRevisionProvider(after), options.tabs);
@@ -65,6 +77,7 @@ export type CompletedSnapshotAsyncOptions<T> = {
 export async function withCompletedSnapshotAsync<T>(options: CompletedSnapshotAsyncOptions<T>): Promise<CompletedSnapshot<T>> {
   const before = await options.readControl();
   assertAuthority(before, options.authority);
+  assertIdleBeforeHydration(before);
   const data = await options.hydrate();
   const after = await options.readControl();
   assertAuthority(after, options.authority);

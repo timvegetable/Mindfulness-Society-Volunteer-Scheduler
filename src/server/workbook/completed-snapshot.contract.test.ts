@@ -147,3 +147,29 @@ describe('completed-snapshot bracket', () => {
     expect(controlFailureCode(error?.code ?? 'MALFORMED', 'read')).toBe('UNAVAILABLE');
   });
 });
+
+describe('cheap rejection paths', () => {
+  it('refuses a pending mutation before hydrating, so the domain read is never paid for', () => {
+    const pending = record({ generation: 5, completedGeneration: 4, mutationState: 'pending', operationId: 'op#1', operationTabs: ['Volunteers'] });
+    let hydrations = 0;
+
+    expectControlError(() => withCompletedSnapshot({
+      readControl: scripted([pending, pending]).read,
+      hydrate: () => { hydrations += 1; return ['rows']; },
+      tabs: ['Volunteers'],
+      authority: AUTHORITY
+    }), 'PENDING');
+    // The read plan prices a pending rejection at one control read: the guard has
+    // to decide from the first read rather than after the rows are fetched.
+    expect(hydrations).toBe(0);
+  });
+
+  it('still hydrates when the first read is idle', () => {
+    const idle = record({ generation: 4, completedGeneration: 4 });
+    let hydrations = 0;
+
+    withCompletedSnapshot({ readControl: scripted([idle, idle]).read, hydrate: () => { hydrations += 1; return ['rows']; }, tabs: ['Volunteers'], authority: AUTHORITY });
+
+    expect(hydrations).toBe(1);
+  });
+});

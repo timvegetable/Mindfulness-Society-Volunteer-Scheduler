@@ -394,11 +394,19 @@ describe('portable control bracket', () => {
     expect(response.ok).toBe(true);
     if (!response.ok) return;
     expect(differingProjectionFields(response.data, legacyProjection(INTEGRATION_OPERATIONS.adminSchedule))).toEqual([]);
-    const controlCalls = sheetsCalls.filter((call) => call.ranges.some((range) => range.startsWith("'WorkbookControl'")));
-    expect(controlCalls).toHaveLength(2);
-    // Authorization, then control, then the domain plan, then control again: the
-    // plan read sits inside the bracket and Users stays outside it.
-    expect(sheetsCalls.map((call) => call.ranges[0]?.split('!')[0])).toEqual(["'Users'", "'WorkbookControl'", "'SchedulingRuns'", "'WorkbookControl'"]);
+    // Two control reads bracket the plan; the authorization batch carries the
+    // record too, which is why a served read costs four reads in three calls.
+    const bracketCalls = sheetsCalls.filter((call) => call.ranges.length === 1 && call.ranges[0]?.startsWith("'WorkbookControl'"));
+    expect(bracketCalls).toHaveLength(2);
+    // The authorization table and the control record travel in one batch, then
+    // the plan read sits inside the bracket's two control reads. Four reads in
+    // three calls is the count the task 1.7 plan pins for a served domain read.
+    expect(sheetsCalls.map((call) => call.ranges.map((range) => range.split('!')[0]))).toEqual([
+      ["'Users'", "'WorkbookControl'"],
+      ["'WorkbookControl'"],
+      ["'SchedulingRuns'", "'Assignments'", "'Backups'", "'Sessions'", "'Volunteers'", "'Centers'"],
+      ["'WorkbookControl'"]
+    ]);
   });
 
   it('refuses to serve while a mutation is pending', async () => {
@@ -416,11 +424,13 @@ describe('portable control bracket', () => {
     let controlReads = 0;
     const fetchImpl: FetchLike = async (input, init) => {
       const url = String(input);
-      const isControl = url.startsWith('https://sheets.googleapis.com/') && new URL(url).searchParams.getAll('ranges').some((range) => range.startsWith("'WorkbookControl'"));
+      const ranges = url.startsWith('https://sheets.googleapis.com/') ? new URL(url).searchParams.getAll('ranges') : [];
+      const isControlOnly = ranges.length === 1 && ranges[0]?.startsWith("'WorkbookControl'");
       const response = await base.fetchImpl(input, init);
-      if (isControl) {
+      // The authorization batch also carries the control record, so only the
+      // bracket's own first control read starts the race.
+      if (isControlOnly) {
         controlReads += 1;
-        // A writer completes between the first control read and the second.
         if (controlReads === 1) rows.set('WorkbookControl', [controlRow({ generation: 6, completedGeneration: 6, dataRevision: DATA_REVISION + 1 })]);
       }
       return response;

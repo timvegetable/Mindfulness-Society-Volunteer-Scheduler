@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseArgs, requiresStagingConfirmation } from '../../../scripts/staging/rehearse-portable-state.js';
+import { parseArgs, requiresStagingConfirmation } from '../../../scripts/staging/rehearsal-arguments.js';
 
 /**
  * The rehearsal runner addresses synthetic workbooks by role and refuses anything

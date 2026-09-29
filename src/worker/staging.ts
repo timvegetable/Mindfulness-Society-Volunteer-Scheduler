@@ -7,7 +7,9 @@ import type { SpreadsheetLike } from '../server/workbook/initializer.js';
 import type { BatchReadRows, WorkbookBatchReader } from '../server/workbook/batch-read.js';
 import { createProductionRuntime, type ScriptProperties } from '../server/runtime.js';
 import { controlAuthority, googleIdentityConfiguration, workbookConfiguration, type StagingBindings } from './config.js';
-import { ControlError, controlFailureCode, controlRecordFromRows, type ControlAuthority } from '../server/workbook/control.js';
+import { CONTROL_COLUMNS, ControlError, controlFailureCode, controlRecordFromRows, type ControlAuthority } from '../server/workbook/control.js';
+import { PortableSession } from '../server/workbook/portable-session.js';
+import type { SheetLike } from '../server/workbook/initializer.js';
 import { withCompletedSnapshotAsync } from '../server/workbook/completed-snapshot.js';
 import { SigningKeyError, createGoogleDependencies, type FetchLike, type GoogleDependencies } from './google/index.js';
 import { READ_API_MAX_REQUEST_BYTES, type ReadRoute } from './read-api.js';
@@ -24,16 +26,49 @@ import { createSnapshotBatchReader, createWorkbookSnapshot } from './workbook/sn
 async function readPlanRows(
   sheets: ReturnType<typeof createSheetsReadClient>,
   plan: BatchReadPlan,
-  authority: ControlAuthority
+  authority: ControlAuthority,
+  publishControlRows: (rows: readonly (readonly unknown[])[]) => void
 ): Promise<BatchReadRows> {
   if (authority !== 'workbook-control') return await sheets.readTabs(BATCH_READ_PLANS[plan]);
   const snapshot = await withCompletedSnapshotAsync({
-    readControl: async () => controlRecordFromRows(await sheets.readTab('WorkbookControl')),
+    readControl: async () => {
+      const rows = await sheets.readTab('WorkbookControl');
+      // The request's session reports its revisions from these rows, so the
+      // bracketed read is the only control fetch a served read pays for.
+      publishControlRows(rows);
+      return controlRecordFromRows(rows);
+    },
     hydrate: () => sheets.readTabs(BATCH_READ_PLANS[plan]),
     tabs: BATCH_READ_PLANS[plan],
     authority: 'workbook-control'
   });
   return snapshot.data;
+}
+
+/**
+ * A `SheetLike` over rows already fetched from the control tab. The Worker reads
+ * over REST, so the session cannot fetch for itself; it serves what the bracket
+ * read, and fails closed if nothing has been fetched when a revision is needed.
+ */
+function controlSheetFromRows(rows: () => readonly (readonly unknown[])[] | undefined) {
+  const data = (): readonly (readonly unknown[])[] => {
+    const fetched = rows();
+    if (fetched === undefined) throw new ControlError('MISSING', 'The control record has not been read in this request');
+    return fetched;
+  };
+  return {
+    getName: () => 'WorkbookControl',
+    getLastColumn: () => CONTROL_COLUMNS.length,
+    getLastRow: () => data().length + 1,
+    getRange: () => ({
+      getValues: () => data().map((row) => [...row]),
+      setValues: () => { throw new ControlError('GATE_CLOSED', 'The staging reader never writes control state'); },
+      setValue: () => { throw new ControlError('GATE_CLOSED', 'The staging reader never writes control state'); },
+      getValue: () => data()[0]?.[0] ?? '',
+      protect: () => ({ setDescription: () => undefined, setWarningOnly: () => undefined })
+    }),
+    appendRow: () => { throw new ControlError('GATE_CLOSED', 'The staging reader never writes control state'); }
+  } as unknown as SheetLike;
 }
 
 /**
@@ -279,12 +314,30 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       // first and later serves the handlers from the same snapshot, with the
       // fetched map filled in after authorization.
       const fetched = new Map<string, readonly (readonly unknown[])[]>();
+      let controlRows: readonly (readonly unknown[])[] | undefined;
+      let session: PortableSession | undefined;
       let runtime: ReturnType<typeof createProductionRuntime>;
       let users;
       try {
-        snapshot.setTab('Users', await sheets.readTab('Users'));
+        // The authorization read and, under the portable authority, the control
+        // record travel in one validated batch: the session needs the record
+        // before the runtime reads a tab revision, and combining them keeps a
+        // served read at the count the read plan pins.
+        const authorizationRows = await sheets.readNamedTabs(authority === 'workbook-control' ? ['Users', 'WorkbookControl'] : ['Users']);
+        snapshot.setTab('Users', authorizationRows.get('Users') ?? []);
+        controlRows = authorizationRows.get('WorkbookControl');
+        // Under the portable authority the runtime's revisions come from the
+        // control record, not from the staging properties, which stop advancing.
+        session = authority === 'workbook-control'
+          ? new PortableSession({
+              control: controlSheetFromRows(() => controlRows),
+              journal: controlSheetFromRows(() => controlRows),
+              writeEnabled: () => false
+            })
+          : undefined;
         runtime = createProductionRuntime(snapshot.spreadsheet, workbook.properties, {
-          batchReader: createSnapshotBatchReader(fetched)
+          batchReader: createSnapshotBatchReader(fetched),
+          ...(session ? { session } : {})
         });
         users = runtime.users;
       } catch (error) {
@@ -321,7 +374,7 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       const plan = OPERATION_PLANS[request.operation];
       if (plan) {
         try {
-          const rows = await readPlanRows(sheets, plan, authority);
+          const rows = await readPlanRows(sheets, plan, authority, (rows) => { controlRows = rows; });
           for (const [tab, tabRows] of rows) {
             fetched.set(tab, tabRows);
             snapshot.setTab(tab, tabRows);
@@ -350,7 +403,7 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         verifier: { verify: () => claims },
         users: new MemoryUserDirectory(users),
         handlers: runtime.handlers,
-        revision: { current: () => Number(workbook.properties.getProperty('DATA_REVISION') ?? '0') },
+        revision: { current: () => (session ? session.dataRevision() : Number(workbook.properties.getProperty('DATA_REVISION') ?? '0')) },
         clock: () => new Date(nowMs()).toISOString()
       });
       const response = dispatcher.dispatchReadOnly(input);
