@@ -131,7 +131,8 @@ Before believing a zero-difference result, confirm the machinery itself is sound
 Safe/read-only tools include:
 
 - `describeSignIn()` in the Apps Script editor: logs resolved audience, write gate, scheduling settings, workbook/configured time zones, and readable Users rows. Its output contains private account information; do not paste it into committed files.
-- `checkWorkbookSchema()` in the editor: compares the first matching Settings version with the expected version; it does not validate all tab headers or protections. See [workbook limitations](subsystems/workbook.md#schema).
+- `checkWorkbookSchema()` in the editor: compares the effective Settings version with the expected version and reports the version record count and any malformed records; it does not validate all tab headers or protections. See [workbook limitations](subsystems/workbook.md#schema).
+- `inspectControlState()` in the editor: read-only report of the portable control state — whether the two control tabs exist, whether their headers match the schema, whether the record validates under the reader's own codec (with the failure code when it does not), the authority, epoch, generation, counters and pending state, and the retained journal row count. Use it before and after an activation; it writes nothing.
 - `node scripts/probe-service.mjs --config production.local.json`: sends an unauthenticated, non-mutating request to distinguish public reachability, platform sign-in interception, script errors, and old/current bundle behavior.
 - `node scripts/deployment-check.mjs ...`: examines local config and artifacts only; it does not verify live properties or deployed behavior.
 

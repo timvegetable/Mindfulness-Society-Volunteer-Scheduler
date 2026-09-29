@@ -4,6 +4,7 @@ import { createAppsScriptAdapters, type AppsScriptAdapterOptions, type AppsScrip
 import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, type HandlerContext, type IntegrationDispatcher, type IntegrationDispatcherOptions, type OperationHandlers, type RevisionSource, type WriteLock } from './integration/dispatcher.js';
 import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
+import { inspectControlState as inspectWorkbookControlState } from './workbook/control-inspection.js';
 import { createProductionRuntime, runtimeConfiguration } from './runtime.js';
 import { activatedAuthority } from './workbook/authority.js';
 import { createPortableAuthority, type PortableAuthority } from './portable-authority.js';
@@ -28,6 +29,7 @@ export type Server = Readonly<{
   doPost(event: AppsScriptRequest): JsonOutput | string;
   initializeWorkbook(): unknown;
   checkWorkbookSchema(): unknown;
+  inspectControlState(): unknown;
 }>;
 
 function runtimeProperties(): { getProperty(name: string): string | null; setProperty(name: string, value: string): void } | undefined {
@@ -232,7 +234,8 @@ export function createServer(options: ServerOptions): Server {
     doGet: adapters.doGet,
     doPost: adapters.doPost,
     initializeWorkbook: () => initializeActiveWorkbook(),
-    checkWorkbookSchema: () => checkActiveWorkbookSchema()
+    checkWorkbookSchema: () => checkActiveWorkbookSchema(),
+    inspectControlState: () => inspectActiveControlState()
   };
 }
 
@@ -362,6 +365,23 @@ export function initializeWorkbook(): unknown {
 
 export function checkWorkbookSchema(): unknown {
   return logResult('checkWorkbookSchema', server().checkWorkbookSchema());
+}
+
+/**
+ * Read-only control-state diagnostic: the two control tabs, whether their
+ * headers still match the schema, whether the record validates under the
+ * reader's own codec, and why not when it does not. It writes nothing and needs
+ * no fence, which is what makes it usable before and after an activation.
+ */
+export function inspectControlState(): unknown {
+  return logResult('inspectControlState', server().inspectControlState());
+}
+
+/** Reads the active workbook's control state; read-only, so it needs no fence. */
+function inspectActiveControlState(): ReturnType<typeof inspectWorkbookControlState> {
+  const spreadsheet = activeSpreadsheet();
+  if (!spreadsheet) throw new Error('SpreadsheetApp is required; run this from the bound Apps Script project');
+  return inspectWorkbookControlState(spreadsheet);
 }
 
 function activeSpreadsheet(): Parameters<typeof applyMigrationPayload>[0] | undefined {

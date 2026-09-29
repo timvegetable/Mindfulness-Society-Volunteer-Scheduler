@@ -7,6 +7,7 @@ const trampolines = [
   'function doPost(event) { return VolunteerScheduling.doPost(event); }',
   'function initializeWorkbook() { return VolunteerScheduling.initializeWorkbook(); }',
   'function checkWorkbookSchema() { return VolunteerScheduling.checkWorkbookSchema(); }',
+  'function inspectControlState() { return VolunteerScheduling.inspectControlState(); }',
   'function validateMigrationWorkbook() { return VolunteerScheduling.validateMigrationWorkbook(); }',
   'function loadMigrationWorkbook() { return VolunteerScheduling.loadMigrationWorkbook(); }',
   'function describeSignIn() { return VolunteerScheduling.describeSignIn(); }',
