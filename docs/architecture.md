@@ -66,9 +66,9 @@ When an account has multiple roles, the client primary-role projection prefers a
 
 `GET` is read-only. The client normally uses cookieless `POST` with `Content-Type: text/plain;charset=utf-8` to avoid a browser preflight and follows Apps Script's echo redirect.
 
-The [integration contract](subsystems/integration.md#request-contract) records the request-local duplicate map and import-preview misclassification; neither durable replay nor universal write gating is currently guaranteed.
+The [integration contract](subsystems/integration.md#request-contract) records the request-local duplicate map; durable replay is not currently guaranteed.
 
-All current helpers for operations classified as mutating supply `expectedRevision`. The policy field records that requirement, but the dispatcher currently does not reject an omitted value solely from that field; it only validates and compares a value that is present. Do not treat `OperationPolicy.expectedRevision` as enforcement until the dispatcher has a regression-tested presence check.
+An operation whose policy declares `expectedRevision` is refused with `INVALID_REQUEST` when the caller omits it, before any state is touched, and a supplied value is compared with `DATA_REVISION` under the write lock. All current helpers for operations classified as mutating supply the revision. The supplied revision guards the global operation only: it reaches no per-tab expectation, which handlers read from Script Properties within the same request.
 
 ## Persistence and revisions
 

@@ -100,7 +100,7 @@ export const OPERATION_POLICIES: Readonly<Record<IntegrationOperation, Operation
   [INTEGRATION_OPERATIONS.adminSchedule]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
   [INTEGRATION_OPERATIONS.adminSchedulePreview]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },
   [INTEGRATION_OPERATIONS.adminScheduleRerun]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: emptyPayload },
-  [INTEGRATION_OPERATIONS.adminImportPreview]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: z.object({ resultsCode: importCode }).strict() },
+  [INTEGRATION_OPERATIONS.adminImportPreview]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: z.object({ resultsCode: importCode }).strict() },
   [INTEGRATION_OPERATIONS.adminImportPromote]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: z.object({ resultsCode: importCode }).strict() },
   [INTEGRATION_OPERATIONS.adminImportMappingUpsert]: { roles: ['administrator'], mutating: true, expectedRevision: true, readOnly: false, payload: sourceMappingPayload },
   [INTEGRATION_OPERATIONS.adminInsights]: { roles: ['administrator'], mutating: false, expectedRevision: false, readOnly: true, payload: emptyPayload },

@@ -71,7 +71,7 @@ Neither browser route snapshots nor server caches may become authority.
 - Browser snapshots are memory-only, keyed by authenticated email, primary role, and route, and cleared when identity changes.
 - Token caches store verified claims only within credential expiry and still require a fresh Users lookup for authorization.
 - Insight caches are revision-keyed derived data, not permissions.
-- Declared API mutations resubmit the credential and use server authorization, supplied-revision checks and a lock. Known enforcement gaps (missing revision presence checks and misclassified import staging) are recorded in [integration](subsystems/integration.md#request-contract); do not infer stronger protection from the policy flags.
+- Declared API mutations resubmit the credential and use server authorization, supplied-revision checks and a lock. A declared revision requirement is enforced, and import preview staging is classified as a mutation (2026-09-29, [task 3.3](../openspec/changes/make-workbook-state-portable/tasks.md)); the deployed build carries that change only after an approved release. The remaining enforcement gap is that the supplied revision is compared against the global revision only and never against a per-tab expectation, so it is not per-tab optimistic concurrency: see [integration](subsystems/integration.md#request-contract) and do not infer stronger protection from the policy flags.
 
 ## Sheet-write hazards
 

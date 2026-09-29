@@ -173,6 +173,12 @@ export class IntegrationDispatcher {
       if (!policy.roles.some((role) => actor.user.roles.includes(role))) return failure('FORBIDDEN', 'Your account is not authorized for this operation.');
       enforceCenterCandidateBoundary(operation, actor, payload);
       const expectedRevision = expectedRevisionFrom(validation.value.expectedRevision);
+      // The policy field is a requirement, not a hint: an operation that declares
+      // expectedRevision is refused when the caller omits it, before any state is
+      // touched. Compare against the refused set in architecture.md.
+      if (policy.expectedRevision && expectedRevision === undefined) {
+        return failure('INVALID_REQUEST', 'This operation requires the current revision; read it again before retrying.');
+      }
       if (policy.mutating && (!this.options.revision || !this.options.writeLock)) return failure('UNAVAILABLE', 'State-changing operations are not configured.');
       requestKey = `${actor.user.id}:${operation}:${idempotencyKey}`;
       const existingRequest = this.requests.get(requestKey);

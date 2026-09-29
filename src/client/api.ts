@@ -333,8 +333,10 @@ export class ApiClient {
     return this.request(API_OPERATIONS.adminScheduleRerun, {}, { expectedRevision, credential });
   }
 
-  importPreview(resultsCode: string, credential: string): Promise<unknown> {
-    return this.request(API_OPERATIONS.adminImportPreview, { resultsCode }, { credential });
+  importPreview(resultsCode: string, expectedRevision: number | string, credential: string): Promise<unknown> {
+    // Staging a run persists it, so the request carries the revision the client
+    // read from authenticated state; a stale or missing one is refused.
+    return this.request(API_OPERATIONS.adminImportPreview, { resultsCode }, { expectedRevision, credential });
   }
 
   importPromote(resultsCode: string, expectedRevision: number | string, credential: string): Promise<unknown> {

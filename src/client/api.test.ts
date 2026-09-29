@@ -36,3 +36,31 @@ describe('scheduling service error reporting', () => {
     expect((error as ApiClientError).code).not.toBe('deployment_not_public');
   });
 });
+
+describe('import preview staging request', () => {
+  function capturingClient() {
+    const sent: { operation?: unknown; expectedRevision?: unknown }[] = [];
+    const fetchImpl = (async (_url: string, init: { body?: string }) => {
+      sent.push(JSON.parse(String(init?.body ?? '{}')) as { operation?: unknown; expectedRevision?: unknown });
+      return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, data: { import: { resultsCode: 'results-code-1' } } }) } as Response;
+    }) as unknown as typeof fetch;
+    return { client: new ApiClient({ appsScriptUrl: 'https://script.google.com/macros/s/EXAMPLE/exec', fetchImpl }), sent };
+  }
+
+  it('carries the authenticated revision, because staging persists a run', async () => {
+    const { client, sent } = capturingClient();
+
+    await client.importPreview('results-code-1', 12, 'credential');
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ operation: 'admin.import.whenIsGood.preview', expectedRevision: 12 });
+  });
+
+  it('normalizes a string revision the way the other mutations do', async () => {
+    const { client, sent } = capturingClient();
+
+    await client.importPreview('results-code-1', ' 12 ', 'credential');
+
+    expect(sent[0]?.expectedRevision).toBe(12);
+  });
+});

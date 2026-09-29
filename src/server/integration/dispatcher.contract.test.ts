@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryTokenVerifier, MemoryUserDirectory, type VerifiedIdentityClaims } from './auth.js';
-import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, MemoryRevisionSource, MemoryWriteLock } from './dispatcher.js';
+import { createIntegrationDispatcher, INTEGRATION_OPERATIONS, MemoryRevisionSource, MemoryWriteLock, OPERATION_POLICIES } from './dispatcher.js';
 
 const claims: VerifiedIdentityClaims = {
   iss: 'https://accounts.google.com', aud: 'client', sub: 'sub-1', email: 'admin@example.test', email_verified: true, exp: 4102444800
@@ -95,5 +95,85 @@ describe('Apps Script synchronous operation contract', () => {
     const response = dispatcherWith(async () => ({ sessions: [] })).dispatch(request);
     expect(response.ok).toBe(false);
     expect(response).toMatchObject({ error: { code: 'INTERNAL_ERROR', message: expect.stringContaining('must complete synchronously') as unknown as string } });
+  });
+});
+
+describe('import preview staging is a mutation', () => {
+  const previewRequest = {
+    operation: INTEGRATION_OPERATIONS.adminImportPreview,
+    payload: { resultsCode: 'results-code-1' },
+    idempotencyKey: 'preview-check-1',
+    credential: 'valid-credential'
+  };
+
+  function previewDispatcher(options: { revision?: MemoryRevisionSource; writeLock?: MemoryWriteLock } = {}) {
+    const stagged: unknown[] = [];
+    const dispatcher = createIntegrationDispatcher({
+      verifier: new MemoryTokenVerifier({ 'valid-credential': claims }),
+      users: new MemoryUserDirectory([user as unknown as Parameters<typeof MemoryUserDirectory.prototype.set>[0]]),
+      handlers: { [INTEGRATION_OPERATIONS.adminImportPreview]: (_context, payload) => { stagged.push(payload); return { import: { resultsCode: 'results-code-1' } }; } },
+      ...(options.revision ? { revision: options.revision } : {}),
+      ...(options.writeLock ? { writeLock: options.writeLock } : {})
+    });
+    return { dispatcher, stagged };
+  }
+
+  it('is classified as mutating, revision-requiring and not read-only', () => {
+    const policy = OPERATION_POLICIES[INTEGRATION_OPERATIONS.adminImportPreview];
+    expect(policy).toMatchObject({ mutating: true, expectedRevision: true, readOnly: false });
+  });
+
+  it('refuses a request that omits the revision, staging nothing', () => {
+    const revision = new MemoryRevisionSource(4);
+    const { dispatcher, stagged } = previewDispatcher({ revision, writeLock: new MemoryWriteLock() });
+
+    const response = dispatcher.dispatch({ ...previewRequest, idempotencyKey: 'preview-missing-1' });
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+    expect(stagged).toEqual([]);
+    expect(revision.current()).toBe(4);
+  });
+
+  it('refuses a stale revision, staging nothing', () => {
+    const revision = new MemoryRevisionSource(4);
+    const { dispatcher, stagged } = previewDispatcher({ revision, writeLock: new MemoryWriteLock() });
+
+    const response = dispatcher.dispatch({ ...previewRequest, idempotencyKey: 'preview-stale-1', expectedRevision: 3 });
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'STALE_REVISION', details: { currentRevision: 4 } } });
+    expect(stagged).toEqual([]);
+    expect(revision.current()).toBe(4);
+  });
+
+  it('refuses while the live write gate is closed, staging nothing', () => {
+    // No revision source and no write lock: what the runtime installs when
+    // WRITE_ENABLED is not exactly "true".
+    const { dispatcher, stagged } = previewDispatcher();
+
+    const response = dispatcher.dispatch({ ...previewRequest, idempotencyKey: 'preview-gate-1', expectedRevision: 4 });
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE' } });
+    expect(stagged).toEqual([]);
+  });
+
+  it('refuses the read-only dispatch path, staging nothing', () => {
+    const revision = new MemoryRevisionSource(4);
+    const { dispatcher, stagged } = previewDispatcher({ revision, writeLock: new MemoryWriteLock() });
+
+    const response = dispatcher.dispatchReadOnly({ ...previewRequest, idempotencyKey: 'preview-readonly-1', expectedRevision: 4 });
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect(stagged).toEqual([]);
+  });
+
+  it('stages once with the current revision and advances the global revision', () => {
+    const revision = new MemoryRevisionSource(4);
+    const { dispatcher, stagged } = previewDispatcher({ revision, writeLock: new MemoryWriteLock() });
+
+    const response = dispatcher.dispatch({ ...previewRequest, idempotencyKey: 'preview-ok-1', expectedRevision: 4 });
+
+    expect(response).toMatchObject({ ok: true, revision: 5 });
+    expect(stagged).toHaveLength(1);
+    expect(revision.current()).toBe(5);
   });
 });

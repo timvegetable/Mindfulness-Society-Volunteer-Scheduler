@@ -533,9 +533,10 @@ function paintRoute(runtime: Runtime, payload: RoutePayload, credential: string)
     const renderImport = (importData: ImportRunData): void => {
       const actions: AdminImportActions = {
         notice: runtime.importNotice,
-        onPreview: async (resultsCode) => {
+        onPreview: async (resultsCode, expectedRevision) => {
           runtime.importNotice = undefined;
-          renderImport(parseImport(await runtime.api.importPreview(resultsCode, credential)));
+          if (expectedRevision === undefined) throw new Error('The current revision is unavailable; reload and try again.');
+          renderImport(parseImport(await runtime.api.importPreview(resultsCode, expectedRevision, credential)));
         },
         onPromote: async (resultsCode, expectedRevision) => {
           try {
@@ -564,7 +565,7 @@ function paintRoute(runtime: Runtime, payload: RoutePayload, credential: string)
             return;
           }
           if (importData.resultsCode) {
-            renderImport(parseImport(await runtime.api.importPreview(importData.resultsCode, credential)));
+            renderImport(parseImport(await runtime.api.importPreview(importData.resultsCode, importData.revision, credential)));
             return;
           }
           renderImport(importData);

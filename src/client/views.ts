@@ -136,7 +136,7 @@ export interface ImportRunData {
 }
 
 export interface AdminImportActions {
-  onPreview?: (resultsCode: string) => void | Promise<void>;
+  onPreview?: (resultsCode: string, expectedRevision: number | string | undefined) => void | Promise<void>;
   onPromote?: (resultsCode: string, expectedRevision: number | string | undefined) => void | Promise<void>;
   onMap?: (
     source: Readonly<{ sourceParticipantId?: string; sourceEmail?: string; sourceName?: string }>,
@@ -693,7 +693,7 @@ export function renderAdminImport(
       announceFailure(status, new Error('Enter a WhenIsGood results code.'));
       return;
     }
-    handleAction(status, actions.onPreview ? () => actions.onPreview?.(codeField.input.value.trim()) : undefined);
+    handleAction(status, actions.onPreview ? () => actions.onPreview?.(codeField.input.value.trim(), data.revision) : undefined);
   });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
