@@ -18,8 +18,10 @@
 
 ## 2. Workbook Foundation
 
-- [ ] 2.1 Fix effective schema-version resolution and repeated initialization with a regression demonstrated to fail before the fix; link evidence to original task 10.24.
-- [ ] 2.2 Fix declared protected data-column ranges and test control-tab/service-identity access; demonstrate the regression against the header-only behavior and link original task 10.25.
+- [x] 2.1 Fix effective schema-version resolution and repeated initialization with a regression demonstrated to fail before the fix; link evidence to original task 10.24.
+  - Evidence (2026-09-29): `evidence/workbook-foundation-2026-09-29.md`; original task [10.24](../volunteer-session-scheduling/tasks.md) stays open for its production snapshot recapture. Regression: `src/server/workbook/initializer.contract.test.ts` fails 10/10 against the pre-fix reader and passes with the fix.
+- [x] 2.2 Fix declared protected data-column ranges and test control-tab/service-identity access; demonstrate the regression against the header-only behavior and link original task 10.25.
+  - Evidence (2026-09-29): `evidence/workbook-foundation-2026-09-29.md`; original task [10.25](../volunteer-session-scheduling/tasks.md) stays open for its live-workbook verification. The data-column protection test is the regression against the header-only behaviour.
 - [ ] 2.3 Implement control metadata codecs/revision provider and idempotent initialization with tests for malformed, missing, duplicate and unsupported records.
 - [ ] 2.4 Extend snapshot/schema validation and private recovery manifests to include control state without committing private exports or journal contents.
 

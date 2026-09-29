@@ -471,7 +471,12 @@ decision-maker needs exactly one of:
    post-redeploy dispatch during the version-upload/secret-upload window, not the
    JWKS window), and 1.6 closes on documentation with no repair. This is a
    collection, not a deployment. If Workers Logs retention has already expired for
-   that window, this path is gone and only 2 or 3 remain.
+   that window, this path is gone and only 2 or 3 remain. (A companion capture in
+   this directory, `prerequisite-503-attribution-capture-2026-09-29.md`, collects the
+   invocation-row half of this option — five gateway invocations against four object
+   requests in the 17:48:02Z second — and likewise finds the platform error name
+   unavailable from the queryable datasets; on that record the remaining missing
+   input is the log-derived error name alone.)
 2. **Or approval for the repair path** — a code change to the failed-load window
    (and/or a distinct dispatch-failure reason), a regression shown failing before the
    fix, and the affected cold/burst workload repeated with every attempt retained —
