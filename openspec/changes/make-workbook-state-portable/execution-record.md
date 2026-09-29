@@ -343,3 +343,38 @@ scope, and the final brief.
 
 Run the reader checks (D1, the six checks, D2) as soon as the token file exists;
 otherwise process the reviews' findings and prepare the final brief.
+
+## 2026-09-29 — both independent reviews resolved
+
+Two reviews ran against `8d84fac` — spec compliance and repository standards —
+with bounded scope after the first pair stalled. All fifteen findings were checked
+against the code, found supported and resolved:
+`evidence/review-resolution-2026-09-29.md` records each finding and its fix.
+
+The two blockers mattered most. Reads outside the declared batch plans had no
+control check at all, so the completed-snapshot guarantee held only for planned
+hydrations; every repository hydration now reports its tab to the session, which
+anchors on the first unbracketed read and closes the read before the response is
+returned. And payload revisions still came from Script Properties, which stop
+advancing once the repositories commit to the control record — every client's
+expected revision would have frozen at the activation value.
+
+Also resolved: write-path protocol errors now reach the API codes the design
+names, an incomplete activation fails closed with a coded envelope instead of
+escaping `doPost`, the loader refuses to fork the authority after activation, the
+documented direct-write reconciliation is executable and the maintenance fence
+advances the generation, the activation transition exists, a handler failure can
+no longer clear a marker over a partially written workbook, and six test or
+documentation gaps are closed.
+
+Validation at the resolution commit: `pnpm test` 54 files / 433 tests;
+`pnpm run test:worker` 8 files / 138 tests; `pnpm run check` exit 0;
+`pnpm run build` exit 0 with the bundle audit; three Worker dry-run builds exit 0;
+strict OpenSpec validation valid; `git diff --check` clean.
+
+## Next eligible action
+
+The deployed reader checks, still waiting on the operator's fresh Google ID token
+at `staging-local/credential-rehearsal.txt` (the sign-in page is served on
+`http://localhost:8788/`). Everything else the workflow can do locally is done;
+the final brief follows.

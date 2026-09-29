@@ -433,3 +433,48 @@ describe('center attribution in the candidate table', () => {
       .toBe('Proposed candidate intervals and current advisory coverage');
   });
 });
+
+describe('import preview revision', () => {
+  function renderImport(data: Parameters<typeof renderAdminImport>[1], actions: Parameters<typeof renderAdminImport>[2], expectedRevision?: number) {
+    const documentRef = new FakeDocument();
+    const container = documentRef.createElement('main');
+    renderAdminImport(container as unknown as HTMLElement, data, actions, expectedRevision, documentRef as unknown as Document);
+    return { container, documentRef };
+  }
+
+  it('hands the preview action the run revision, because staging persists it', () => {
+    const calls: [string, unknown][] = [];
+    const { container } = renderImport({ resultsCode: 'results-code-1', revision: 12 }, {
+      onPreview: (resultsCode, expectedRevision) => { calls.push([resultsCode, expectedRevision]); }
+    }, 12);
+
+    buttons(container).find((control) => control.textContent === 'Preview import')?.click();
+
+    // The server refuses a preview without a current revision, so the view has to
+    // supply the one it is rendering with.
+    expect(calls).toEqual([['results-code-1', 12]]);
+  });
+
+  it('passes an absent revision through, so the controller can refuse rather than guess', () => {
+    const calls: [string, unknown][] = [];
+    const { container } = renderImport({ resultsCode: 'results-code-1' }, {
+      onPreview: (resultsCode, expectedRevision) => { calls.push([resultsCode, expectedRevision]); }
+    });
+
+    buttons(container).find((control) => control.textContent === 'Preview import')?.click();
+
+    expect(calls).toEqual([['results-code-1', undefined]]);
+  });
+
+  it('refuses to preview an empty results code instead of calling the action', () => {
+    const calls: unknown[] = [];
+    const { container } = renderImport({ resultsCode: '' }, {
+      onPreview: (...args: unknown[]) => { calls.push(args); }
+    }, 12);
+
+    buttons(container).find((control) => control.textContent === 'Preview import')?.click();
+
+    expect(calls).toEqual([]);
+    expect(container.textContent).toContain('Enter a WhenIsGood results code');
+  });
+});
