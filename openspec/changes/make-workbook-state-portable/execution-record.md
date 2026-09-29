@@ -288,10 +288,14 @@ The operator approved the [rehearsal manifest](../changes/make-workbook-state-po
   recorded as a follow-up with its evidence and its scope limit.
 - Attempt ledger unchanged at 529; no deployment changed; no reader check yet.
 
+S2 is complete on both targets: the larger workbook's baseline digest matched the
+archived pin (`fc05ff65…`), its first initialization pass created the control tabs
+with 54 protections and zero refusals in 13 calls, and its second pass reported
+`alreadyInitialized` without appending a Settings row.
+
 ## Next eligible action
 
-Baseline and initialize the larger workbook, then execute the counter transitions
-S3–S8 on the representative workbook, then the two approved host redeployments
-(D1/D2) and the reader checks. The reader checks need a fresh Google ID-token
+Execute the counter transitions S3–S8 on the representative workbook, then the
+two approved host redeployments (D1/D2) and the reader checks. The reader checks need a fresh Google ID-token
 credential: the retained ones expired, so that is the next point at which the
 operator is needed.

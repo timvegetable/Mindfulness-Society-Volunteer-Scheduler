@@ -91,12 +91,31 @@ than replacing them.
   protection application idempotent, and have the production verification count
   protected ranges before and after initialization.
 
+## S1/S2 on the larger synthetic workbook
+
+Same run, second target, now that the runner is fixed:
+
+- Baseline digest `fc05ff654fff5304…` — again **exactly the archived campaign's
+  pinned digest** for the larger fixture (199 volunteers, 399 sessions, 3 users,
+  16 tabs, `America/New_York`).
+- First pass: two control tabs created, schema 4, **one** effective Settings
+  record, 54 protected ranges applied with **zero refusals**, 13 API calls — the
+  lower call count versus the representative workbook is the mirror fix working:
+  the larger workbook's headers already matched the schema, so nothing was
+  rewritten.
+- Second pass: `alreadyInitialized: true`, `updatedVersionRecord: false`, 6 API
+  calls, no Settings row appended.
+- Verification against the baseline: 18 tabs, `Settings` the only changed domain
+  tab, version 4 with one record and no malformed records, control record still
+  absent (S3 has not run).
+
 ## State at the end of this batch
 
 - Representative workbook: initialized (schema 4, two control tabs, one Settings
   version record, protections applied), no control record yet. Data rows
   unchanged from the baseline.
-- Larger workbook: untouched so far.
+- Larger workbook: initialized the same way (schema 4, two control tabs, one
+  Settings version record), no control record yet.
 - No Worker deployment changed; no reader check performed yet (those need a fresh
   Google ID-token credential, which the retained ones no longer are).
 - Attempt ledger unchanged at 529: this batch was Sheets API calls, not harness
