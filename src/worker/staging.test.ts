@@ -353,3 +353,98 @@ describe('staging snapshot primitives', () => {
     expect(await snapshot.digest()).not.toBe(first);
   });
 });
+
+describe('portable control bracket', () => {
+  const ADMIN = 'admin@example.test';
+
+  /** One serialized control record row, in `WorkbookControl` column order. */
+  function controlRow(overrides: Record<string, unknown> = {}): Row {
+    const record: Row = {
+      protocolVersion: 1,
+      authorityEpoch: 1,
+      authority: 'workbook-control',
+      generation: 4,
+      completedGeneration: 4,
+      dataRevision: DATA_REVISION,
+      schedulingInputRevision: INPUT_REVISION,
+      tabRevisions: JSON.stringify({ Volunteers: 1 }),
+      mutationState: 'idle',
+      operationId: '',
+      operationStartedAt: '',
+      operationTabs: '',
+      operationBaseline: '',
+      updatedAt: '2026-09-29T00:00:00.000Z',
+      updatedBy: 'operator@example.test'
+    };
+    return { ...record, ...overrides };
+  }
+
+  function activatedRows(row: Row): Map<string, Row[]> {
+    const rows = new Map<string, Row[]>(LOGICAL_ROWS);
+    rows.set('WorkbookControl', [row]);
+    return rows;
+  }
+
+  const activated = () => ({ ...stagingBindings(), STAGING_CONTROL_AUTHORITY: 'workbook-control' });
+
+  it('serves the same envelope as the legacy reader while paying the two control reads', async () => {
+    const { fetchImpl, sheetsCalls } = fakeGoogle(activatedRows(controlRow()));
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(differingProjectionFields(response.data, legacyProjection(INTEGRATION_OPERATIONS.adminSchedule))).toEqual([]);
+    const controlCalls = sheetsCalls.filter((call) => call.ranges.some((range) => range.startsWith("'WorkbookControl'")));
+    expect(controlCalls).toHaveLength(2);
+    // Authorization, then control, then the domain plan, then control again: the
+    // plan read sits inside the bracket and Users stays outside it.
+    expect(sheetsCalls.map((call) => call.ranges[0]?.split('!')[0])).toEqual(["'Users'", "'WorkbookControl'", "'SchedulingRuns'", "'WorkbookControl'"]);
+  });
+
+  it('refuses to serve while a mutation is pending', async () => {
+    const pending = controlRow({ generation: 5, completedGeneration: 4, mutationState: 'pending', operationId: 'admin.schedule.rerun#op-1', operationTabs: JSON.stringify(['Assignments']) });
+    const { fetchImpl } = fakeGoogle(activatedRows(pending));
+
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-pending' } } });
+  });
+
+  it('refuses a read whose generation moved between the two control reads', async () => {
+    const rows = activatedRows(controlRow());
+    const base = fakeGoogle(rows);
+    let controlReads = 0;
+    const fetchImpl: FetchLike = async (input, init) => {
+      const url = String(input);
+      const isControl = url.startsWith('https://sheets.googleapis.com/') && new URL(url).searchParams.getAll('ranges').some((range) => range.startsWith("'WorkbookControl'"));
+      const response = await base.fetchImpl(input, init);
+      if (isControl) {
+        controlReads += 1;
+        // A writer completes between the first control read and the second.
+        if (controlReads === 1) rows.set('WorkbookControl', [controlRow({ generation: 6, completedGeneration: 6, dataRevision: DATA_REVISION + 1 })]);
+      }
+      return response;
+    };
+
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'STALE_REVISION', details: { reason: 'control-generation_changed' } } });
+  });
+
+  it('refuses to serve at all when the portable authority is active but the record is missing', async () => {
+    const { fetchImpl } = fakeGoogle(new Map(LOGICAL_ROWS));
+
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-missing' } } });
+  });
+
+  it('still serves unguarded when the binding is absent', async () => {
+    const { fetchImpl, sheetsCalls } = fakeGoogle(new Map(LOGICAL_ROWS));
+
+    const response = await serviceWith(fetchImpl).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response.ok).toBe(true);
+    expect(sheetsCalls.some((call) => call.ranges.some((range) => range.startsWith("'WorkbookControl'")))).toBe(false);
+  });
+});

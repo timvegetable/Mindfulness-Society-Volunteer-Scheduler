@@ -49,3 +49,25 @@ export function withCompletedSnapshot<T>(options: CompletedSnapshotOptions<T>): 
   assertCompletedGeneration(portableRevisionProvider(before), portableRevisionProvider(after), options.tabs);
   return { data, record: after };
 }
+
+export type CompletedSnapshotAsyncOptions<T> = {
+  readControl: () => Promise<ControlRecord>;
+  hydrate: () => Promise<T>;
+  tabs: readonly WorkbookTabName[];
+  authority: ControlAuthority;
+};
+
+/**
+ * The same bracket for a reader whose reads are asynchronous — the staging
+ * Worker fetches every range over REST. The ordering is identical: control,
+ * hydration, control, then the tuple comparison.
+ */
+export async function withCompletedSnapshotAsync<T>(options: CompletedSnapshotAsyncOptions<T>): Promise<CompletedSnapshot<T>> {
+  const before = await options.readControl();
+  assertAuthority(before, options.authority);
+  const data = await options.hydrate();
+  const after = await options.readControl();
+  assertAuthority(after, options.authority);
+  assertCompletedGeneration(portableRevisionProvider(before), portableRevisionProvider(after), options.tabs);
+  return { data, record: after };
+}

@@ -256,15 +256,23 @@ export function emptyControlRecord(now: string, updatedBy: string): ControlRecor
   };
 }
 
-/** Read and validate the single control row. */
+/**
+ * Validate the single control record from its data rows (header excluded). Both
+ * readers use this: the Apps Script adapter passes SpreadsheetApp rows, the
+ * Worker passes the rows its validated REST batch returned.
+ */
+export function controlRecordFromRows(rows: readonly (readonly unknown[])[]): ControlRecord {
+  const data = rows.filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
+  if (data.length === 0) throw new ControlError('MISSING', 'The workbook control record is missing');
+  if (data.length > 1) throw new ControlError('DUPLICATE', `The workbook control tab holds ${data.length} data rows; exactly one is allowed`);
+  return parseControlRow(data[0] ?? []);
+}
+
+/** Read and validate the single control row from a sheet. */
 export function readControlRecord(sheet: SheetLike): ControlRecord {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) throw new ControlError('MISSING', 'The workbook control record is missing');
-  const rows = sheet.getRange(2, 1, lastRow - 1, CONTROL_COLUMNS.length).getValues()
-    .filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
-  if (rows.length === 0) throw new ControlError('MISSING', 'The workbook control record is missing');
-  if (rows.length > 1) throw new ControlError('DUPLICATE', `The workbook control tab holds ${rows.length} data rows; exactly one is allowed`);
-  return parseControlRow(rows[0] ?? []);
+  return controlRecordFromRows(sheet.getRange(2, 1, lastRow - 1, CONTROL_COLUMNS.length).getValues());
 }
 
 /**

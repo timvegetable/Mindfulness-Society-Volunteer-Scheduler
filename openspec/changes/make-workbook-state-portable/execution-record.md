@@ -225,9 +225,28 @@ check` exit 0; strict OpenSpec validation valid.
   rollback artefacts (5.1), the documentation/validation pass (4.3) and the
   independent reviews.
 
+## 2026-09-29 — Worker reader bracketed (second adapter)
+
+- `evidence/worker-reader-bracket-2026-09-29.md`. The staging Worker's named-plan
+  hydration is bracketed by control reads when `STAGING_CONTROL_AUTHORITY` is
+  `workbook-control`, with a `ControlError` becoming a bounded
+  `STALE_REVISION`/`UNAVAILABLE` envelope and no change to the response shape
+  (the archived parity evidence pins those envelopes). `controlRecordFromRows`
+  and `withCompletedSnapshotAsync` are shared with the Apps Script path.
+- The fixture renderer no longer applies its date/time heuristics to control
+  tabs, where the protocol writes numbers and text.
+- Five Worker cases: identical envelope with the bracket on, the exact read
+  sequence (`Users`, control, plan, control), pending refusal, a generation that
+  moves between the two control reads, a missing record failing closed, and the
+  unguarded legacy path issuing no control read.
+- Worker suite 8 files / 132 tests. Full gates: `pnpm test` 49 files / 370
+  tests, `pnpm run check` exit 0, `pnpm run build` exit 0 with the bundle audit,
+  three Worker dry-run builds exit 0.
+- The deployed staging Worker does not carry the binding yet, so it serves
+  unguarded until the rehearsal's approved redeploy sets it.
+
 ## Next eligible action
 
-Request the bounded staging mutation approval for the task 4.1/4.2 rehearsal and
-prepare its manifest, since section 3 is now complete and the rehearsal is the
-next gate that cannot be satisfied locally. In parallel, task 5.1's release and
-rollback artefacts can be drafted from the implemented protocol.
+Prepare the task 5.1 release and rollback artefacts from the implemented
+protocol, and request the bounded staging mutation approval for the task 4.1/4.2
+rehearsal with its manifest.

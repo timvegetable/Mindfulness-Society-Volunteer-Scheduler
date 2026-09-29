@@ -4,13 +4,37 @@ import { createIntegrationDispatcher, type IntegrationDispatcher } from '../serv
 import { ALLOWED_INTEGRATION_OPERATIONS, INTEGRATION_OPERATIONS, failure, mapUnknownError, validateRequestEnvelope, type ValidatedRequest } from '../server/integration/request-policy.js';
 import { BATCH_READ_PLANS, type BatchReadPlan } from '../server/workbook/batch-read.js';
 import type { SpreadsheetLike } from '../server/workbook/initializer.js';
-import type { WorkbookBatchReader } from '../server/workbook/batch-read.js';
+import type { BatchReadRows, WorkbookBatchReader } from '../server/workbook/batch-read.js';
 import { createProductionRuntime, type ScriptProperties } from '../server/runtime.js';
-import { googleIdentityConfiguration, workbookConfiguration, type StagingBindings } from './config.js';
+import { controlAuthority, googleIdentityConfiguration, workbookConfiguration, type StagingBindings } from './config.js';
+import { ControlError, controlFailureCode, controlRecordFromRows, type ControlAuthority } from '../server/workbook/control.js';
+import { withCompletedSnapshotAsync } from '../server/workbook/completed-snapshot.js';
 import { SigningKeyError, createGoogleDependencies, type FetchLike, type GoogleDependencies } from './google/index.js';
 import { READ_API_MAX_REQUEST_BYTES, type ReadRoute } from './read-api.js';
 import { SheetsReadError, createSheetsReadClient } from './workbook/sheets.js';
 import { createSnapshotBatchReader, createWorkbookSnapshot } from './workbook/snapshot.js';
+
+/**
+ * Hydrate one named plan. With the portable authority activated the read is
+ * bracketed by control reads, so a mutation that begins, completes or recovers
+ * while the ranges are in flight rejects the snapshot instead of serving rows
+ * from two different generations. The two extra reads are visible in the
+ * response's Sheets read count, which is what task 4.1 measures.
+ */
+async function readPlanRows(
+  sheets: ReturnType<typeof createSheetsReadClient>,
+  plan: BatchReadPlan,
+  authority: ControlAuthority
+): Promise<BatchReadRows> {
+  if (authority !== 'workbook-control') return await sheets.readTabs(BATCH_READ_PLANS[plan]);
+  const snapshot = await withCompletedSnapshotAsync({
+    readControl: async () => controlRecordFromRows(await sheets.readTab('WorkbookControl')),
+    hydrate: () => sheets.readTabs(BATCH_READ_PLANS[plan]),
+    tabs: BATCH_READ_PLANS[plan],
+    authority: 'workbook-control'
+  });
+  return snapshot.data;
+}
 
 /**
  * The composed staging read service.
@@ -234,6 +258,14 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
         return failure('UNAVAILABLE', 'The staging read service is not configured.', { reason: 'workbook-configuration' });
       }
 
+      let authority: ControlAuthority;
+      try {
+        authority = controlAuthority(bindings);
+      } catch {
+        console.warn('staging request refused: the control authority binding is invalid');
+        return failure('UNAVAILABLE', 'The staging read service is not configured.', { reason: 'control-authority' });
+      }
+
       const sheets = createSheetsReadClient({
         spreadsheetId: workbook.spreadsheetId,
         accessToken: () => dependencies.sheetsTokens.accessToken('https://www.googleapis.com/auth/spreadsheets.readonly'),
@@ -289,12 +321,20 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       const plan = OPERATION_PLANS[request.operation];
       if (plan) {
         try {
-          const rows = await sheets.readTabs(BATCH_READ_PLANS[plan]);
+          const rows = await readPlanRows(sheets, plan, authority);
           for (const [tab, tabRows] of rows) {
             fetched.set(tab, tabRows);
             snapshot.setTab(tab, tabRows);
           }
         } catch (error) {
+          if (error instanceof ControlError) {
+            // The completed-snapshot check refused the read: a mutation was
+            // pending or a generation moved while the ranges were in flight.
+            console.warn(`staging control check refused a read: ${error.code}`);
+            return failure(controlFailureCode(error.code, 'read'), 'The workbook did not hold still while it was read; retry.', {
+              reason: `control-${error.code.toLowerCase()}`
+            });
+          }
           console.warn(`staging workbook read failed: ${error instanceof SheetsReadError ? error.message : String(error)}`);
           return failure('UNAVAILABLE', 'The staging read service could not read the workbook.', {
             reason: error instanceof SheetsReadError && error.status !== undefined ? `workbook-read-${error.status}` : 'workbook-read'

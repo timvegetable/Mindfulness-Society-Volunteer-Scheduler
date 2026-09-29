@@ -9,6 +9,7 @@
  */
 
 import { WORKBOOK_TABS } from '../server/workbook/schema.js';
+import type { ControlAuthority } from '../server/workbook/control.js';
 
 export type StagingBindings = Readonly<Record<string, unknown>>;
 
@@ -31,6 +32,20 @@ export function optionalBinding(bindings: StagingBindings, name: string): string
   if (typeof value !== 'string') throw new StagingConfigurationError(name, `${name} must be a string binding.`);
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
+}
+
+/**
+ * Which revision authority this Worker may use, mirroring the Apps Script
+ * `CONTROL_AUTHORITY` property. Absent means the legacy Script Properties
+ * authority and no completed-snapshot bracket; `workbook-control` turns the
+ * bracket on; anything else is a configuration fault rather than a silent
+ * downgrade.
+ */
+export function controlAuthority(bindings: StagingBindings): ControlAuthority {
+  const value = optionalBinding(bindings, 'STAGING_CONTROL_AUTHORITY');
+  if (value === undefined || value === 'script-properties') return 'script-properties';
+  if (value === 'workbook-control') return 'workbook-control';
+  throw new StagingConfigurationError('STAGING_CONTROL_AUTHORITY', 'STAGING_CONTROL_AUTHORITY must be absent, "script-properties" or "workbook-control".');
 }
 
 export function requiredBinding(bindings: StagingBindings, name: string): string {

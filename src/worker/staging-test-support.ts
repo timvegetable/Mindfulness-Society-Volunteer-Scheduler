@@ -3,7 +3,7 @@ import { expect } from 'vitest';
 import { INTEGRATION_OPERATIONS } from '../server/integration/request-policy.js';
 import { createProductionRuntime } from '../server/runtime.js';
 import { InMemoryProperties, InMemorySpreadsheet } from '../server/workbook/in-memory-sheet.js';
-import { WORKBOOK_TABS, tabDefinition } from '../server/workbook/schema.js';
+import { WORKBOOK_TABS, tabDefinition, WORKBOOK_CONTROL_TABS } from '../server/workbook/schema.js';
 import { GOOGLE_JWKS_URL, GOOGLE_TOKEN_ENDPOINT, base64UrlEncodeJson, signRs256, type FetchLike } from './google/index.js';
 import { createStagingReadService } from './staging.js';
 
@@ -26,6 +26,8 @@ export const INPUT_REVISION = 5;
 export const OUTPUT_REVISION = 7;
 
 export type Row = Record<string, unknown>;
+
+const CONTROL_TAB_NAMES: ReadonlySet<string> = new Set(WORKBOOK_CONTROL_TABS.map((tab) => tab.name));
 
 /** Serial number for a date in the workbook's zone, as the REST API returns it. */
 function dateSerial(date: string): number {
@@ -65,11 +67,17 @@ function appsScriptRow(tab: string, row: Row, zone = WORKBOOK_ZONE): unknown[] {
 
 /** Renders one logical row the way `values:batchGet` with SERIAL_NUMBER would. */
 function restRow(tab: string, row: Row, zone = WORKBOOK_ZONE): unknown[] {
+  // The control tabs hold protocol text and numbers: counters are numbers, the
+  // serialized maps and stamps are text the codec parses. Sheets returns a text
+  // cell as text, so the date/time heuristics below must not reinterpret them —
+  // they exist for the domain fixtures' genuinely typed cells.
+  const protocolTab = CONTROL_TAB_NAMES.has(tab);
   const cells = tabDefinition(tab).columns.map((column) => {
     const value = row[column];
     // A blank cell is a blank cell, whatever its column type: rendering '' as a
     // date serial would be a fixture bug, not Sheets behaviour.
     if (value === undefined || value === null || value === '') return '';
+    if (protocolTab) return typeof value === 'object' ? JSON.stringify(value) : value;
     if (DATE_COLUMNS.has(column) && typeof value === 'string') return dateSerial(value);
     if (CLOCK_COLUMNS.has(column) && typeof value === 'string' && /^\d{2}:\d{2}$/.test(value)) return clockFraction(value);
     if (INSTANT_COLUMNS.has(column) && typeof value === 'string') {
