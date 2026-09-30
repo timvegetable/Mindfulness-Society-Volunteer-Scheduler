@@ -6,10 +6,11 @@ import { projectIdentity } from './integration/projections.js';
 import { checkActiveWorkbookSchema, initializeActiveWorkbook } from './workbook/initializer.js';
 import { inspectControlState as inspectWorkbookControlState } from './workbook/control-inspection.js';
 import { createProductionRuntime, runtimeConfiguration } from './runtime.js';
-import { activatedAuthority } from './workbook/authority.js';
+import { activatedAuthority, type ActivatedAuthority } from './workbook/authority.js';
 import { RepositoryError } from './workbook/repository.js';
 import { createPortableAuthority, portableReadiness, type PortableAuthority } from './portable-authority.js';
-import type { PrunableSheetLike } from './workbook/control.js';
+import { ControlError, readControlRecord, type PrunableSheetLike } from './workbook/control.js';
+import { legacyAdmission, type ControlReadOutcome } from './workbook/legacy-admission.js';
 import type { SheetLike, SpreadsheetLike } from './workbook/initializer.js';
 import { withMaintenanceFence, type MaintenanceContext } from './workbook/maintenance.js';
 import type { LockLike } from './workbook/repository.js';
@@ -103,15 +104,49 @@ function runtimeUserDirectory(): UserDirectory {
   return new MemoryUserDirectory(sheet ? usersFromSheet(sheet) : []);
 }
 
-function runtimeRevisionSource(): RevisionSource | undefined {
+/**
+ * The legacy Script Properties revision source.
+ *
+ * `begin` is the last moment before a handler writes anything, and it is where a
+ * process still on the Script Properties authority proves the workbook has not
+ * moved to the portable one. Without it, a deployment whose `CONTROL_AUTHORITY`
+ * is unset keeps admitting mutations against an activated workbook: rows change,
+ * only the Script Property counter advances, and the control record's generation
+ * and revisions describe a workbook that has changed underneath them. The check
+ * reads the record once, writes nothing, and advances no counter when it refuses
+ * — a refused mutation leaves the workbook exactly as it was.
+ */
+export function runtimeRevisionSource(context: {
+  authority: ActivatedAuthority;
+  spreadsheet: { getSheetByName(name: string): SheetLike | null } | undefined;
+  controlTabsPresent: boolean;
+}): RevisionSource | undefined {
   const properties = runtimeProperties();
   if (!properties) return undefined;
   const read = (): number => {
     const value = Number(properties.getProperty('DATA_REVISION') ?? '0');
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   };
+  const outcome = (): ControlReadOutcome => {
+    // A workbook with no control structure has no record to read: reporting
+    // MISSING without a Sheets call keeps pre-protocol writes exactly as cheap
+    // as they were, and the judgement admits that case.
+    if (!context.controlTabsPresent) return { ok: false, code: 'MISSING' };
+    const sheet = context.spreadsheet?.getSheetByName('WorkbookControl');
+    if (!sheet) return { ok: false, code: 'MISSING' };
+    try {
+      return { ok: true, record: readControlRecord(sheet) };
+    } catch (error) {
+      if (error instanceof ControlError) return { ok: false, code: error.code };
+      throw error;
+    }
+  };
   return {
     current: read,
+    begin: () => {
+      const decision = legacyAdmission({ authority: context.authority, controlTabsPresent: context.controlTabsPresent, outcome: outcome() });
+      if (!decision.admit) throw new RepositoryError('UNAVAILABLE', decision.message);
+    },
     advance: (_actorId, _operation) => {
       const next = read() + 1;
       properties.setProperty('DATA_REVISION', String(next));
@@ -282,12 +317,16 @@ function defaultServer(timing?: ReadTiming): Server {
   const reader = spreadsheet ? runtimeBatchReader(spreadsheet, ADVANCED_SHEETS_READS_ENABLED, sheets, timing) : undefined;
   const authority = properties ? activatedAuthority(properties) : 'script-properties';
   const hasControlTabs = Boolean(spreadsheet?.getSheetByName('WorkbookControl') && spreadsheet?.getSheetByName('ControlJournal'));
+  // Any control tab — not only the pair the portable reader needs — means the
+  // workbook carries protocol structure, so a legacy writer has to prove the
+  // record still sits on the Script Properties authority before it writes.
+  const controlStructurePresent = Boolean(spreadsheet?.getSheetByName('WorkbookControl') || spreadsheet?.getSheetByName('ControlJournal'));
   const readiness = portableReadiness({ authority, hasSpreadsheet: Boolean(spreadsheet), hasControlTabs, hasBatchReader: Boolean(reader) });
   if (!readiness.ready) throw new RepositoryError('UNAVAILABLE', readiness.message);
   const portable: PortableAuthority | undefined = readiness.portable && spreadsheet && properties
     ? createPortableAuthority({ ...controlTabs(spreadsheet), writeEnabled: () => properties.getProperty('WRITE_ENABLED') === 'true' })
     : undefined;
-  const revision = portable ? portable.revisionSource : runtimeRevisionSource();
+  const revision = portable ? portable.revisionSource : runtimeRevisionSource({ authority, spreadsheet, controlTabsPresent: controlStructurePresent });
   const batchReader = portable && reader ? portable.guard(reader) : reader;
   const production = properties && spreadsheet
     ? createProductionRuntime(spreadsheet, properties, { scriptCache, timing, batchReader, ...(portable ? { session: portable.session } : {}) })
