@@ -20,19 +20,25 @@ import {
   controlOperationId,
   controlCounters,
   controlRecordFromRows,
-  emptyControlRecord,
+  ControlError,
+  ControlMutationWriter,
+  initializeControlRecord,
+  JOURNAL_COLUMNS,
   portableRevisionProvider,
   readControlRecord,
   recoveryTransition,
   serializeControlRecord,
   serializeJournalEntry,
+  type ControlFailureCode,
   type ControlRecord,
   type JournalEvent,
   type RecoveryDecision
 } from '../../src/server/workbook/control.js';
+import { legacyAdmission, type ControlReadOutcome } from '../../src/server/workbook/legacy-admission.js';
 import { accessTokenFor } from './google-auth.mjs';
 import { createWorkbookApi, workbookControlTabs, workbookTabs, type StagingProtectedRange } from './workbook.mjs';
-import { parseArgs, requiresStagingConfirmation, type Args, type Role } from './rehearsal-arguments.js';
+import { capturedCounters, controlWriterOverRest as writerOverRest, type ControlTabsApi } from './rehearsal-transitions.js';
+import { DEFAULT_FIRE_MS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, parseArgs, requiresStagingConfirmation, type Args, type Role } from './rehearsal-arguments.js';
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const PRIVATE_DIR = 'staging-local';
@@ -229,18 +235,24 @@ async function commandVerify(args: Args, api: ReturnType<typeof createWorkbookAp
   };
 }
 
+/** The production writer over this run's REST client, with the schema's columns. */
+async function controlWriterOverRest(api: Awaited<ReturnType<typeof createWorkbookApi>>, at: string) {
+  const definitions = new Map((await workbookControlTabs()).map((tab) => [tab.name as string, tab.columns]));
+  const controlColumns = definitions.get('WorkbookControl');
+  if (!controlColumns) throw new Error('The workbook schema has no WorkbookControl definition.');
+  return await writerOverRest(api as unknown as ControlTabsApi, {
+    at,
+    controlColumns,
+    journalColumns: definitions.get('ControlJournal') ?? JOURNAL_COLUMNS
+  });
+}
+
 /** Reads the control record, or undefined when the workbook has none yet. */
 async function readRecord(api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<ControlRecord | undefined> {
   const rows = await api.readTabs(['WorkbookControl']);
   const data = (rows.WorkbookControl ?? []).filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
   if (data.length === 0) return undefined;
   return controlRecordFromRows(data);
-}
-
-function mergeMax(current: Readonly<Record<string, number>>, captured: Readonly<Record<string, number>>): Record<string, number> {
-  const merged: Record<string, number> = { ...current };
-  for (const [tab, value] of Object.entries(captured)) merged[tab] = Math.max(merged[tab] ?? 0, value);
-  return merged;
 }
 
 /** Appends the journal entry a transition produced, through the shared codec. */
@@ -279,37 +291,25 @@ function tuple(record: ControlRecord) {
 
 /**
  * S3: capture the counters the deployed staging readers serve into the control
- * record. Nothing is invented: the values are supplied from the deployment
- * configuration, the counters are taken as `max(captured, current)` so they never
- * decrease, and the authority epoch advances.
+ * record, through the production activation transition. Nothing is invented: the
+ * values are supplied from the deployment configuration, the transition takes
+ * every counter as `max(captured, current)`, and the authority epoch and the
+ * generation advance together.
+ *
+ * A workbook that carries the control tabs but no record yet is seeded with the
+ * production `initializeControlRecord` first — the same idempotent step the
+ * maintenance fence runs — so activation always has a record to move.
  */
 async function commandCapture(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
-  if (args.dataRevision === undefined || args.inputRevision === undefined || !args.tabRevisions) {
-    throw new Error('capture needs --data-revision, --input-revision and --tab-revisions (the values the deployment currently serves).');
-  }
-  const current = await readRecord(api);
-  if (current?.mutationState === 'pending') throw new Error('The record has a pending mutation; recover it before capturing.');
+  const captured = capturedCounters(args);
   const at = new Date().toISOString();
-  const record: ControlRecord = {
-    ...(current ?? emptyControlRecord(at, args.actor)),
-    authorityEpoch: (current?.authorityEpoch ?? 0) + 1,
-    authority: 'workbook-control',
-    dataRevision: Math.max(current?.dataRevision ?? 0, args.dataRevision),
-    schedulingInputRevision: Math.max(current?.schedulingInputRevision ?? 0, args.inputRevision),
-    tabRevisions: mergeMax(current?.tabRevisions ?? {}, args.tabRevisions),
-    mutationState: 'idle',
-    operationId: '',
-    operationStartedAt: '',
-    operationTabs: [],
-    operationBaseline: {},
-    updatedAt: at,
-    updatedBy: args.actor
-  };
-  await writeRecord(api, record);
+  const facade = await controlWriterOverRest(api, at);
+  const seeded = initializeControlRecord(facade.controlSheet, at, args.actor);
+  const { record } = facade.writer.activate({ captured, actorId: args.actor, reason: args.reason.trim() || 'rehearsal capture' });
+  const applied = await facade.apply();
   const after = await readRecord(api);
-  await journal(api, 'capture', '', args.actor, [], record, record, 'rehearsal capture', at);
-  const path = await report(`rehearsal-capture-${args.role}`, { role: args.role, at, captured: tuple(record), reread: after ? tuple(after) : undefined });
-  return { path, captured: tuple(record), rereadMatches: after !== undefined && serializeControlRecord(after).join('|') === serializeControlRecord(record).join('|'), apiCalls: api.callCount() };
+  const path = await report(`rehearsal-capture-${args.role}`, { role: args.role, at, seededRecord: seeded.created, captured: tuple(record), reread: after ? tuple(after) : undefined, applied });
+  return { path, seededRecord: seeded.created, captured: tuple(record), applied, rereadMatches: after !== undefined && serializeControlRecord(after).join('|') === serializeControlRecord(record).join('|'), apiCalls: api.callCount() };
 }
 
 /** S4-S7: one protocol transition, applied with the production arithmetic. */
@@ -393,30 +393,191 @@ async function commandCleanup(args: Args, api: Awaited<ReturnType<typeof createW
   return { path, removed: true, clearedRow: tagRow + 2, rowsBefore: rows.length, rowsAfter: after.length, digest: tabDigest(after), apiCalls: api.callCount() };
 }
 
-/** S8: flip the authority between Script Properties and the control record. */
+/**
+ * S8: flip the authority, through the production transitions in both directions.
+ *
+ * `--authority script-properties` is the rollback: `rollbackTransition` requires
+ * the record to be activated, advances the authority epoch and the generation,
+ * and takes every counter as `max(captured, current)`. `--authority
+ * workbook-control` is the forward activation and is the same step as `capture`.
+ * Both run through `ControlMutationWriter`, so the runner no longer hand-builds
+ * an authority row.
+ */
 async function commandRollback(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
-  const current = await readRecord(api);
-  if (!current) throw new Error('The workbook has no control record; run capture first.');
-  if (current.mutationState === 'pending') throw new Error('The record has a pending mutation; a rollback must not run over an interrupted write.');
   if (!args.authority) throw new Error('rollback needs --authority script-properties|workbook-control.');
   const at = new Date().toISOString();
-  // The design's transition table gives authority activation and rollback a
-  // generation advance as well as an epoch advance, so a reader bracketed across
-  // the switch rejects its snapshot instead of accepting one spanning it.
-  const record: ControlRecord = {
-    ...current,
-    authority: args.authority,
-    authorityEpoch: current.authorityEpoch + 1,
-    generation: current.generation + 1,
-    completedGeneration: current.generation + 1,
-    updatedAt: at,
-    updatedBy: args.actor
-  };
-  await writeRecord(api, record);
+  const facade = await controlWriterOverRest(api, at);
+  const reason = args.reason.trim() || `rehearsal authority switch to ${args.authority}`;
+  const { record } = args.authority === 'script-properties'
+    ? facade.writer.revert({ captured: capturedCounters(args), actorId: args.actor, reason })
+    : facade.writer.activate({ captured: capturedCounters(args), actorId: args.actor, reason });
+  const applied = await facade.apply();
   const after = await readRecord(api);
-  await journal(api, 'rollback', current.operationId, args.actor, current.operationTabs, current, record, `rehearsal authority switch to ${args.authority}`, at);
-  const path = await report(`rehearsal-rollback-${args.role}`, { role: args.role, at, before: tuple(current), after: tuple(record), reread: after ? tuple(after) : undefined });
-  return { path, before: tuple(current), after: tuple(record), rereadMatches: after !== undefined && serializeControlRecord(after).join('|') === serializeControlRecord(record).join('|'), apiCalls: api.callCount() };
+  const path = await report(`rehearsal-rollback-${args.role}`, { role: args.role, at, direction: args.authority, after: tuple(record), reread: after ? tuple(after) : undefined, applied });
+  return { path, direction: args.authority, after: tuple(record), applied, rereadMatches: after !== undefined && serializeControlRecord(after).join('|') === serializeControlRecord(record).join('|'), apiCalls: api.callCount() };
+}
+
+/**
+ * S9 (4.2): evaluate the legacy-writer judgement against the live workbook.
+ *
+ * The decision is the production `legacyAdmission`, given the record as this run
+ * read it and whether the workbook carries control structure at all. The
+ * divergence is the concrete thing the rollback procedure's equality check has
+ * to detect: the counters the record holds against the counters the deployment
+ * still serves, which stop advancing the moment the record becomes the
+ * authority.
+ */
+async function commandLegacyAdmission(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  const { meta } = await readWorkbook(api);
+  const controlTabsPresent = meta.sheets.includes('WorkbookControl') || meta.sheets.includes('ControlJournal');
+  let record: ControlRecord | undefined;
+  let outcome: ControlReadOutcome;
+  try {
+    record = await readRecord(api);
+    outcome = record ? { ok: true, record } : { ok: false, code: 'MISSING' };
+  } catch (error) {
+    if (!(error instanceof ControlError)) throw error;
+    outcome = { ok: false, code: error.code as ControlFailureCode };
+  }
+  const decision = legacyAdmission({ authority: 'script-properties', controlTabsPresent, outcome });
+  const deployment = {
+    dataRevision: args.dataRevision ?? null,
+    schedulingInputRevision: args.inputRevision ?? null,
+    tabRevisions: args.tabRevisions ?? null
+  };
+  const divergence = record === undefined || args.dataRevision === undefined
+    ? null
+    : {
+        dataRevision: { record: record.dataRevision, deployment: args.dataRevision, ahead: record.dataRevision - args.dataRevision },
+        schedulingInputRevision: args.inputRevision === undefined
+          ? null
+          : { record: record.schedulingInputRevision, deployment: args.inputRevision, ahead: record.schedulingInputRevision - args.inputRevision },
+        tabRevisions: args.tabRevisions === undefined
+          ? null
+          : Object.fromEntries(Object.entries(record.tabRevisions).map(([tab, value]) => [tab, { record: value, deployment: args.tabRevisions?.[tab] ?? null, ahead: value - (args.tabRevisions?.[tab] ?? 0) }]))
+      };
+  const path = await report(`rehearsal-legacy-admission-${args.role}`, {
+    role: args.role,
+    at: new Date().toISOString(),
+    controlTabsPresent,
+    recordState: record ? tuple(record) : null,
+    readOutcome: outcome.ok ? 'valid record' : outcome.code,
+    decision,
+    deployment,
+    divergence
+  });
+  return {
+    path,
+    controlTabsPresent,
+    recordAuthority: record?.authority ?? null,
+    readOutcome: outcome.ok ? 'valid record' : outcome.code,
+    admitted: decision.admit,
+    refusalCode: decision.admit ? null : decision.code,
+    message: decision.admit ? null : decision.message,
+    deploymentCountersSupplied: args.dataRevision !== undefined,
+    divergence,
+    apiCalls: api.callCount()
+  };
+}
+
+/** Reads the private Google ID token the browser leg captured. */
+async function readCredential(path: string): Promise<string> {
+  const raw = await readFile(resolve(path), 'utf8');
+  const token = raw.trim();
+  if (token.length === 0) throw new Error(`The credential file ${path} is empty; re-capture it before the straddle run.`);
+  return token;
+}
+
+/**
+ * S10 (4.1): race a live read against a control transition.
+ *
+ * The read is started and deliberately not awaited; after `--fire-ms` the runner
+ * applies a `begin`+`abort` pair — which leaves the record idle with a higher
+ * generation and every counter untouched — and then awaits the response. The
+ * bracket must have seen two different tuples and refused with the pinned code,
+ * serving no rows. Everything happens in one process, which is what the three
+ * earlier attempts lacked: each ran its transition in a separate `vite-node`
+ * start-up and never made the window.
+ */
+async function commandStraddle(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  if (!args.workerUrl) throw new Error('straddle needs --worker-url (the deployed staging gateway /exec URL).');
+  if (!args.credentialPath) throw new Error('straddle needs --credential (the private file holding a Google ID token).');
+  const operation = args.operation ?? DEFAULT_STRADDLE_OPERATION;
+  const expectation = args.expect ?? DEFAULT_STRADDLE_EXPECTATION;
+  const fireMs = args.fireMs ?? DEFAULT_FIRE_MS;
+  const credential = await readCredential(args.credentialPath);
+  const before = await readRecord(api);
+  if (!before) throw new Error('The workbook has no control record; capture it before racing a read against it.');
+  if (before.mutationState !== 'idle') throw new Error('The record already has a pending mutation; settle it before racing a read.');
+
+  const startedAt = Date.now();
+  const pending = fetch(args.workerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ operation, payload: {}, idempotencyKey: `straddle-${startedAt}`, credential })
+  });
+  await new Promise((resolveWait) => setTimeout(resolveWait, fireMs));
+
+  // The transition pair: begin publishes the marker, abort clears it and moves
+  // the generation while leaving every counter exactly where it was.
+  const at = new Date().toISOString();
+  const tabs = (args.tabs.length > 0 ? args.tabs : ['Assignments']) as never[];
+  const opened = beginMutationRecord(before, { operationId: controlOperationId('rehearsal.straddle'), tabs, actorId: args.actor }, at);
+  await writeRecord(api, opened);
+  await journal(api, 'begin', opened.operationId, args.actor, tabs, before, opened, 'straddle instrumentation', at);
+  const aborted = abortMutationRecord(opened, args.actor, at);
+  await writeRecord(api, aborted);
+  await journal(api, 'abort', opened.operationId, args.actor, tabs, opened, aborted, 'straddle instrumentation', at);
+
+  const response = await pending;
+  const body = await response.json().catch(() => undefined) as { ok?: boolean; error?: { code?: string; details?: { reason?: string } } } | undefined;
+  const observed = {
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    fireMs,
+    operation,
+    ok: body?.ok === true,
+    errorCode: body?.ok === false ? body.error?.code : undefined,
+    reason: body?.ok === false ? body.error?.details?.reason : undefined,
+    sheetsReads: Number(response.headers.get('x-staging-sheets-reads') ?? '') || 0,
+    readMs: response.headers.get('x-staging-read-ms'),
+    hostDeployedAt: response.headers.get('x-staging-host-deployed-at'),
+    hasCorrelationId: response.headers.get('x-staging-correlation-id') !== null
+  };
+  const wanted = expectation.split(':');
+  const passed = wanted[0] === 'ok'
+    ? observed.ok
+    : observed.ok === false && observed.errorCode === wanted[1] && (wanted[2] === undefined || observed.reason === wanted[2]);
+  const after = await readRecord(api);
+  const countersUnchanged = after !== undefined
+    && after.dataRevision === before.dataRevision
+    && after.schedulingInputRevision === before.schedulingInputRevision
+    && JSON.stringify(after.tabRevisions) === JSON.stringify(before.tabRevisions);
+  const path = await report(`rehearsal-straddle-${args.role}`, {
+    role: args.role,
+    at,
+    expectation,
+    before: tuple(before),
+    after: after ? tuple(after) : null,
+    opened: tuple(opened),
+    aborted: tuple(aborted),
+    observed,
+    passed,
+    countersUnchanged,
+    generationAdvanced: after !== undefined && after.generation > before.generation,
+    idleAfter: after !== undefined && portableRevisionProvider(after).idle
+  });
+  return {
+    path,
+    expectation,
+    observed,
+    passed,
+    generationAdvanced: after !== undefined && after.generation > before.generation,
+    countersUnchanged,
+    idleAfter: after !== undefined && portableRevisionProvider(after).idle,
+    servedRows: observed.ok,
+    apiCalls: api.callCount()
+  };
 }
 
 async function main(): Promise<void> {
@@ -437,7 +598,9 @@ async function main(): Promise<void> {
     transition: () => commandTransition(args, api),
     rollback: () => commandRollback(args, api),
     fixture: () => commandFixture(args, api),
-    cleanup: () => commandCleanup(args, api)
+    cleanup: () => commandCleanup(args, api),
+    'legacy-admission': () => commandLegacyAdmission(args, api),
+    straddle: () => commandStraddle(args, api)
   };
   const run = commands[args.command];
   if (!run) throw new Error(`Unknown subcommand: ${args.command}`);

@@ -22,11 +22,55 @@ export type Args = {
   dataRevision?: number;
   inputRevision?: number;
   tabRevisions?: Record<string, number>;
+  /** Straddle: milliseconds to wait before firing the transition pair. */
+  fireMs?: number;
+  /** Straddle: the read operation to race. */
+  operation?: string;
+  /** Straddle: the refusal the raced read must return, `CODE[:reason]`. */
+  expect?: string;
+  /** Straddle: the deployed gateway URL the read is sent to. */
+  workerUrl?: string;
+  /** Straddle: the private credential file holding a Google ID token. */
+  credentialPath?: string;
 };
+
+/** The read a straddle races unless another operation is named. */
+export const DEFAULT_STRADDLE_OPERATION = 'admin.schedule.read';
+/** The refusal a straddled read must produce: the tuple moved under it. */
+export const DEFAULT_STRADDLE_EXPECTATION = 'STALE_REVISION:control-generation_changed';
+/** Milliseconds a straddle waits before firing its transition pair. */
+export const DEFAULT_FIRE_MS = 1_500;
+
+/**
+ * A gateway URL is a deployment target, so it is validated the way the sibling
+ * staging tools validate theirs: https only, and the host has to look like a
+ * staging deployment. The runner addresses workbooks by role, never by raw id;
+ * the same rule applies to the endpoint it races.
+ */
+export function stagingWorkerUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('--worker-url must be a URL.');
+  }
+  if (url.protocol !== 'https:') throw new Error('--worker-url must use https.');
+  if (!url.hostname.includes('staging')) throw new Error('--worker-url must name a staging deployment host.');
+  return url.toString();
+}
+
+/** The credential file has to stay inside the private staging directory. */
+export function privateCredentialPath(value: string): string {
+  const normalized = value.replaceAll('\\', '/');
+  if (!normalized.startsWith('staging-local/') || normalized.includes('..')) {
+    throw new Error('--credential must resolve inside staging-local/.');
+  }
+  return value;
+}
 
 export function parseArgs(argv: readonly string[]): Args {
   const [command, ...rest] = argv;
-  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify|capture|transition|rollback> --role representative|larger [--baseline PATH] --confirm-staging');
+  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify|capture|transition|rollback|fixture|cleanup|legacy-admission|straddle> --role representative|larger [--baseline PATH] --confirm-staging');
   let role: Role | undefined;
   let confirm = false;
   let baseline: string | undefined;
@@ -36,6 +80,11 @@ export function parseArgs(argv: readonly string[]): Args {
   let dataRevision: number | undefined;
   let inputRevision: number | undefined;
   let tabRevisions: Record<string, number> | undefined;
+  let fireMs: number | undefined;
+  let operation: string | undefined;
+  let expect: string | undefined;
+  let workerUrl: string | undefined;
+  let credentialPath: string | undefined;
   const tabs: string[] = [];
   let reason = '';
   let actor = 'rehearsal@example.test';
@@ -82,6 +131,22 @@ export function parseArgs(argv: readonly string[]): Args {
         if (typeof entry !== 'number' || !Number.isSafeInteger(entry) || entry < 0) throw new Error('--tab-revisions values must be non-negative integers.');
       }
       tabRevisions = parsed as Record<string, number>;
+    } else if (value === '--fire-ms') {
+      const candidate = Number(next());
+      if (!Number.isSafeInteger(candidate) || candidate < 0 || candidate > 60_000) throw new Error('--fire-ms must be an integer between 0 and 60000.');
+      fireMs = candidate;
+    } else if (value === '--operation') {
+      const candidate = next();
+      if (candidate.trim().length === 0) throw new Error('--operation must name an operation.');
+      operation = candidate.trim();
+    } else if (value === '--expect') {
+      const candidate = next();
+      if (candidate !== 'ok' && !/^failed:[A-Z_]+(:[a-z0-9_-]+)?$/u.test(candidate)) throw new Error('--expect must be ok or failed:CODE[:reason].');
+      expect = candidate;
+    } else if (value === '--worker-url') {
+      workerUrl = stagingWorkerUrl(next());
+    } else if (value === '--credential') {
+      credentialPath = privateCredentialPath(next());
     } else if (value === '--authority') {
       const candidate = next();
       if (candidate !== 'script-properties' && candidate !== 'workbook-control') throw new Error('--authority must be script-properties or workbook-control.');
@@ -112,7 +177,12 @@ export function parseArgs(argv: readonly string[]): Args {
     ...(authority ? { authority } : {}),
     ...(dataRevision === undefined ? {} : { dataRevision }),
     ...(inputRevision === undefined ? {} : { inputRevision }),
-    ...(tabRevisions ? { tabRevisions } : {})
+    ...(tabRevisions ? { tabRevisions } : {}),
+    ...(fireMs === undefined ? {} : { fireMs }),
+    ...(operation ? { operation } : {}),
+    ...(expect ? { expect } : {}),
+    ...(workerUrl ? { workerUrl } : {}),
+    ...(credentialPath ? { credentialPath } : {})
   };
 }
 
@@ -125,4 +195,4 @@ export function requiresStagingConfirmation(command: string): boolean {
   return !READ_ONLY_COMMANDS.has(command);
 }
 
-export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set(['baseline', 'verify']);
+export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set(['baseline', 'verify', 'legacy-admission']);

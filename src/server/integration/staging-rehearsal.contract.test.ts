@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseArgs, requiresStagingConfirmation } from '../../../scripts/staging/rehearsal-arguments.js';
+import { DEFAULT_FIRE_MS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, parseArgs, privateCredentialPath, requiresStagingConfirmation, stagingWorkerUrl } from '../../../scripts/staging/rehearsal-arguments.js';
+import { capturedCounters, controlWriterOverRest } from '../../../scripts/staging/rehearsal-transitions.js';
+import { activationTransition, controlCounters, controlRecordFromRows, emptyControlRecord, initializeControlRecord, JOURNAL_COLUMNS, rollbackTransition, serializeControlRecord, serializeJournalEntry, type ControlRecord } from '../workbook/control.js';
+import { tabDefinition } from '../workbook/schema.js';
 
 /**
  * The rehearsal runner addresses synthetic workbooks by role and refuses anything
@@ -28,6 +31,41 @@ describe('rehearsal runner arguments', () => {
     });
   });
 
+  it('accepts the straddle invocation and defaults the race to the pinned refusal', () => {
+    const straddle = parseArgs(['straddle', '--role', 'representative', '--worker-url', 'https://volunteer-scheduling-staging-gateway.example.workers.dev/exec', '--credential', 'staging-local/credential-rehearsal.txt', '--confirm-staging']);
+
+    expect(straddle).toMatchObject({
+      command: 'straddle',
+      workerUrl: 'https://volunteer-scheduling-staging-gateway.example.workers.dev/exec',
+      credentialPath: 'staging-local/credential-rehearsal.txt',
+      confirm: true
+    });
+    expect(DEFAULT_STRADDLE_OPERATION).toBe('admin.schedule.read');
+    expect(DEFAULT_STRADDLE_EXPECTATION).toBe('STALE_REVISION:control-generation_changed');
+    expect(DEFAULT_FIRE_MS).toBe(1500);
+  });
+
+  it('accepts an explicit operation, expectation and fire delay', () => {
+    expect(parseArgs(['straddle', '--role', 'larger', '--operation', 'admin.insights.read', '--expect', 'failed:UNAVAILABLE:control-pending', '--fire-ms', '250'])).toMatchObject({
+      operation: 'admin.insights.read',
+      expect: 'failed:UNAVAILABLE:control-pending',
+      fireMs: 250
+    });
+    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'ok'])).toMatchObject({ expect: 'ok' });
+  });
+
+  it('keeps a deployment target on https and staging-shaped', () => {
+    expect(stagingWorkerUrl('https://volunteer-scheduling-staging-gateway.example.workers.dev/exec')).toBe('https://volunteer-scheduling-staging-gateway.example.workers.dev/exec');
+    expect(() => stagingWorkerUrl('https://gateway.example.test/exec')).toThrowError(/staging deployment host/u);
+    expect(() => stagingWorkerUrl('http://staging.example.test/exec')).toThrowError(/https/u);
+  });
+
+  it('keeps the credential inside the private staging directory', () => {
+    expect(privateCredentialPath('staging-local/credential-rehearsal.txt')).toBe('staging-local/credential-rehearsal.txt');
+    expect(() => privateCredentialPath('staging-local/../credential.txt')).toThrowError(/staging-local/u);
+    expect(() => privateCredentialPath('/tmp/credential.txt')).toThrowError(/staging-local/u);
+  });
+
   it.each([
     ['an unknown flag', ['baseline', '--role', 'larger', '--spreadsheet', 'abc']],
     ['an unknown event', ['transition', '--role', 'larger', '--event', 'publish']],
@@ -36,7 +74,17 @@ describe('rehearsal runner arguments', () => {
     ['a negative revision', ['capture', '--role', 'larger', '--data-revision', '-1']],
     ['tab counters that are not an object', ['capture', '--role', 'larger', '--tab-revisions', '[1,2]']],
     ['tab counters that are not integers', ['capture', '--role', 'larger', '--tab-revisions', '{"Volunteers":"1"}']],
-    ['a flag without its value', ['baseline', '--role']]
+    ['a flag without its value', ['baseline', '--role']],
+    ['a negative fire delay', ['straddle', '--role', 'larger', '--fire-ms', '-1']],
+    ['a fire delay beyond the window', ['straddle', '--role', 'larger', '--fire-ms', '60001']],
+    ['a non-integer fire delay', ['straddle', '--role', 'larger', '--fire-ms', '1.5']],
+    ['an expectation that is not ok or failed:CODE[:reason]', ['straddle', '--role', 'larger', '--expect', 'maybe']],
+    ['an expectation with a lowercase code', ['straddle', '--role', 'larger', '--expect', 'failed:stale']],
+    ['a worker URL that is not https', ['straddle', '--role', 'larger', '--worker-url', 'http://staging.example.test/exec']],
+    ['a worker URL that is not a URL', ['straddle', '--role', 'larger', '--worker-url', 'not-a-url']],
+    ['a credential outside the private directory', ['straddle', '--role', 'larger', '--credential', 'secrets/token.txt']],
+    ['a credential that escapes the private directory', ['straddle', '--role', 'larger', '--credential', 'staging-local/../token.txt']],
+    ['an empty operation', ['straddle', '--role', 'larger', '--operation', '  ']]
   ])('refuses %s', (_label, argv) => {
     expect(() => parseArgs(argv as string[])).toThrowError(/./u);
   });
@@ -46,8 +94,126 @@ describe('rehearsal runner confirmation gate', () => {
   it('treats only the reading subcommands as safe without --confirm-staging', () => {
     expect(requiresStagingConfirmation('baseline')).toBe(false);
     expect(requiresStagingConfirmation('verify')).toBe(false);
-    for (const command of ['initialize', 'capture', 'transition', 'rollback', 'fixture', 'cleanup']) {
+    // Reading the live record and judging it changes nothing; racing a read
+    // against a transition pair writes the control row, so it is a mutation.
+    expect(requiresStagingConfirmation('legacy-admission')).toBe(false);
+    for (const command of ['initialize', 'capture', 'transition', 'rollback', 'fixture', 'cleanup', 'straddle']) {
       expect(requiresStagingConfirmation(command), command).toBe(true);
     }
+  });
+});
+
+/**
+ * The runner's transitions must be the production ones. The earlier hand-built
+ * authority row is what produced the rollback defect this rehearsal is meant to
+ * rule out, so the contract is asserted against the transitions themselves
+ * rather than against a copy of their arithmetic.
+ */
+describe('rehearsal transitions over REST', () => {
+  const AT = '2026-09-30T02:00:00.000Z';
+  const controlColumns = tabDefinition('WorkbookControl').columns;
+  const journalColumns = JOURNAL_COLUMNS;
+
+  function serializedRecord(overrides: Partial<ControlRecord> = {}): unknown[] {
+    return serializeControlRecord({
+      ...emptyControlRecord(AT, 'operator@example.test'),
+      authorityEpoch: 3,
+      authority: 'script-properties',
+      generation: 8,
+      completedGeneration: 8,
+      dataRevision: 41,
+      schedulingInputRevision: 5,
+      tabRevisions: { Volunteers: 2 },
+      ...overrides
+    });
+  }
+
+  /** A REST client double that records the order of its writes. */
+  function fakeApi(controlRow: unknown[] | undefined, journal: unknown[][] = []) {
+    const order: string[] = [];
+    const journalRows = [...journal];
+    let current = controlRow;
+    return {
+      order,
+      journalRows,
+      written: () => current,
+      api: {
+        readTabs: async () => ({ WorkbookControl: current === undefined ? [] : [current], ControlJournal: journalRows }),
+        writeControlRow: async (_name: string, row: unknown[]) => { order.push('control'); current = row; return 1; },
+        appendRow: async (_name: string, values: unknown[]) => { order.push('journal'); journalRows.push(values); return 1; }
+      }
+    };
+  }
+
+  async function facade(controlRow: unknown[] | undefined, journal: unknown[][] = []) {
+    const double = fakeApi(controlRow, journal);
+    const overRest = await controlWriterOverRest(double.api, { at: AT, controlColumns, journalColumns });
+    return { ...double, ...overRest };
+  }
+
+  it('captures through activationTransition, seeding the production empty record first', async () => {
+    const { writer, controlSheet, apply, written, order, journalRows } = await facade(undefined);
+
+    const seeded = initializeControlRecord(controlSheet, AT, 'operator@example.test');
+    const captured = { dataRevision: 46, schedulingInputRevision: 6, tabRevisions: { Volunteers: 3 } };
+    const { record } = writer.activate({ captured, actorId: 'operator@example.test', reason: 'rehearsal capture' });
+    await apply();
+
+    expect(seeded.created).toBe(true);
+    const expected = activationTransition(seeded.record, { captured, actorId: 'operator@example.test', reason: 'rehearsal capture' }, AT);
+    expect(written()).toEqual(serializeControlRecord(expected));
+    expect(record).toEqual(expected);
+    expect(record).toMatchObject({ authority: 'workbook-control', authorityEpoch: 1, generation: 1, completedGeneration: 1, dataRevision: 46, schedulingInputRevision: 6 });
+    // Journal first, then the control row: a crash between them leaves an
+    // auditable attempt rather than a silent switch.
+    expect(order).toEqual(['journal', 'control']);
+    expect(journalRows.at(-1)).toEqual(serializeJournalEntry({
+      id: expect.any(String) as unknown as string,
+      generation: expected.generation,
+      event: 'activate',
+      operationId: '',
+      actorId: 'operator@example.test',
+      tabs: ['Volunteers'],
+      before: controlCounters(seeded.record),
+      after: controlCounters(expected),
+      reason: 'rehearsal capture',
+      timestamp: AT
+    }));
+  });
+
+  it('takes every counter as max(captured, current) rather than trusting the capture', async () => {
+    const { writer, apply, written } = await facade(serializedRecord({ dataRevision: 46, schedulingInputRevision: 6, tabRevisions: { Volunteers: 3, Centers: 1 } }));
+
+    const { record } = writer.activate({ captured: { dataRevision: 42, schedulingInputRevision: 5, tabRevisions: { Volunteers: 2 } }, actorId: 'operator@example.test', reason: 'stale capture' });
+    await apply();
+
+    expect(record).toMatchObject({ dataRevision: 46, schedulingInputRevision: 6, tabRevisions: { Volunteers: 3, Centers: 1 } });
+    expect(written()).toEqual(serializeControlRecord(record));
+  });
+
+  it('rolls back through rollbackTransition and refuses a second rollback', async () => {
+    const activated = serializedRecord({ authority: 'workbook-control', authorityEpoch: 4, dataRevision: 46, schedulingInputRevision: 6, tabRevisions: { Volunteers: 3 } });
+    const { writer, apply, written, order, journalRows } = await facade(activated);
+
+    const captured = { dataRevision: 40, schedulingInputRevision: 4, tabRevisions: { Volunteers: 1 } };
+    const { record } = writer.revert({ captured, actorId: 'operator@example.test', reason: 'approved rollback' });
+    await apply();
+
+    const before = controlRecordFromRows([activated]);
+    const expected = rollbackTransition(before, { captured, actorId: 'operator@example.test', reason: 'approved rollback' }, AT);
+    expect(written()).toEqual(serializeControlRecord(expected));
+    expect(record).toMatchObject({ authority: 'script-properties', authorityEpoch: 5, generation: 9, completedGeneration: 9, dataRevision: 46, schedulingInputRevision: 6 });
+    expect(order).toEqual(['journal', 'control']);
+    const entry = Object.fromEntries(journalColumns.map((column, index) => [column, (journalRows.at(-1) ?? [])[index]]));
+    expect(entry).toMatchObject({ event: 'rollback', reason: 'approved rollback', generation: 9 });
+    // The record the writer just wrote is no longer on the portable authority,
+    // so a repeated rollback stops instead of advancing the epoch again.
+    expect(() => writer.revert({ captured, actorId: 'operator@example.test', reason: 'again' })).toThrowError(/authority is script-properties/u);
+  });
+
+  it('refuses a capture that does not supply the deployment counters', () => {
+    expect(() => capturedCounters({ dataRevision: 1, inputRevision: 2 })).toThrowError(/--tab-revisions/u);
+    expect(() => capturedCounters({ dataRevision: 1, tabRevisions: {} })).toThrowError(/--input-revision/u);
+    expect(capturedCounters({ dataRevision: 1, inputRevision: 2, tabRevisions: { Volunteers: 1 } })).toEqual({ dataRevision: 1, schedulingInputRevision: 2, tabRevisions: { Volunteers: 1 } });
   });
 });
