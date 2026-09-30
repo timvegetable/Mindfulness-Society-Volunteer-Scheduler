@@ -4,6 +4,7 @@ import { differingProjectionFields } from '../server/integration/projection-diff
 import { createProductionRuntime } from '../server/runtime.js';
 import { READ_API_PATH, BENCHMARK_PREVIEW_PATH, READ_API_OPERATIONS, BENCHMARK_PREVIEW_OPERATIONS } from './read-api.js';
 import { benchmarkPreviewEnabled, StagingWorkbookHost } from './host.js';
+import type { StagingServiceOptions } from './staging.js';
 import {
   CLOCK,
   DATA_REVISION,
@@ -11,12 +12,14 @@ import {
   LOGICAL_ROWS,
   NOW_MS,
   OUTPUT_REVISION,
+  controlRow,
   fakeGoogle,
   fixtureRows,
   idToken,
   legacyProjection,
   legacyRuntime,
   request,
+  rowsWithControl,
   setupSigningKeys,
   stagingBindings,
   type Row
@@ -29,7 +32,7 @@ import {
  * storage untouched, and first-use telemetry.
  */
 
-function hostWith(overrides: Record<string, string> = {}, rows: Map<string, Row[]> = LOGICAL_ROWS) {
+function hostWith(overrides: Record<string, string> = {}, rows: Map<string, Row[]> = LOGICAL_ROWS, serviceOptions: StagingServiceOptions = {}) {
   const { fetchImpl, sheetsCalls, urls } = fakeGoogle(rows);
   const storage: string[] = [];
   const state = {
@@ -43,7 +46,7 @@ function hostWith(overrides: Record<string, string> = {}, rows: Map<string, Row[
       }
     })
   } as unknown as DurableObjectState;
-  const host = new StagingWorkbookHost(state, stagingBindings(overrides), { fetch: fetchImpl, nowMs: () => NOW_MS });
+  const host = new StagingWorkbookHost(state, stagingBindings(overrides), { fetch: fetchImpl, nowMs: () => NOW_MS, ...serviceOptions });
   return { host, sheetsCalls, urls, storage };
 }
 
@@ -336,5 +339,96 @@ describe('request isolation inside the object', () => {
       expect(line).not.toContain('credential');
       expect(line).not.toContain('eyJ');
     }
+  });
+});
+
+describe('staging instrumentation bindings', () => {
+  const ACTIVATED = { STAGING_CONTROL_AUTHORITY: 'workbook-control' };
+
+  it('holds the portable bracket only when the deployment sets a valid binding', async () => {
+    const held: number[] = [];
+    const { host, sheetsCalls } = hostWith({ ...ACTIVATED, STAGING_BRACKET_HOLD_MS: '8000' }, rowsWithControl(), { delay: async (ms) => { held.push(ms); } });
+
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminSchedule, await idToken('admin@example.test')));
+
+    expect(response.status).toBe(200);
+    expect(held).toEqual([8_000]);
+    // The hold widens the window; it does not change the read plan.
+    expect(sheetsCalls).toHaveLength(3);
+  });
+
+  it.each(['', '0', 'abc', '99999999', '-1', '12.5'])('leaves the read untouched for the unusable value %s', async (value) => {
+    const held: number[] = [];
+    const { host, sheetsCalls } = hostWith({ ...ACTIVATED, STAGING_BRACKET_HOLD_MS: value }, rowsWithControl(), { delay: async (ms) => { held.push(ms); } });
+
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminSchedule, await idToken('admin@example.test')));
+
+    expect(response.status).toBe(200);
+    expect(held).toEqual([]);
+    expect(sheetsCalls).toHaveLength(3);
+  });
+
+  it('never holds the legacy path, even when the binding is set', async () => {
+    const held: number[] = [];
+    const { host, sheetsCalls } = hostWith({ STAGING_BRACKET_HOLD_MS: '8000' }, new Map(LOGICAL_ROWS), { delay: async (ms) => { held.push(ms); } });
+
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminSchedule, await idToken('admin@example.test')));
+
+    expect(response.status).toBe(200);
+    expect(held).toEqual([]);
+    expect(sheetsCalls).toHaveLength(2);
+  });
+
+  it('reports one per-read duration in call order, alongside the read count', async () => {
+    let ticks = 0;
+    const ticking = () => NOW_MS + (ticks += 5);
+    const { host } = hostWith(ACTIVATED, rowsWithControl(), { nowMs: ticking });
+
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminSchedule, await idToken('admin@example.test')));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-staging-sheets-reads')).toBe('3');
+    // Fused authorization+control, plan, closing control: three requests, three
+    // durations, in the order they were issued.
+    expect(response.headers.get('x-staging-read-ms')).toBe('5,5,5');
+  });
+
+  it('omits the timing header when the request read nothing', async () => {
+    const { host, sheetsCalls } = hostWith();
+
+    // The transport refuses a mutation before dispatch, so the request never
+    // reaches the service and carries no read headers at all.
+    const refused = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminScheduleRerun, 'credential-placeholder'));
+    expect(refused.headers.get('x-staging-read-ms')).toBeNull();
+    expect(refused.headers.get('x-staging-sheets-reads')).toBeNull();
+
+    // A request the service itself refuses before any Sheets call reports a
+    // zero read count and no timing header: absent, not an empty list.
+    const unauthorized = await host.fetch(execRequest(INTEGRATION_OPERATIONS.me, ''));
+    expect(unauthorized.headers.get('x-staging-sheets-reads')).toBe('0');
+    expect(unauthorized.headers.get('x-staging-read-ms')).toBeNull();
+    expect(sheetsCalls).toEqual([]);
+  });
+
+  it('never puts row values, credentials or a digest into the timing header', async () => {
+    const { host } = hostWith(ACTIVATED, rowsWithControl());
+
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminSchedule, await idToken('admin@example.test')));
+
+    const header = response.headers.get('x-staging-read-ms') ?? '';
+    expect(header).toMatch(/^\d+(,\d+)*$/u);
+  });
+
+  it('carries a refused control state with the reads it actually paid for', async () => {
+    const pending = controlRow({ generation: 5, completedGeneration: 4, mutationState: 'pending', operationId: 'admin.schedule.rerun#op-1', operationTabs: JSON.stringify(['Assignments']) });
+    const { host, sheetsCalls } = hostWith(ACTIVATED, rowsWithControl(pending));
+
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminSchedule, await idToken('admin@example.test')));
+
+    const envelope = await response.json() as { ok: boolean; error?: { code: string; details?: { reason?: string } } };
+    expect(envelope).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-pending' } } });
+    expect(sheetsCalls).toHaveLength(1);
+    expect(response.headers.get('x-staging-sheets-reads')).toBe('1');
+    expect(response.headers.get('x-staging-read-ms')).toMatch(/^\d+$/u);
   });
 });

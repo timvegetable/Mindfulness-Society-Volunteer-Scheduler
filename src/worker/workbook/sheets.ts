@@ -30,6 +30,8 @@ export type SheetsReadClientOptions = Readonly<{
   /** Supplies a bearer token for the read-only Sheets scope. */
   accessToken: () => Promise<string>;
   fetch: FetchLike;
+  /** Monotonic-enough millisecond clock for per-request timing; defaults to `Date.now`. */
+  nowMs?: () => number;
 }>;
 
 export type SheetsReadClient = Readonly<{
@@ -45,6 +47,12 @@ export type SheetsReadClient = Readonly<{
   readTab(name: WorkbookTabName): Promise<readonly (readonly unknown[])[]>;
   /** Number of Sheets API requests issued, for the measurement record. */
   readCount(): number;
+  /**
+   * Milliseconds each Sheets request took, in call order and one entry per
+   * request `readCount()` counts. Task 4.1 reports the control reads'
+   * contribution separately, which needs the positions, not just a total.
+   */
+  readDurationsMs(): readonly number[];
 }>;
 
 function batchGetUrl(spreadsheetId: string, request: BatchGetValuesRequest): string {
@@ -59,7 +67,9 @@ function batchGetUrl(spreadsheetId: string, request: BatchGetValuesRequest): str
 export function createSheetsReadClient(options: SheetsReadClientOptions): SheetsReadClient {
   const spreadsheetId = options.spreadsheetId.trim();
   if (spreadsheetId.length === 0) throw new SheetsReadError('A bound workbook id is required for staging reads.');
+  const nowMs = options.nowMs ?? (() => Date.now());
   let reads = 0;
+  const durationsMs: number[] = [];
 
   const request = async (url: string): Promise<unknown> => {
     let token: string;
@@ -69,21 +79,29 @@ export function createSheetsReadClient(options: SheetsReadClientOptions): Sheets
       throw new SheetsReadError('A Sheets access token is unavailable.');
     }
     reads += 1;
-    let response: Response;
+    // Timed from the request itself: token acquisition is a separate dependency
+    // and would otherwise be charged to the Sheets call. A failed request still
+    // records a duration, so positions stay aligned with `readCount()`.
+    const startedAt = nowMs();
     try {
-      response = await options.fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    } catch {
-      throw new SheetsReadError('The Sheets API could not be reached.');
-    }
-    if (!response.ok) {
-      // The body is dropped: it can echo request material, and the status is
-      // enough to classify a failure.
-      throw new SheetsReadError(`The Sheets API request failed with status ${response.status}.`, response.status);
-    }
-    try {
-      return await response.json();
-    } catch {
-      throw new SheetsReadError('The Sheets API returned a malformed response.');
+      let response: Response;
+      try {
+        response = await options.fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      } catch {
+        throw new SheetsReadError('The Sheets API could not be reached.');
+      }
+      if (!response.ok) {
+        // The body is dropped: it can echo request material, and the status is
+        // enough to classify a failure.
+        throw new SheetsReadError(`The Sheets API request failed with status ${response.status}.`, response.status);
+      }
+      try {
+        return await response.json();
+      } catch {
+        throw new SheetsReadError('The Sheets API returned a malformed response.');
+      }
+    } finally {
+      durationsMs.push(Math.max(0, Math.round(nowMs() - startedAt)));
     }
   };
 
@@ -112,6 +130,7 @@ export function createSheetsReadClient(options: SheetsReadClientOptions): Sheets
         throw new SheetsReadError(error instanceof WorkbookBatchReadError ? error.message : 'The Sheets API returned an unexpected range.');
       }
     },
-    readCount: () => reads
+    readCount: () => reads,
+    readDurationsMs: () => durationsMs.slice()
   };
 }

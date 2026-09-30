@@ -188,10 +188,10 @@ export function createReadApi(options: ReadApiOptions): ReadApi {
       headers: {
         'Access-Control-Allow-Origin': origin,
         Vary: 'Origin',
-        // The browser probe records the point of presence and the request's read
-        // count and snapshot digest; without this a cross-origin caller can see
-        // none of them.
-        'Access-Control-Expose-Headers': 'cf-ray, X-Staging-Sheets-Reads, X-Staging-Snapshot-Digest'
+        // The browser probe records the point of presence, the request's read
+        // count, the per-read timings and the snapshot digest; without this a
+        // cross-origin caller can see none of them.
+        'Access-Control-Expose-Headers': 'cf-ray, X-Staging-Sheets-Reads, X-Staging-Read-Ms, X-Staging-Snapshot-Digest'
       }
     };
   };

@@ -25,6 +25,8 @@ import {
   request,
   serviceWith,
   setupSigningKeys,
+  controlRow,
+  rowsWithControl,
   stagingBindings,
   type Row
 } from './staging-test-support.js';
@@ -357,96 +359,110 @@ describe('staging snapshot primitives', () => {
 describe('portable control bracket', () => {
   const ADMIN = 'admin@example.test';
 
-  /** One serialized control record row, in `WorkbookControl` column order. */
-  function controlRow(overrides: Record<string, unknown> = {}): Row {
-    const record: Row = {
-      protocolVersion: 1,
-      authorityEpoch: 1,
-      authority: 'workbook-control',
-      generation: 4,
-      completedGeneration: 4,
-      dataRevision: DATA_REVISION,
-      schedulingInputRevision: INPUT_REVISION,
-      tabRevisions: JSON.stringify({ Volunteers: 1 }),
-      mutationState: 'idle',
-      operationId: '',
-      operationStartedAt: '',
-      operationTabs: '',
-      operationBaseline: '',
-      updatedAt: '2026-09-29T00:00:00.000Z',
-      updatedBy: 'operator@example.test'
-    };
-    return { ...record, ...overrides };
-  }
-
-  function activatedRows(row: Row): Map<string, Row[]> {
-    const rows = new Map<string, Row[]>(LOGICAL_ROWS);
-    rows.set('WorkbookControl', [row]);
-    return rows;
-  }
+  const activatedRows = rowsWithControl;
 
   const activated = () => ({ ...stagingBindings(), STAGING_CONTROL_AUTHORITY: 'workbook-control' });
 
-  it('serves the same envelope as the legacy reader while paying the two control reads', async () => {
-    const { fetchImpl, sheetsCalls } = fakeGoogle(activatedRows(controlRow()));
+  it('serves the same envelope as the legacy reader at the pinned three-read plan', async () => {
+    const { fetchImpl, sheetsCalls } = fakeGoogle(rowsWithControl());
     const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
 
     expect(response.ok).toBe(true);
     if (!response.ok) return;
     expect(differingProjectionFields(response.data, legacyProjection(INTEGRATION_OPERATIONS.adminSchedule))).toEqual([]);
-    // Two control reads bracket the plan; the authorization batch carries the
-    // record too, which is why a served read costs four reads in three calls.
-    const bracketCalls = sheetsCalls.filter((call) => call.ranges.length === 1 && call.ranges[0]?.startsWith("'WorkbookControl'"));
-    expect(bracketCalls).toHaveLength(2);
-    // The authorization table and the control record travel in one batch, then
-    // the plan read sits inside the bracket's two control reads. Four reads in
-    // three calls is the count the task 1.7 plan pins for a served domain read.
+    // The authorization table and the control record travel in one validated
+    // batch, and that batch is the bracket's first observation. A served domain
+    // read is therefore three Sheets requests, not four: fused
+    // authorization+control, plan, closing control.
     expect(sheetsCalls.map((call) => call.ranges.map((range) => range.split('!')[0]))).toEqual([
       ["'Users'", "'WorkbookControl'"],
-      ["'WorkbookControl'"],
       ["'SchedulingRuns'", "'Assignments'", "'Backups'", "'Sessions'", "'Volunteers'", "'Centers'"],
       ["'WorkbookControl'"]
     ]);
   });
 
-  it('refuses to serve while a mutation is pending', async () => {
+  it('pays one read to serve an identity request under the activated authority', async () => {
+    const { fetchImpl, sheetsCalls } = fakeGoogle(rowsWithControl());
+
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.me, await idToken(ADMIN)));
+
+    expect(response.ok).toBe(true);
+    // No plan, so no bracket: the fused authorization+control batch is the
+    // whole cost, exactly as the read plan prices it.
+    expect(sheetsCalls).toHaveLength(1);
+  });
+
+  it('pays one read to refuse a pending mutation, before requesting a domain range', async () => {
     const pending = controlRow({ generation: 5, completedGeneration: 4, mutationState: 'pending', operationId: 'admin.schedule.rerun#op-1', operationTabs: JSON.stringify(['Assignments']) });
-    const { fetchImpl } = fakeGoogle(activatedRows(pending));
+    const { fetchImpl, sheetsCalls } = fakeGoogle(activatedRows(pending));
 
     const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
 
     expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-pending' } } });
+    expect(sheetsCalls).toHaveLength(1);
+    expect(sheetsCalls[0]?.ranges.map((range) => range.split('!')[0])).toEqual(["'Users'", "'WorkbookControl'"]);
   });
 
-  it('refuses a read whose generation moved between the two control reads', async () => {
-    const rows = activatedRows(controlRow());
+  it('refuses a read whose generation moved between the fused observation and the closing read', async () => {
+    const rows = rowsWithControl();
     const base = fakeGoogle(rows);
-    let controlReads = 0;
+    let planReads = 0;
     const fetchImpl: FetchLike = async (input, init) => {
       const url = String(input);
       const ranges = url.startsWith('https://sheets.googleapis.com/') ? new URL(url).searchParams.getAll('ranges') : [];
-      const isControlOnly = ranges.length === 1 && ranges[0]?.startsWith("'WorkbookControl'");
-      const response = await base.fetchImpl(input, init);
-      // The authorization batch also carries the control record, so only the
-      // bracket's own first control read starts the race.
-      if (isControlOnly) {
-        controlReads += 1;
-        if (controlReads === 1) rows.set('WorkbookControl', [controlRow({ generation: 6, completedGeneration: 6, dataRevision: DATA_REVISION + 1 })]);
+      // The plan read sits between the two control observations. An abort moves
+      // the generation and completed generation while leaving every counter
+      // alone, so this is the case equal revisions would not catch. The first
+      // observation has already returned and cannot see it.
+      if (ranges.some((range) => range.startsWith("'SchedulingRuns'"))) {
+        planReads += 1;
+        rows.set('WorkbookControl', [controlRow({ generation: 6, completedGeneration: 6 })]);
       }
-      return response;
+      return await base.fetchImpl(input, init);
     };
 
     const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
 
+    expect(planReads).toBe(1);
     expect(response).toMatchObject({ ok: false, error: { code: 'STALE_REVISION', details: { reason: 'control-generation_changed' } } });
   });
 
+  it('refuses an authority mismatch before requesting a domain range', async () => {
+    const { fetchImpl, sheetsCalls } = fakeGoogle(rowsWithControl(controlRow({ authority: 'script-properties' })));
+
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-authority_mismatch' } } });
+    expect(sheetsCalls).toHaveLength(1);
+  });
+
+  it('refuses a malformed record rather than hydrating around it', async () => {
+    const { fetchImpl, sheetsCalls } = fakeGoogle(rowsWithControl(controlRow({ protocolVersion: 'two' })));
+
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-malformed' } } });
+    expect(sheetsCalls).toHaveLength(1);
+  });
+
+  it('refuses a duplicated record rather than choosing one of the rows', async () => {
+    const rows = rowsWithControl();
+    rows.set('WorkbookControl', [controlRow(), controlRow({ updatedBy: 'second@example.test' })]);
+    const { fetchImpl, sheetsCalls } = fakeGoogle(rows);
+
+    const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-duplicate' } } });
+    expect(sheetsCalls).toHaveLength(1);
+  });
+
   it('refuses to serve at all when the portable authority is active but the record is missing', async () => {
-    const { fetchImpl } = fakeGoogle(new Map(LOGICAL_ROWS));
+    const { fetchImpl, sheetsCalls } = fakeGoogle(new Map(LOGICAL_ROWS));
 
     const response = await serviceWith(fetchImpl, activated()).handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
 
     expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-missing' } } });
+    expect(sheetsCalls).toHaveLength(1);
   });
 
   it('still serves unguarded when the binding is absent', async () => {
@@ -456,5 +472,95 @@ describe('portable control bracket', () => {
 
     expect(response.ok).toBe(true);
     expect(sheetsCalls.some((call) => call.ranges.some((range) => range.startsWith("'WorkbookControl'")))).toBe(false);
+  });
+});
+
+describe('staging bracket-hold instrument', () => {
+  const ADMIN = 'admin@example.test';
+  const activated = () => ({ ...stagingBindings(), STAGING_CONTROL_AUTHORITY: 'workbook-control' });
+
+  it('is off by default and never delays a read', async () => {
+    const held: number[] = [];
+    const { fetchImpl, sheetsCalls } = fakeGoogle(rowsWithControl());
+
+    const response = await serviceWith(fetchImpl, activated(), { delay: async (ms) => { held.push(ms); } })
+      .handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response.ok).toBe(true);
+    expect(held).toEqual([]);
+    expect(sheetsCalls).toHaveLength(3);
+  });
+
+  it('holds the bracket open before hydration without changing the read sequence', async () => {
+    const held: number[] = [];
+    const { fetchImpl, sheetsCalls } = fakeGoogle(rowsWithControl());
+
+    const response = await serviceWith(fetchImpl, activated(), { bracketHoldMs: 8_000, delay: async (ms) => { held.push(ms); } })
+      .handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response.ok).toBe(true);
+    expect(held).toEqual([8_000]);
+    expect(sheetsCalls.map((call) => call.ranges.map((range) => range.split('!')[0]))).toEqual([
+      ["'Users'", "'WorkbookControl'"],
+      ["'SchedulingRuns'", "'Assignments'", "'Backups'", "'Sessions'", "'Volunteers'", "'Centers'"],
+      ["'WorkbookControl'"]
+    ]);
+  });
+
+  it('never applies on the legacy path', async () => {
+    const held: number[] = [];
+    const { fetchImpl, sheetsCalls } = fakeGoogle(new Map(LOGICAL_ROWS));
+
+    const response = await serviceWith(fetchImpl, undefined, { bracketHoldMs: 8_000, delay: async (ms) => { held.push(ms); } })
+      .handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response.ok).toBe(true);
+    expect(held).toEqual([]);
+    expect(sheetsCalls).toHaveLength(2);
+  });
+});
+
+describe('per-read timing', () => {
+  const ADMIN = 'admin@example.test';
+
+  /** A clock that advances 5 ms per call, so each Sheets request is exactly 5 ms. */
+  function tickingClock(): () => number {
+    let ticks = 0;
+    return () => NOW_MS + (ticks += 5);
+  }
+
+  it('reports one duration per Sheets request in call order', async () => {
+    const { fetchImpl } = fakeGoogle(rowsWithControl());
+    const service = createStagingReadService(
+      { ...stagingBindings(), STAGING_CONTROL_AUTHORITY: 'workbook-control' },
+      { fetch: fetchImpl, nowMs: tickingClock() }
+    );
+
+    const response = await service.handle(request(INTEGRATION_OPERATIONS.adminSchedule, await idToken(ADMIN)));
+
+    expect(response.ok).toBe(true);
+    const stats = service.stats();
+    expect(stats.sheetsReads).toBe(3);
+    // One entry per request, in call order: the fused authorization+control
+    // batch, the plan, the closing control read. The harness maps those
+    // positions onto the phases, which is how the control reads' contribution
+    // is priced separately.
+    expect(stats.sheetsReadMs).toEqual([5, 5, 5]);
+  });
+
+  it('records a duration for a failed request too, so positions stay aligned with the read count', async () => {
+    const base = fakeGoogle();
+    const failing: FetchLike = async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('https://sheets.googleapis.com/')) return new Response('nope', { status: 500 });
+      return await base.fetchImpl(input, init);
+    };
+    const service = createStagingReadService(stagingBindings(), { fetch: failing, nowMs: tickingClock() });
+
+    const response = await service.handle(request(INTEGRATION_OPERATIONS.me, await idToken(ADMIN)));
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'users-read-500' } } });
+    expect(service.stats().sheetsReads).toBe(1);
+    expect(service.stats().sheetsReadMs).toHaveLength(1);
   });
 });

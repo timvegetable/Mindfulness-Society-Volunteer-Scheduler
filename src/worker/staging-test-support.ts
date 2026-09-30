@@ -5,7 +5,7 @@ import { createProductionRuntime } from '../server/runtime.js';
 import { InMemoryProperties, InMemorySpreadsheet } from '../server/workbook/in-memory-sheet.js';
 import { WORKBOOK_TABS, tabDefinition, WORKBOOK_CONTROL_TABS } from '../server/workbook/schema.js';
 import { GOOGLE_JWKS_URL, GOOGLE_TOKEN_ENDPOINT, base64UrlEncodeJson, signRs256, type FetchLike } from './google/index.js';
-import { createStagingReadService } from './staging.js';
+import { createStagingReadService, type StagingServiceOptions } from './staging.js';
 
 /**
  * Shared fixture and Google-double helpers for the Worker-native differential
@@ -210,6 +210,39 @@ export function fixtureRows(): Map<string, Row[]> {
 
 export const LOGICAL_ROWS = fixtureRows();
 
+/**
+ * One serialized `WorkbookControl` data row, in column order, activated for the
+ * portable authority and idle. Shared so the staging, host and gateway suites
+ * exercise the same record instead of three drifting copies.
+ */
+export function controlRow(overrides: Row = {}): Row {
+  return {
+    protocolVersion: 1,
+    authorityEpoch: 1,
+    authority: 'workbook-control',
+    generation: 4,
+    completedGeneration: 4,
+    dataRevision: DATA_REVISION,
+    schedulingInputRevision: INPUT_REVISION,
+    tabRevisions: JSON.stringify({ Volunteers: 1 }),
+    mutationState: 'idle',
+    operationId: '',
+    operationStartedAt: '',
+    operationTabs: '',
+    operationBaseline: '',
+    updatedAt: '2026-09-29T00:00:00.000Z',
+    updatedBy: 'operator@example.test',
+    ...overrides
+  };
+}
+
+/** The fixture workbook with a control record in it. */
+export function rowsWithControl(row: Row = controlRow()): Map<string, Row[]> {
+  const rows = new Map<string, Row[]>(LOGICAL_ROWS);
+  rows.set('WorkbookControl', [row]);
+  return rows;
+}
+
 export function stagingBindings(overrides: Record<string, string> = {}): Record<string, string> {
   return {
     STAGING_ALLOWED_ORIGINS: 'https://scheduling.example.test',
@@ -298,8 +331,8 @@ export function fakeGoogle(rows: Map<string, Row[]> = LOGICAL_ROWS, zone = WORKB
   return { fetchImpl, sheetsCalls, urls };
 }
 
-export function serviceWith(fetchImpl: FetchLike, bindings: Record<string, string> = stagingBindings()) {
-  return createStagingReadService(bindings, { fetch: fetchImpl, nowMs: () => NOW_MS });
+export function serviceWith(fetchImpl: FetchLike, bindings: Record<string, string> = stagingBindings(), options: StagingServiceOptions = {}) {
+  return createStagingReadService(bindings, { fetch: fetchImpl, nowMs: () => NOW_MS, ...options });
 }
 
 export function request(operation: string, credential: string, extra: Record<string, unknown> = {}) {

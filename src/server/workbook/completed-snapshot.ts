@@ -63,6 +63,14 @@ export function withCompletedSnapshot<T>(options: CompletedSnapshotOptions<T>): 
 }
 
 export type CompletedSnapshotAsyncOptions<T> = {
+  /**
+   * A control record the caller already observed for this request, used as the
+   * bracket's first observation. A reader whose authorization batch carried the
+   * control row passes it here, so the bracket costs one further read instead of
+   * two. It is checked for authority and idleness exactly like a fresh read, and
+   * the closing observation still has to agree with it.
+   */
+  before?: ControlRecord;
   readControl: () => Promise<ControlRecord>;
   hydrate: () => Promise<T>;
   tabs: readonly WorkbookTabName[];
@@ -75,7 +83,7 @@ export type CompletedSnapshotAsyncOptions<T> = {
  * hydration, control, then the tuple comparison.
  */
 export async function withCompletedSnapshotAsync<T>(options: CompletedSnapshotAsyncOptions<T>): Promise<CompletedSnapshot<T>> {
-  const before = await options.readControl();
+  const before = options.before ?? (await options.readControl());
   assertAuthority(before, options.authority);
   assertIdleBeforeHydration(before);
   const data = await options.hydrate();

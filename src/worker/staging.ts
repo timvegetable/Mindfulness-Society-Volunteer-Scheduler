@@ -20,17 +20,26 @@ import { createSnapshotBatchReader, createWorkbookSnapshot } from './workbook/sn
  * Hydrate one named plan. With the portable authority activated the read is
  * bracketed by control reads, so a mutation that begins, completes or recovers
  * while the ranges are in flight rejects the snapshot instead of serving rows
- * from two different generations. The two extra reads are visible in the
- * response's Sheets read count, which is what task 4.1 measures.
+ * from two different generations. The bracket's first observation is the control
+ * row the authorization batch already returned, so a served read pays one
+ * control read rather than two; the reads are visible in the response's Sheets
+ * read count and per-read timing, which is what task 4.1 measures.
  */
 async function readPlanRows(
   sheets: ReturnType<typeof createSheetsReadClient>,
   plan: BatchReadPlan,
   authority: ControlAuthority,
+  observedControlRows: readonly (readonly unknown[])[] | undefined,
+  hold: Readonly<{ ms: number; delay: (ms: number) => Promise<void> }>,
   publishControlRows: (rows: readonly (readonly unknown[])[]) => void
 ): Promise<BatchReadRows> {
   if (authority !== 'workbook-control') return await sheets.readTabs(BATCH_READ_PLANS[plan]);
   const snapshot = await withCompletedSnapshotAsync({
+    // Parsed here, after the caller has been authenticated and authorized, so a
+    // pending, malformed or absent record is never described to a caller who has
+    // not been authorized yet — and before hydration, so the domain ranges are
+    // not requested only to be discarded.
+    before: controlRecordFromRows(observedControlRows ?? []),
     readControl: async () => {
       const rows = await sheets.readTab('WorkbookControl');
       // The request's session reports its revisions from these rows, so the
@@ -38,7 +47,13 @@ async function readPlanRows(
       publishControlRows(rows);
       return controlRecordFromRows(rows);
     },
-    hydrate: () => sheets.readTabs(BATCH_READ_PLANS[plan]),
+    hydrate: async () => {
+      // Staging-only instrument, off unless a deployment sets it: it widens the
+      // window between the two observations so a concurrent transition is
+      // guaranteed to land inside it.
+      if (hold.ms > 0) await hold.delay(hold.ms);
+      return await sheets.readTabs(BATCH_READ_PLANS[plan]);
+    },
     tabs: BATCH_READ_PLANS[plan],
     authority: 'workbook-control'
   });
@@ -117,6 +132,8 @@ const OPERATION_PLANS: Readonly<Record<string, BatchReadPlan | undefined>> = {
 
 export type StagingServiceStats = Readonly<{
   sheetsReads: number;
+  /** Per-read duration in call order, aligned with `sheetsReads`. */
+  sheetsReadMs: readonly number[];
   requests: number;
   denied: number;
   /** Digest of the rows this request read; recorded with every measured result. */
@@ -138,6 +155,14 @@ export type StagingServiceOptions = Readonly<{
   dependencyCache?: DependencyCache;
   /** Serves the schedule preview on the benchmark route; default false keeps it refused everywhere. */
   benchmarkPreview?: boolean;
+  /**
+   * Staging-only instrument: hold the portable bracket open this many
+   * milliseconds before hydrating. Absent or zero leaves the read sequence and
+   * its read count exactly as they are.
+   */
+  bracketHoldMs?: number;
+  /** Test seam for the hold; defaults to a real timer. */
+  delay?: (ms: number) => Promise<void>;
 }>;
 
 let isolateEntry: { key: string; dependencies: GoogleDependencies } | undefined;
@@ -181,9 +206,11 @@ function unauthorized(reason: AuthenticationError['reason'], detail: string): Ap
 export function createStagingReadService(bindings: StagingBindings, options: StagingServiceOptions = {}): StagingReadService {
   const outbound: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
   const nowMs = options.nowMs ?? (() => Date.now());
+  const hold = { ms: options.bracketHoldMs ?? 0, delay: options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))) };
   let requests = 0;
   let denied = 0;
   let sheetsReads = 0;
+  let sheetsReadMs: number[] = [];
   let digest: string | undefined;
 
   const injectedTransport = options.fetch !== undefined || options.nowMs !== undefined;
@@ -207,10 +234,13 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       try {
         return await serve(input, (client) => { sheets = client; }, route);
       } finally {
-        if (sheets) sheetsReads += sheets.readCount();
+        if (sheets) {
+          sheetsReads += sheets.readCount();
+          sheetsReadMs = sheetsReadMs.concat(sheets.readDurationsMs());
+        }
       }
     },
-    stats: () => ({ sheetsReads, requests, denied, digest })
+    stats: () => ({ sheetsReads, sheetsReadMs, requests, denied, digest })
   };
 
   async function serve(input: unknown, onSheetsClient: (client: ReturnType<typeof createSheetsReadClient>) => void, route: ReadRoute): Promise<ApiResponse<unknown>> {
@@ -304,7 +334,8 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       const sheets = createSheetsReadClient({
         spreadsheetId: workbook.spreadsheetId,
         accessToken: () => dependencies.sheetsTokens.accessToken('https://www.googleapis.com/auth/spreadsheets.readonly'),
-        fetch: outbound
+        fetch: outbound,
+        nowMs
       });
       onSheetsClient(sheets);
 
@@ -374,15 +405,20 @@ export function createStagingReadService(bindings: StagingBindings, options: Sta
       const plan = OPERATION_PLANS[request.operation];
       if (plan) {
         try {
-          const rows = await readPlanRows(sheets, plan, authority, (rows) => { controlRows = rows; });
+          // `controlRows` is the control row the authorization batch returned;
+          // the bracket uses it as its first observation, and the closing read
+          // replaces it with the fresher row the session then reports from.
+          const rows = await readPlanRows(sheets, plan, authority, controlRows, hold, (rows) => { controlRows = rows; });
           for (const [tab, tabRows] of rows) {
             fetched.set(tab, tabRows);
             snapshot.setTab(tab, tabRows);
           }
         } catch (error) {
           if (error instanceof ControlError) {
-            // The completed-snapshot check refused the read: a mutation was
-            // pending or a generation moved while the ranges were in flight.
+            // The control check refused the read: the record is absent,
+            // duplicated or malformed, the authority is not the one this reader
+            // was activated for, a mutation was pending, or a generation moved
+            // while the ranges were in flight.
             console.warn(`staging control check refused a read: ${error.code}`);
             return failure(controlFailureCode(error.code, 'read'), 'The workbook did not hold still while it was read; retry.', {
               reason: `control-${error.code.toLowerCase()}`

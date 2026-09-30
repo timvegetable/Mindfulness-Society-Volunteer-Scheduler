@@ -54,6 +54,30 @@ export function requiredBinding(bindings: StagingBindings, name: string): string
   return value;
 }
 
+/** The longest hold the staging bracket instrument accepts, in milliseconds. */
+export const MAX_BRACKET_HOLD_MS = 10_000;
+
+/**
+ * Staging-only instrument: hold the portable reader's bracket open for a fixed
+ * number of milliseconds before it hydrates, so a concurrent control transition
+ * lands inside the window unconditionally. A rehearsal needs that interleaving
+ * to be deterministic; three earlier attempts failed because each transition
+ * ran in its own process and never made the window.
+ *
+ * Absent, blank, zero, non-integer or out-of-range disables the instrument, and
+ * a value it cannot parse is off rather than an error: this is a measurement
+ * aid, and a deployment must never fail to serve because of it.
+ */
+export function stagingBracketHoldMs(bindings: StagingBindings): number {
+  const raw = bindings.STAGING_BRACKET_HOLD_MS;
+  if (typeof raw !== 'string') return 0;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return 0;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_BRACKET_HOLD_MS) return 0;
+  return parsed;
+}
+
 function parseOrigin(name: string, value: string): string {
   let url: URL;
   try {

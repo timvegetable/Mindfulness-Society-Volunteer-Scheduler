@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StagingConfigurationError, allowedOrigins, googleIdentityConfiguration, optionalBinding, requiredBinding, controlAuthority } from './config.js';
+import { StagingConfigurationError, MAX_BRACKET_HOLD_MS, allowedOrigins, googleIdentityConfiguration, optionalBinding, requiredBinding, controlAuthority, stagingBracketHoldMs } from './config.js';
 import { INTEGRATION_OPERATIONS } from '../server/integration/request-policy.js';
 import { READ_API_OPERATIONS } from './read-api.js';
 
@@ -110,5 +110,29 @@ describe('staging control authority binding', () => {
 
   it('refuses a non-string binding', () => {
     expect(() => controlAuthority({ STAGING_CONTROL_AUTHORITY: 1 })).toThrowError(/STAGING_CONTROL_AUTHORITY/u);
+  });
+});
+
+describe('staging bracket-hold binding', () => {
+  // A measurement instrument, not a gate: a value it cannot parse disables the
+  // hold rather than failing the deployment, and an out-of-range value is not
+  // silently clamped into a different experiment.
+  it('is off unless the deployment sets an integer inside the range', () => {
+    expect(stagingBracketHoldMs({})).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: '' })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: '   ' })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: '0' })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: 'abc' })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: '-5' })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: '12.5' })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: '8000ms' })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: String(MAX_BRACKET_HOLD_MS + 1) })).toBe(0);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: 8000 })).toBe(0);
+  });
+
+  it('accepts the milliseconds it will hold', () => {
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: '1' })).toBe(1);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: ' 8000 ' })).toBe(8000);
+    expect(stagingBracketHoldMs({ STAGING_BRACKET_HOLD_MS: String(MAX_BRACKET_HOLD_MS) })).toBe(MAX_BRACKET_HOLD_MS);
   });
 });

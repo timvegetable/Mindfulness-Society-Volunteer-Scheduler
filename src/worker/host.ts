@@ -1,4 +1,4 @@
-import { allowedOrigins, type StagingBindings } from './config.js';
+import { allowedOrigins, stagingBracketHoldMs, type StagingBindings } from './config.js';
 import { READ_API_MAX_REQUEST_BYTES, createReadApi } from './read-api.js';
 import { createStagingReadService, type StagingServiceOptions } from './staging.js';
 import { failure } from '../server/integration/request-policy.js';
@@ -85,7 +85,11 @@ export class StagingWorkbookHost {
     try {
       // One service per request, so its counters describe this request only.
       const benchmarkEnabled = benchmarkPreviewEnabled(this.env);
-      const service = createStagingReadService(this.env, { ...this.serviceOptions, benchmarkPreview: benchmarkEnabled });
+      const service = createStagingReadService(this.env, {
+        ...this.serviceOptions,
+        benchmarkPreview: benchmarkEnabled,
+        bracketHoldMs: stagingBracketHoldMs(this.env)
+      });
       const api = createReadApi({
         origins: allowedOrigins(this.env),
         dispatch: (input, route) => service.handle(input, route),
@@ -94,6 +98,10 @@ export class StagingWorkbookHost {
           const stats = service.stats();
           return {
             'X-Staging-Sheets-Reads': String(stats.sheetsReads),
+            // Per-read durations in call order, so a measurement can price the
+            // control reads separately from the domain read without trusting a
+            // client-side stopwatch. Absent when the request made no read.
+            ...(stats.sheetsReadMs.length === 0 ? {} : { 'X-Staging-Read-Ms': stats.sheetsReadMs.join(',') }),
             ...(stats.digest === undefined ? {} : { 'X-Staging-Snapshot-Digest': stats.digest })
           };
         },
