@@ -63,14 +63,28 @@ comparing whole-workbook digests.
 | --- | --- | --- |
 | Before M4 | redeploy the previous server version; the workbook keeps two unused tabs and a version-4 Settings row, which the previous version's first-match reader tolerates because the version row was rewritten in place | none |
 | After M4, same authority | redeploy the *previous* version **while `CONTROL_AUTHORITY` is unset**: it reads Script Properties, which stopped advancing at M3, so this is only safe if no portable mutation has been admitted | must be verified: the control record's `dataRevision` must equal the captured value |
-| After M4 with portable mutations | revert authority to Script Properties under a separately approved stopped-writer reconciliation from the then-current record and any pending journal; copying the M3 numbers back is prohibited | new approval, listed below |
+| After M4 with portable mutations | revert authority to Script Properties through the production `rollbackTransition` (`ControlMutationWriter.revert`) under a separately approved stopped-writer window, then raise the Script Properties counters to at least the record's; copying the M3 numbers back is prohibited | new approval, listed below |
 | Forward | the protocol-compatible rollback is the same release with the authority left portable; a future change ships its own rollback version | none |
 
-The rehearsal (task 4.2) exercises the first two rows on synthetic staging,
-including a check that a Property-only writer cannot silently reopen writes: with
-`CONTROL_AUTHORITY` unset against a record that claims `workbook-control`, the
-reader refuses with `AUTHORITY_MISMATCH` rather than serving stale counters —
-that is the fail-closed property the rollback boundary rests on.
+The rehearsal (task 4.2) exercises these rows on synthetic staging. The
+pre-activation row was rehearsed as the D2 redeploy on 2026-09-29; the rollback
+row and the forward row ran on 2026-09-30 through the production transitions
+(`evidence/staging-rehearsal-live-checks-2-2026-09-30.md`): rollback to
+`script-properties` at epoch 8 and generation 27 with the counters held at
+`max(captured, current)`, the deployed reader refusing
+`UNAVAILABLE`/`control-authority_mismatch` at one read rather than serving stale
+counters, and forward activation with deliberately stale captured counters
+keeping the record's tuple and the same reader then serving it.
+
+A Property-only writer cannot silently reopen writes. Since task 1.4 the legacy
+revision source refuses **mutations** against a workbook that carries control
+state it does not own — an activated record, a malformed or duplicated one, or
+control tabs with no readable record — with `UNAVAILABLE` before the handler runs,
+so no row is written and no counter advances. Against the record reverted to
+`script-properties` it admits, and it reports the divergence the equality check
+above detects (record 46/6 against deployment 42/5 in the 2026-09-30 window). A
+pre-protocol build cannot self-refuse, which is why the drained gate and the
+record-equality check remain the procedure for a build older than this release.
 
 ## 4. Activation verification steps
 

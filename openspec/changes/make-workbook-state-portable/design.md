@@ -107,6 +107,39 @@ The archived staging topology observed one identity read and two reads for domai
 
 Quota and latency acceptance for the added checks: the `Sheets.Spreadsheets.Values.batchGet` and `spreadsheets.values.get` quota is per requesting identity, so a single service account serving all browsers sustains `60 / reads-per-request` served reads per minute — 20 identity reads or 15 domain reads with the counts above, against 60 and 30 without the control checks. Harness and browser probes therefore share the existing rolling read ledger, and control reads are counted in it. Latency acceptance is the unchanged contract threshold applied to the served read (warm p99 ≤ 1,500 ms per read operation per fixture), with the control-read contribution reported separately; no latency claim is made from the added reads until task 4.1 measures them. Correctness precedes a one-call target: reducing the plan to a single control read would end the completed-generation guarantee and is not an option.
 
+**Implemented sequence and measured counts (task 4.1, 2026-09-30).** The Worker
+implements the plan above with one change: the authorization batch and the
+bracket's first control observation are the same Sheets request, so a served path
+pays one control read rather than two. The sequence is fused
+`Users`+`WorkbookControl`, then the named plan, then the closing control read, and
+every rejection that can be decided from the first observation is decided there.
+Measured live on both synthetic fixtures (evidence:
+`evidence/staging-rehearsal-live-checks-2-2026-09-30.md`), one attempt per path:
+
+| Path | Control | `Users` | Domain batch | Total planned | Total measured |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rejected: invalid, pending, malformed, duplicate, unsupported, missing or wrong authority | 1 | fused | 0 | 1 | **1** |
+| Rejected: unauthenticated | 0 | 0 | 0 | 0 | **0** |
+| Served identity read (`session.me`) | 1 | fused | 0 | 1 | **1** |
+| Served domain read (Schedule or Insights) | 2 | fused | 1 | 3 | **3** |
+| Rejected: generation changed after hydration | 2 | fused | 1 | 3 | **3** |
+
+The unauthorised-role path stays at the two reads its row above names and was not
+measured live, because every served operation requires `administrator` and the
+window's captured credential is one; it is covered by the Worker contract suite.
+The restored legacy deployment serves at the archived one and two reads, which is
+the rollback posture.
+
+Quota arithmetic from the measured counts: the fused batch keeps a served domain
+read at three requests, so one service account sustains 20 served domain reads or
+60 identity reads per minute against the 60-per-minute per-identity quota, the
+same as the two-control-read plan it replaced would have allowed at 15 and 20.
+Latency outcome: five of the six measured populations meet the warm p99 ≤ 1,500 ms
+gate (350–1,137 ms). The larger fixture's Schedule read does not — p99 2,882 ms —
+and task 4.1 remains open on it. The control reads' own contribution is 174–338 ms
+per read, taken from the per-read timing header, so the control checks are not the
+dominant term in that breach.
+
 ### Writer protocol and consistent reads
 
 Apps Script remains the only writer and holds its script lock for the entire operation. Before changing any rows, it persists an in-progress marker and a new generation with operation identity and affected tabs. Completion publishes final counters and a completed generation only after domain/audit persistence succeeds. Where legacy operations cannot be atomically committed, store enough protected recovery evidence to restore/reconcile; a crash leaves the marker pending. Ordinary traffic must not clear a pending marker or report partial rows as current.
