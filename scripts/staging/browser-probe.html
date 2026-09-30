@@ -16,8 +16,17 @@
     <h1>Staging Worker browser probe</h1>
     <p>
       This page sends the three feasibility reads to the staging Worker from an allowlisted origin and records
-      transport facts and wall time. It is a measurement tool: it needs the staging deployment to exist, and it
-      displays aggregate results only.
+      transport facts, per-operation wall time, and what each attempt cost in Sheets reads (the Worker's read
+      count plus its per-read timings, when the deployment exposes them). It is a measurement tool: it needs the
+      staging deployment to exist, and it displays aggregates, one record per attempt, and no response bodies.
+    </p>
+    <p>
+      Query parameters: <code>api</code> (the staging Worker <code>/exec</code> URL), <code>client</code> (the
+      staging OAuth client id), <code>label</code> (the report name, default <code>probe</code>), and
+      <code>attempts</code> (attempts per operation, default 5, at most 60 — the rehearsal uses 30). The pool is
+      fixed at 4 requests in flight, because the contract's wall-time threshold applies to observations taken
+      with at least three in flight. Every attempt reserves its Sheets reads in the probe host's shared ledger
+      before it is issued.
     </p>
     <p class="warn">
       Never run this against production. The probe refuses any target that is not a <code>*.workers.dev</code> host
