@@ -339,3 +339,98 @@ describe('initialization bounds', () => {
     expect(protectedColumns.every((protection) => protection.warningOnly === false)).toBe(true);
   });
 });
+
+describe('rollback transition', () => {
+  /** The counters the outgoing authority reported, as the procedure captures them. */
+  const captured = (overrides: Partial<{ dataRevision: number; schedulingInputRevision: number; tabRevisions: Record<string, number> }> = {}) => ({
+    dataRevision: 0,
+    schedulingInputRevision: 0,
+    tabRevisions: {},
+    ...overrides
+  });
+
+  /** The fixture's own control sheet, seeded with a record the test controls. */
+  function fixtureWithRecord(record: Partial<ReturnType<typeof emptyControlRecord>> = {}, options: Parameters<typeof fixture>[0] = {}) {
+    const seeded = {
+      ...emptyControlRecord(NOW, 'operator'),
+      authority: AUTHORITY,
+      authorityEpoch: 1,
+      generation: 9,
+      completedGeneration: 9,
+      dataRevision: 46,
+      schedulingInputRevision: 6,
+      tabRevisions: { Volunteers: 3 },
+      ...record
+    };
+    const opened = fixture(options);
+    opened.controlSheet.getRange(2, 1, 1, serializeControlRecord(seeded).length).setValues([serializeControlRecord(seeded)]);
+    return opened;
+  }
+
+  it('returns the authority to Script Properties, moving the epoch and generation and keeping every counter', () => {
+    const { writer, journalSheet } = fixtureWithRecord();
+
+    const { record } = writer.revert({ captured: captured({ dataRevision: 42, schedulingInputRevision: 5, tabRevisions: { Volunteers: 2, Centers: 1 } }), actorId: 'operator@example.test', reason: 'approved rollback drill' });
+
+    expect(record).toEqual(expectRecord({
+      authority: 'script-properties',
+      authorityEpoch: 2,
+      generation: 10,
+      completedGeneration: 10,
+      // max(captured, current) in every dimension: nothing a client has already
+      // seen goes backwards, and a counter the record did not carry is adopted.
+      dataRevision: 46,
+      schedulingInputRevision: 6,
+      tabRevisions: { Volunteers: 3, Centers: 1 }
+    }));
+    const journal = journalRows(journalSheet);
+    expect(journal.at(-1)).toMatchObject({ event: 'rollback', reason: 'approved rollback drill', actorId: 'operator@example.test', generation: 10 });
+  });
+
+  it('adopts a counter the stopped legacy writer advanced past the record', () => {
+    const { writer } = fixtureWithRecord();
+
+    const reverted = writer.revert({ captured: captured({ dataRevision: 50, tabRevisions: { Volunteers: 9 } }), actorId: 'operator@example.test', reason: 'legacy writer advanced before the drain' });
+
+    expect(reverted.record).toMatchObject({ dataRevision: 50, tabRevisions: { Volunteers: 9 } });
+  });
+
+  it('runs with the live gate closed, because a rollback is a stopped-service procedure', () => {
+    const { writer } = fixtureWithRecord({}, { writeEnabled: false });
+
+    expect(writer.revert({ captured: captured(), actorId: 'operator@example.test', reason: 'drained rollback' }).record.authority).toBe('script-properties');
+  });
+
+  it('refuses while a mutation is pending', () => {
+    const { writer } = fixtureWithRecord({ mutationState: 'pending', generation: 10, operationId: 'admin.schedule.rerun#op-1', operationTabs: ['Assignments'] });
+
+    expectControlError(() => writer.revert({ captured: captured(), actorId: 'operator@example.test', reason: 'too early' }), 'PENDING');
+  });
+
+  it('refuses a record that is not on the portable authority, so a repeat stops', () => {
+    const { writer } = fixtureWithRecord();
+
+    writer.revert({ captured: captured(), actorId: 'operator@example.test', reason: 'first rollback' });
+
+    expectControlError(() => writer.revert({ captured: captured(), actorId: 'operator@example.test', reason: 'second rollback' }), 'AUTHORITY_MISMATCH');
+  });
+
+  it('refuses a writer that is not itself on the portable authority', () => {
+    const { writer } = fixtureWithRecord({}, { authority: 'script-properties' });
+
+    expectControlError(() => writer.revert({ captured: captured(), actorId: 'operator@example.test', reason: 'wrong process' }), 'AUTHORITY_MISMATCH');
+  });
+
+  it('requires a recorded reason', () => {
+    const { writer } = fixtureWithRecord();
+
+    expectControlError(() => writer.revert({ captured: captured(), actorId: 'operator@example.test', reason: '   ' }), 'MALFORMED');
+  });
+
+  it('refuses a captured counter that is not a non-negative integer or names an unknown tab', () => {
+    const { writer } = fixtureWithRecord();
+
+    expectControlError(() => writer.revert({ captured: captured({ dataRevision: -1 }), actorId: 'operator@example.test', reason: 'negative' }), 'MALFORMED');
+    expectControlError(() => writer.revert({ captured: captured({ tabRevisions: { Nope: 1 } }), actorId: 'operator@example.test', reason: 'unknown tab' }), 'MALFORMED');
+  });
+});

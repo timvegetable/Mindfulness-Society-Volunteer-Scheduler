@@ -654,6 +654,73 @@ export function activationTransition(record: ControlRecord, request: ActivationR
   };
 }
 
+export type RollbackRequest = {
+  /**
+   * Counters read from the authority being restored, captured before the switch.
+   * The restored counters become authoritative again, so they are taken as
+   * `max(captured, current)`: a rollback can never lower a revision a client has
+   * already seen, and a stopped legacy writer that got one write in before the
+   * switch cannot be rolled over.
+   */
+  captured: {
+    dataRevision: number;
+    schedulingInputRevision: number;
+    tabRevisions: Readonly<Record<string, number>>;
+  };
+  actorId: string;
+  reason: string;
+};
+
+/**
+ * Pure transition for the reverse authority switch: an approved rollback returns
+ * the workbook to the Script Properties authority.
+ *
+ * It is the mirror of `activationTransition`, with the same guarantees and one
+ * extra refusal. The generation moves so a reader bracketed across the switch
+ * rejects its snapshot rather than accepting one that spans two authorities; the
+ * authority epoch moves so the rollback is distinguishable from a first
+ * activation; and the counters only ever rise. Unlike activation it requires the
+ * record to be **already** on the portable authority, which is what makes a
+ * repeated rollback stop instead of advancing the epoch every time it is run.
+ */
+export function rollbackTransition(record: ControlRecord, request: RollbackRequest, timestamp: string): ControlRecord {
+  if (record.mutationState !== 'idle') {
+    throw new ControlError('PENDING', `A mutation (${record.operationId || 'unknown'}) is pending; roll back with writers drained and the record idle`);
+  }
+  if (record.authority !== 'workbook-control') {
+    throw new ControlError('AUTHORITY_MISMATCH', `Rollback requires a workbook on the portable authority; the record says ${record.authority}`);
+  }
+  if (request.reason.trim().length === 0) {
+    throw new ControlError('MALFORMED', 'A rollback must record why it is being performed');
+  }
+  const tabRevisions = { ...record.tabRevisions };
+  for (const [tab, value] of Object.entries(request.captured.tabRevisions)) {
+    if (!KNOWN_TABS.has(tab)) throw new ControlError('MALFORMED', `Rollback captured an unknown tab: ${tab}`);
+    if (!Number.isSafeInteger(value) || value < 0) throw new ControlError('MALFORMED', `Rollback captured a non-integer counter for ${tab}`);
+    tabRevisions[tab] = Math.max(tabRevisions[tab] ?? 0, value);
+  }
+  const capturedScalar = (value: number, field: string): number => {
+    // Refused rather than ignored: a negative or fractional capture means the
+    // caller read the wrong thing, and silently taking the record's value would
+    // hide that the rollback was performed against numbers nobody verified.
+    if (!Number.isSafeInteger(value) || value < 0) throw new ControlError('MALFORMED', `Rollback captured a non-integer ${field}`);
+    return value;
+  };
+  const generation = record.generation + 1;
+  return {
+    ...record,
+    authority: 'script-properties',
+    authorityEpoch: record.authorityEpoch + 1,
+    generation,
+    completedGeneration: generation,
+    dataRevision: Math.max(record.dataRevision, capturedScalar(request.captured.dataRevision, 'dataRevision')),
+    schedulingInputRevision: Math.max(record.schedulingInputRevision, capturedScalar(request.captured.schedulingInputRevision, 'schedulingInputRevision')),
+    tabRevisions,
+    updatedAt: timestamp,
+    updatedBy: request.actorId
+  };
+}
+
 export type MutationScope = {
   readonly operationId: string;
   readonly actorId: string;
@@ -789,6 +856,24 @@ export class ControlMutationWriter {
       const current = readControlRecord(this.options.control);
       const record = activationTransition(current, request, this.timestamp());
       this.transition('activate', record, current, request.actorId, Object.keys(request.captured.tabRevisions), request.reason);
+      return { record };
+    });
+  }
+
+  /**
+   * The reverse of `activate`: an approved rollback returns the workbook to the
+   * Script Properties authority. Like recovery and activation it is a
+   * stopped-service procedure, so the live gate is expected to be **closed** and
+   * is not consulted. The writer's own authority is required, so a process that
+   * is not on the portable authority cannot roll anything back, and the record
+   * must be idle and activated.
+   */
+  revert(request: RollbackRequest): { record: ControlRecord } {
+    return this.fenced(() => {
+      const current = readControlRecord(this.options.control);
+      assertAuthority(current, this.options.authority);
+      const record = rollbackTransition(current, request, this.timestamp());
+      this.transition('rollback', record, current, request.actorId, Object.keys(request.captured.tabRevisions), request.reason);
       return { record };
     });
   }
