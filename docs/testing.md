@@ -59,6 +59,12 @@ Do not mark an OpenSpec task complete merely because a test exists. Browser, pro
 
 Node provides globals that Apps Script V8 may not. The server bundle audit and `bundle-audit.contract.test.ts` reject unsupported use such as `Buffer`, `process`, `TextDecoder`, unguarded `TextEncoder`/`crypto`, and similar leaks. When fixing an Apps Script-only failure, reproduce it with the relevant global absent; the import tests do this for `TextEncoder`.
 
+## Staging tooling contracts
+
+The staging tools are contract-tested in `src/server/integration/`, driven with injected transports and the shared ledgers rather than the network: `staging-deploy.contract.test.ts` (the `--var` contract, its refusals, and that the plan and report carry the same ordered list), `staging-readcheck.contract.test.ts` (the read-matrix driver: one attempt per check, the shared rolling window, the campaign attempt cap, and the report it writes), `staging-measure.contract.test.ts` (the harness: the rolling read budget, the per-operation read-cost override, the shared campaign ledger and the flush that records a finished run), `staging-probe-host.contract.test.ts` (the browser probe: per-operation quantiles, the per-read timing header and the `?attempts=` contract) and `staging-rehearsal.contract.test.ts` (the runner's argument contract, and that its capture and rollback apply exactly what `activationTransition` and `rollbackTransition` produce, journal first).
+
+A contract test proves the path it drives, not the path the CLI takes: the read-matrix driver's report construction was unreachable from its tests and crashed a live run after spending its attempts. Prefer extracting the assembled artifact into an exported pure function over asserting a string in the source.
+
 ## What CI checks
 
 Two workflows split validation from release:

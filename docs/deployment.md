@@ -92,6 +92,12 @@ A release carrying the [portable-state change](../openspec/changes/make-workbook
 
 Run `inspectControlState()` in the editor before and after the activation window: it reports the control tabs, their header agreement, whether the record reads, its authority and state, and the journal row count, and it writes nothing.
 
+**Reverting an activation** is `rollbackTransition` through `ControlMutationWriter.revert`, run drained and idle, followed by raising the Script Properties counters to at least the record's values. It advances the epoch and the generation and never lowers a counter; a repeat is refused. See [operations](operations.md#once-the-workbook-carries-portable-control-state).
+
+**Staging deployments take their variables on the command line.** `scripts/staging/deploy-staging.mjs --target host|gateway|baseline [--workbook ID] --var NAME:VALUE ... --plan` restricts `--var` to `STAGING_` names, refuses the two bindings the tool owns (the version marker and the workbook override), prints the exact `wrangler deploy` line in `--plan`, and records the same ordered variable list in its report. Instrumentation and fixture bindings therefore need no edit to `wrangler.jsonc`, which is what keeps a rehearsal's topology identical to its committed one.
+
+**The measured staging gate.** As of 2026-09-30 five of the six measured read populations meet the warm p99 ≤ 1,500 ms acceptance, at 350–1,137 ms; the larger synthetic fixture's Schedule read does not, at p99 2,882 ms, so task 4.1 remains open and no production latency claim is made from the staging numbers. The evidence is [live checks 2](../openspec/changes/make-workbook-state-portable/evidence/staging-rehearsal-live-checks-2-2026-09-30.md).
+
 ## Rollback
 
 `scripts/rollback.mjs` is deliberately a checklist generator, not an automatic rollback. Prepare it with the prior schedule revision, snapshot, and static artifact:

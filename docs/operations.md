@@ -80,6 +80,10 @@ Step 4 changes shape: the counters are no longer bumped by hand in Script Proper
 
 The Script Property procedure above remains the procedure for a workbook that has not been activated. Which one applies is a live property of the workbook, not of this document: read `authority` from the control record before choosing.
 
+**Rolling the authority back** is a protocol transition, not a hand edit. Run it with writers drained and the record idle, through `ControlMutationWriter.revert` (`rollbackTransition`): it requires the record to be already activated, advances the authority epoch and the generation, sets `authority` to `script-properties`, and takes every counter as `max(captured, current)` from the counters read out of Script Properties before the switch. A repeat is refused, and the Script Properties counters must be raised to at least the record's values as part of the same window, or the first legacy write after the switch will serve a revision a client has already seen. The equality check that catches a botched rollback is the divergence between the record's counters and the ones the deployment serves — the same divergence `rehearse-portable-state.ts legacy-admission` reports.
+
+While a workbook carries an activated record, a deployment that is **not** activated refuses every mutation with `UNAVAILABLE` rather than writing outside the protocol. That is intended: the way to write is to activate the deployment, or to roll the workbook back first.
+
 Two consequences are intended, and acceptance evidence must state them rather than claim the projections are unchanged:
 
 1. The published schedule reports `stale` when the latest completed run's input revision differs from `SCHEDULING_INPUT_REVISION`. Record that verdict, and the run's own input revision, before the batch, and compare it afterwards. A monotonic bump can only make the schedule stale, never current, so a schedule that was already stale is restored to the identical verdict; a schedule that was current is left stale and that difference must be disclosed, or cleared by an approved publish, which creates a new schedule output revision.
