@@ -12,6 +12,39 @@ import { dirname, resolve } from 'node:path';
 import { readServiceAccountKey } from './google-auth.mjs';
 
 const ACCOUNT_ID = '868086b4b2dc75413ea149480ae4fe82';
+/** The name prefix that keeps an ad-hoc binding inside the staging deployment. */
+const VARIABLE_PREFIX = 'STAGING_';
+/** The variables this tool writes itself, with the flag that owns each. */
+const TOOL_VARIABLES = new Map([
+  ['STAGING_DEPLOYED_AT', 'every deploy stamps its own version marker'],
+  ['STAGING_WORKBOOK_ID', 'use --workbook, which the tool records as the workbook override']
+]);
+/** The plan cannot know the marker's value; it is stamped when the deploy runs. */
+const DEPLOYED_AT_PLACEHOLDER = '<generated at deploy time>';
+
+/**
+ * Parses one `--var NAME:VALUE`. The repeatable option exists so instrumentation
+ * and fixture bindings (`STAGING_BRACKET_HOLD_MS`, `STAGING_CONTROL_AUTHORITY`)
+ * no longer require a transient edit to `wrangler.jsonc`, which the 2026-09-29
+ * D1 rehearsal did. Names are restricted to `STAGING_*`, and the two variables
+ * the tool writes itself are refused, so a typo can neither bind a
+ * production-shaped name nor shadow the deployment marker the version-lag check
+ * reads.
+ */
+export function parseVariable(argument, raw) {
+  const separator = raw.indexOf(':');
+  if (separator === -1) throw new Error(`${argument} ${raw} is malformed: use --var NAME:VALUE.`);
+  const name = raw.slice(0, separator);
+  const value = raw.slice(separator + 1);
+  if (name.length === 0) throw new Error(`${argument} ${raw} is malformed: the name before the colon is empty.`);
+  if (value.trim().length === 0) throw new Error(`${argument} ${name}: is malformed: the value after the colon is empty.`);
+  if (!name.startsWith(VARIABLE_PREFIX) || name.length === VARIABLE_PREFIX.length) {
+    throw new Error(`${argument} ${name} is refused: a staging deployment variable name must begin with ${VARIABLE_PREFIX}.`);
+  }
+  const toolNote = TOOL_VARIABLES.get(name);
+  if (toolNote !== undefined) throw new Error(`${argument} ${name} is refused: ${toolNote}.`);
+  return { name, value };
+}
 
 export function parseArguments(argv) {
   const options = {
@@ -21,6 +54,8 @@ export function parseArguments(argv) {
     environment: 'staging',
     /** Which bundle to deploy: the baseline Worker, the DO host, or the gateway. */
     target: 'baseline',
+    /** Repeatable `--var NAME:VALUE` bindings, in the order they were given. */
+    variables: [],
     report: undefined,
     confirm: false,
     plan: false
@@ -36,6 +71,13 @@ export function parseArguments(argv) {
     else if (argument === '--key') options.key = next();
     else if (argument === '--workbook') options.workbook = next();
     else if (argument === '--env') options.environment = next();
+    else if (argument === '--var') {
+      const variable = parseVariable(argument, next());
+      if (options.variables.some((existing) => existing.name === variable.name)) {
+        throw new Error(`${argument} ${variable.name} was given twice; one value per variable.`);
+      }
+      options.variables.push(variable);
+    }
     else if (argument === '--target') {
       const value = next();
       if (!['baseline', 'host', 'gateway'].includes(value)) throw new Error(`--target must be baseline, host or gateway, not ${value}.`);
@@ -75,17 +117,65 @@ export function deployedUrl(output) {
   return match?.[0];
 }
 
+/**
+ * Every `--var` binding a deploy passes, in the order wrangler receives them:
+ * the version marker, the workbook override, the benchmark switch, then the
+ * operator's repeatable `--var` values. The plan prints the same list with the
+ * marker's value still ungenerated, so what a reviewer approves is exactly what
+ * the deploy sets, and the report records the same list afterwards.
+ */
+export function deployVariables(options, deployedAt) {
+  const variables = [{ name: 'STAGING_DEPLOYED_AT', value: deployedAt }];
+  if (options.workbook !== undefined) variables.push({ name: 'STAGING_WORKBOOK_ID', value: options.workbook });
+  if (options.benchmarkEnabled === true) variables.push({ name: 'STAGING_PREVIEW_BENCHMARK_ENABLED', value: 'true' });
+  variables.push(...options.variables);
+  return variables;
+}
+
+/**
+ * The deployment report a run writes. It is built as a pure function so the
+ * recorded bindings are contractual: an instrumentation rehearsal is
+ * reproducible from its report without a second deploy.
+ */
+export function deploymentReport(options, { deployedAt, url, serviceAccountEmail }) {
+  return {
+    deployedAt,
+    accountId: ACCOUNT_ID,
+    environment: options.environment,
+    target: options.target,
+    // The gateway serves /exec and, when the benchmark is enabled, the preview
+    // route; the host serves nothing publicly.
+    workerUrl: url ?? null,
+    ...(url === null || url === undefined
+      ? {}
+      : {
+        execUrl: `${url}/exec`,
+        ...(options.target === 'gateway' ? { benchmarkUrl: `${url}/benchmark/schedule-preview` } : {})
+      }),
+    serviceAccountEmail: serviceAccountEmail ?? null,
+    workbookOverride: options.workbook ?? null,
+    benchmarkEnabled: options.benchmarkEnabled === true,
+    // Every binding the deployment set, the operator's `--var` values verbatim.
+    // These are instrumentation and fixture bindings, not secrets: a value given
+    // here is recorded in the report and in the plan, so key material must keep
+    // going through `wrangler secret put`, which never echoes it.
+    variables: deployVariables(options, deployedAt),
+    // Sanitization: the token, the key and the secret values are never recorded.
+    sanitized: true
+  };
+}
+
 async function main() {
   let options;
   try {
     options = parseArguments(process.argv.slice(2));
   } catch (error) {
-    console.error(`${error.message}\nUsage: deploy-staging.mjs [--token-file PATH] [--key PATH] [--workbook ID] [--env staging] [--report PATH] [--plan] --confirm-deploy`);
+    console.error(`${error.message}\nUsage: deploy-staging.mjs [--token-file PATH] [--key PATH] [--workbook ID] [--var NAME:VALUE] [--env staging] [--report PATH] [--plan] --confirm-deploy`);
     process.exitCode = 1;
     return;
   }
   if (options.help) {
-    console.log('Usage: deploy-staging.mjs [--token-file PATH] [--key PATH] [--workbook ID] [--env staging] [--report PATH] [--plan] --confirm-deploy');
+    console.log('Usage: deploy-staging.mjs [--token-file PATH] [--key PATH] [--workbook ID] [--var NAME:VALUE] [--env staging] [--report PATH] [--plan] --confirm-deploy');
     return;
   }
 
@@ -112,7 +202,11 @@ async function main() {
   }
   if (tokenPresent) token = (await readFile(resolve(options.tokenFile), 'utf8')).trim();
 
-  const deployStep = `wrangler deploy --env ${options.environment}${options.workbook === undefined ? '' : ` --var STAGING_WORKBOOK_ID:${options.workbook}`}${options.benchmarkEnabled === true ? ' --var STAGING_PREVIEW_BENCHMARK_ENABLED:true' : ''}`;
+  // The plan names every binding the deploy will pass, including the marker the
+  // real deploy stamps, so the review covers the instrumentation `--var` values
+  // that would otherwise need a transient wrangler.jsonc edit.
+  const plannedVariables = deployVariables(options, DEPLOYED_AT_PLACEHOLDER);
+  const deployStep = `wrangler deploy --env ${options.environment}${plannedVariables.map((variable) => ` --var ${variable.name}:${variable.value}`).join('')}`;
   // Google credentials are provisioned only where they are used: the DO host
   // and the baseline Worker, never the gateway.
   const steps = options.target === 'gateway'
@@ -135,6 +229,7 @@ async function main() {
       keyPath: options.target === 'gateway' ? null : options.key,
       serviceAccountEmail: serviceAccount?.clientEmail ?? null,
       workbookOverride: options.workbook ?? null,
+      variables: plannedVariables,
       steps,
       writes: true
     }, null, 2));
@@ -153,9 +248,7 @@ async function main() {
   // version a measurement can verify the object against before counting cold
   // observations (a redeploy does not immediately restart an existing object).
   const deployedAt = new Date().toISOString();
-  const deployArgs = ['deploy', '--env', options.environment, '--var', `STAGING_DEPLOYED_AT:${deployedAt}`];
-  if (options.workbook !== undefined) deployArgs.push('--var', `STAGING_WORKBOOK_ID:${options.workbook}`);
-  if (options.benchmarkEnabled === true) deployArgs.push('--var', 'STAGING_PREVIEW_BENCHMARK_ENABLED:true');
+  const deployArgs = ['deploy', '--env', options.environment, ...deployVariables(options, deployedAt).flatMap((variable) => ['--var', `${variable.name}:${variable.value}`])];
   const deploy = wrangler(deployArgs, environment);
   let url = deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
   // The DO host has no workers.dev endpoint, so a missing URL is expected there.
@@ -183,26 +276,7 @@ async function main() {
   // A secret upload creates a new version; re-read the URL in case it changed.
   url = url ?? deployedUrl(`${deploy.stdout}\n${deploy.stderr}`);
 
-  const report = {
-    deployedAt,
-    accountId: ACCOUNT_ID,
-    environment: options.environment,
-    target: options.target,
-    // The gateway serves /exec and, when the benchmark is enabled, the preview
-    // route; the host serves nothing publicly.
-    workerUrl: url ?? null,
-    ...(url === null || url === undefined
-      ? {}
-      : {
-        execUrl: `${url}/exec`,
-        ...(options.target === 'gateway' ? { benchmarkUrl: `${url}/benchmark/schedule-preview` } : {})
-      }),
-    serviceAccountEmail: serviceAccount?.clientEmail ?? null,
-    workbookOverride: options.workbook ?? null,
-    benchmarkEnabled: options.benchmarkEnabled === true,
-    // Sanitization: the token, the key and the secret values are never recorded.
-    sanitized: true
-  };
+  const report = deploymentReport(options, { deployedAt, url, serviceAccountEmail: serviceAccount?.clientEmail });
   const reportPath = resolve(options.report ?? `staging-local/deployment-${options.environment}.json`);
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
