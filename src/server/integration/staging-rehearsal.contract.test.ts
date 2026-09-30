@@ -1,5 +1,6 @@
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FIRE_MS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, parseArgs, privateCredentialPath, requiresStagingConfirmation, stagingWorkerUrl } from '../../../scripts/staging/rehearsal-arguments.js';
+import { DEFAULT_FIRE_MS, INJECTION_KINDS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, parseArgs, privateCredentialPath, requiresStagingConfirmation, stagingWorkerUrl } from '../../../scripts/staging/rehearsal-arguments.js';
 import { capturedCounters, controlWriterOverRest } from '../../../scripts/staging/rehearsal-transitions.js';
 import { activationTransition, controlCounters, controlRecordFromRows, emptyControlRecord, initializeControlRecord, JOURNAL_COLUMNS, rollbackTransition, serializeControlRecord, serializeJournalEntry, type ControlRecord } from '../workbook/control.js';
 import { tabDefinition } from '../workbook/schema.js';
@@ -45,6 +46,16 @@ describe('rehearsal runner arguments', () => {
     expect(DEFAULT_FIRE_MS).toBe(1500);
   });
 
+  it('accepts every injection kind the read matrix has to see refused', () => {
+    for (const kind of INJECTION_KINDS) {
+      expect(parseArgs(['inject', '--role', 'representative', '--kind', kind, '--confirm-staging'])).toMatchObject({ command: 'inject', kind, confirm: true });
+    }
+    expect(parseArgs(['restore', '--role', 'representative', '--from', 'staging-local/rehearsal-inject-snapshot-representative-x.json', '--confirm-staging'])).toMatchObject({
+      command: 'restore',
+      from: 'staging-local/rehearsal-inject-snapshot-representative-x.json'
+    });
+  });
+
   it('accepts an explicit operation, expectation and fire delay', () => {
     expect(parseArgs(['straddle', '--role', 'larger', '--operation', 'admin.insights.read', '--expect', 'failed:UNAVAILABLE:control-pending', '--fire-ms', '250'])).toMatchObject({
       operation: 'admin.insights.read',
@@ -52,6 +63,10 @@ describe('rehearsal runner arguments', () => {
       fireMs: 250
     });
     expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'ok'])).toMatchObject({ expect: 'ok' });
+    // The straddle's own form names the code first, with or without the
+    // `failed:` prefix the read-matrix lists use.
+    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'STALE_REVISION:control-generation_changed'])).toMatchObject({ expect: 'STALE_REVISION:control-generation_changed' });
+    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'failed:UNAVAILABLE:control-pending'])).toMatchObject({ expect: 'failed:UNAVAILABLE:control-pending' });
   });
 
   it('keeps a deployment target on https and staging-shaped', () => {
@@ -60,10 +75,15 @@ describe('rehearsal runner arguments', () => {
     expect(() => stagingWorkerUrl('http://staging.example.test/exec')).toThrowError(/https/u);
   });
 
-  it('keeps the credential inside the private staging directory', () => {
+  it('keeps a private file inside the private staging directory', () => {
     expect(privateCredentialPath('staging-local/credential-rehearsal.txt')).toBe('staging-local/credential-rehearsal.txt');
+    // The runner prints absolute snapshot paths, and refusing them once turned a
+    // restore into a silent no-op that left a pending marker in the workbook.
+    const absolute = resolve('staging-local/rehearsal-inject-snapshot-representative-x.json');
+    expect(privateCredentialPath(absolute, '--from')).toBe(absolute);
     expect(() => privateCredentialPath('staging-local/../credential.txt')).toThrowError(/staging-local/u);
     expect(() => privateCredentialPath('/tmp/credential.txt')).toThrowError(/staging-local/u);
+    expect(() => privateCredentialPath('/tmp/credential.txt', '--from')).toThrowError(/--from/u);
   });
 
   it.each([
@@ -80,11 +100,14 @@ describe('rehearsal runner arguments', () => {
     ['a non-integer fire delay', ['straddle', '--role', 'larger', '--fire-ms', '1.5']],
     ['an expectation that is not ok or failed:CODE[:reason]', ['straddle', '--role', 'larger', '--expect', 'maybe']],
     ['an expectation with a lowercase code', ['straddle', '--role', 'larger', '--expect', 'failed:stale']],
+    ['an expectation with no code at all', ['straddle', '--role', 'larger', '--expect', ':reason']],
     ['a worker URL that is not https', ['straddle', '--role', 'larger', '--worker-url', 'http://staging.example.test/exec']],
     ['a worker URL that is not a URL', ['straddle', '--role', 'larger', '--worker-url', 'not-a-url']],
     ['a credential outside the private directory', ['straddle', '--role', 'larger', '--credential', 'secrets/token.txt']],
     ['a credential that escapes the private directory', ['straddle', '--role', 'larger', '--credential', 'staging-local/../token.txt']],
-    ['an empty operation', ['straddle', '--role', 'larger', '--operation', '  ']]
+    ['an empty operation', ['straddle', '--role', 'larger', '--operation', '  ']],
+    ['an injection kind that is not a control state', ['inject', '--role', 'larger', '--kind', 'broken']],
+    ['a restore snapshot outside the private directory', ['restore', '--role', 'larger', '--from', '/tmp/snapshot.json']]
   ])('refuses %s', (_label, argv) => {
     expect(() => parseArgs(argv as string[])).toThrowError(/./u);
   });
@@ -97,7 +120,7 @@ describe('rehearsal runner confirmation gate', () => {
     // Reading the live record and judging it changes nothing; racing a read
     // against a transition pair writes the control row, so it is a mutation.
     expect(requiresStagingConfirmation('legacy-admission')).toBe(false);
-    for (const command of ['initialize', 'capture', 'transition', 'rollback', 'fixture', 'cleanup', 'straddle']) {
+    for (const command of ['initialize', 'capture', 'transition', 'rollback', 'fixture', 'cleanup', 'straddle', 'inject', 'restore']) {
       expect(requiresStagingConfirmation(command), command).toBe(true);
     }
   });

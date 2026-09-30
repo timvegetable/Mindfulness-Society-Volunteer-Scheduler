@@ -13,6 +13,8 @@ export declare function parseArguments(argv: string[]): {
 
 export declare function isStagingHost(hostname: string): boolean;
 
+export declare function readsFor(manifest: { readsPerRequest?: Record<string, number>; operations: string[] }, operation: string): number;
+
 export declare function validateManifest(value: unknown, options?: { allowHost?: string }): {
   workerUrl: string;
   origins: string[];
@@ -22,6 +24,8 @@ export declare function validateManifest(value: unknown, options?: { allowHost?:
   sustained: { requests: number; concurrency: number };
   reportPath: string;
   credentialPath: string;
+  /** Sheets requests one request of an operation is expected to spend. */
+  readsPerRequest?: Record<string, number>;
   fixtureDigest?: string;
 };
 
@@ -33,8 +37,11 @@ export declare class ReadBudget {
   loadLedger(): Promise<void>;
   saveLedger(): Promise<void>;
   reserve(reads: number): Promise<void>;
+  flush(): Promise<void>;
   observed(): number;
 }
+
+export declare function campaignLedgerPaths(): { read: string; attempt: string };
 
 export declare function planFor(manifest: { workerUrl: string; operations: string[]; cold?: { requests: number } | null; burst: { requests: number; concurrency: number }; sustained: { requests: number; concurrency: number }; reportPath: string }): {
   workerUrl: string;
@@ -61,6 +68,7 @@ export declare class AttemptBudget {
   loadLedger(): Promise<void>;
   saveLedger(): Promise<void>;
   reserve(): Promise<boolean>;
+  flush(): Promise<void>;
   observed(): number;
 }
 

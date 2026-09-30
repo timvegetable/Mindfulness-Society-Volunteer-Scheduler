@@ -1,7 +1,7 @@
-import { rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { OPERATION_READS, ReadBudget, classifyFailure, isStagingHost, parseArguments, validateManifest } from '../../../scripts/staging/measure-worker.mjs';
+import { OPERATION_READS, ReadBudget, campaignLedgerPaths, classifyFailure, isStagingHost, parseArguments, readsFor, validateManifest } from '../../../scripts/staging/measure-worker.mjs';
 
 /**
  * Contract tests for the campaign harness: the rolling-window Sheets read
@@ -15,6 +15,60 @@ describe('workload budget', () => {
     expect(OPERATION_READS['admin.schedule.read']).toBe(2);
     expect(OPERATION_READS['admin.insights.read']).toBe(2);
     expect(OPERATION_READS['admin.schedule.preview']).toBe(2);
+  });
+
+  it('lets a portable manifest declare what a read actually costs, and defaults to the campaign constant', () => {
+    const base = { operations: ['admin.schedule.read', 'session.me'] };
+    // No override: the archived campaign's counts, so every existing manifest
+    // behaves exactly as it did.
+    expect(readsFor(base, 'admin.schedule.read')).toBe(2);
+    expect(readsFor(base, 'session.me')).toBe(1);
+    // A portable deployment pays the bracket's extra control read, and the
+    // ledger paces on the reservation, so the manifest has to say so.
+    const portable = { operations: ['admin.schedule.read', 'session.me'], readsPerRequest: { 'admin.schedule.read': 3, 'session.me': 1 } };
+    expect(readsFor(portable, 'admin.schedule.read')).toBe(3);
+    expect(readsFor(portable, 'session.me')).toBe(1);
+  });
+
+  it('refuses a read-cost override that would misprice the run', () => {
+    const manifest = (readsPerRequest: unknown) => ({
+      workerUrl: 'https://volunteer-scheduling-staging-gateway.example.workers.dev/exec',
+      origins: ['http://localhost:8788'],
+      operations: ['admin.schedule.read'],
+      burst: { requests: 1, concurrency: 1 },
+      sustained: { requests: 1, concurrency: 1 },
+      reportPath: 'staging-local/contract-test-report.json',
+      credentialPath: 'staging-local/credential-rehearsal.txt',
+      readsPerRequest
+    });
+    expect(() => validateManifest(manifest([1]))).toThrowError(/readsPerRequest must be a JSON object/u);
+    expect(() => validateManifest(manifest({ 'admin.schedule.read': 0 }))).toThrowError(/positive integer/u);
+    expect(() => validateManifest(manifest({ 'admin.schedule.read': 2.5 }))).toThrowError(/positive integer/u);
+    expect(() => validateManifest(manifest({ 'admin.unknown': 2 }))).toThrowError(/unsupported operation/u);
+    expect(validateManifest(manifest({ 'admin.schedule.read': 3 })).readsPerRequest).toEqual({ 'admin.schedule.read': 3 });
+  });
+
+  it('keeps one campaign ledger wherever the report is written', () => {
+    // Deriving the ledger from the report's directory looked shared but was not:
+    // a report in a subdirectory of staging-local started a second rolling
+    // window and a second attempt count, so the campaign cap and the per-minute
+    // quota were enforced against the wrong numbers.
+    const ledgers = campaignLedgerPaths();
+    expect(ledgers.read).toBe(resolve('staging-local/.read-budget-ledger.json'));
+    expect(ledgers.attempt).toBe(resolve('staging-local/.attempt-budget-ledger.json'));
+    // The same two files every other staging tool uses, whatever its report path.
+    expect(dirname(ledgers.attempt)).toBe(resolve('staging-local'));
+  });
+
+  it('flushes a budget ledger so a finished run is fully recorded', async () => {
+    const ledgerPath = resolve('staging-local/.contract-test-flush.json');
+    await writeFile(ledgerPath, '{"spent":0}\n', 'utf8');
+    const budget = new ReadBudget(10, 60_000, () => 1_000_000, ledgerPath);
+    await budget.loadLedger();
+    await budget.reserve(3);
+    await budget.flush();
+    expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({ spent: [1_000_000, 1_000_000, 1_000_000] });
+    await rm(ledgerPath, { force: true });
   });
 
   it('paces reads across rolling 60-second windows', async () => {

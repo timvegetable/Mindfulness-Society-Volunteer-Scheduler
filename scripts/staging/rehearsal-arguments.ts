@@ -1,3 +1,5 @@
+import { resolve, sep } from 'node:path';
+
 // Command-line contract for the staging rehearsal runner.
 //
 // Pure and separately importable: the runner executes under vite-node, which
@@ -32,7 +34,15 @@ export type Args = {
   workerUrl?: string;
   /** Straddle: the private credential file holding a Google ID token. */
   credentialPath?: string;
+  /** Injection: which deliberately broken control state to write. */
+  kind?: InjectionKind;
+  /** Restore: the snapshot an injection step wrote. */
+  from?: string;
 };
+
+/** The control states the read matrix has to see refused. */
+export const INJECTION_KINDS = ['pending', 'malformed', 'duplicate', 'unsupported', 'authority', 'missing'] as const;
+export type InjectionKind = (typeof INJECTION_KINDS)[number];
 
 /** The read a straddle races unless another operation is named. */
 export const DEFAULT_STRADDLE_OPERATION = 'admin.schedule.read';
@@ -59,18 +69,23 @@ export function stagingWorkerUrl(value: string): string {
   return url.toString();
 }
 
-/** The credential file has to stay inside the private staging directory. */
-export function privateCredentialPath(value: string): string {
-  const normalized = value.replaceAll('\\', '/');
-  if (!normalized.startsWith('staging-local/') || normalized.includes('..')) {
-    throw new Error('--credential must resolve inside staging-local/.');
+/**
+ * A private file has to stay inside the private staging directory. An absolute
+ * path that resolves there is accepted: the runner prints absolute snapshot
+ * paths, and refusing them turned a restore into a silent no-op.
+ */
+export function privateCredentialPath(value: string, flag = '--credential'): string {
+  const resolved = resolve(value.replaceAll('\\', '/'));
+  const privateRoot = resolve('staging-local');
+  if (resolved !== privateRoot && !resolved.startsWith(`${privateRoot}${sep}`)) {
+    throw new Error(`${flag} must resolve inside staging-local/.`);
   }
   return value;
 }
 
 export function parseArgs(argv: readonly string[]): Args {
   const [command, ...rest] = argv;
-  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify|capture|transition|rollback|fixture|cleanup|legacy-admission|straddle> --role representative|larger [--baseline PATH] --confirm-staging');
+  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify|capture|transition|rollback|fixture|cleanup|inject|restore|legacy-admission|straddle> --role representative|larger [--baseline PATH] --confirm-staging');
   let role: Role | undefined;
   let confirm = false;
   let baseline: string | undefined;
@@ -85,6 +100,8 @@ export function parseArgs(argv: readonly string[]): Args {
   let expect: string | undefined;
   let workerUrl: string | undefined;
   let credentialPath: string | undefined;
+  let kind: Args['kind'];
+  let from: string | undefined;
   const tabs: string[] = [];
   let reason = '';
   let actor = 'rehearsal@example.test';
@@ -141,12 +158,18 @@ export function parseArgs(argv: readonly string[]): Args {
       operation = candidate.trim();
     } else if (value === '--expect') {
       const candidate = next();
-      if (candidate !== 'ok' && !/^failed:[A-Z_]+(:[a-z0-9_-]+)?$/u.test(candidate)) throw new Error('--expect must be ok or failed:CODE[:reason].');
+      if (candidate !== 'ok' && !/^(?:failed:)?[A-Z_]+(:[a-z0-9_-]+)?$/u.test(candidate)) throw new Error('--expect must be ok, CODE[:reason] or failed:CODE[:reason].');
       expect = candidate;
     } else if (value === '--worker-url') {
       workerUrl = stagingWorkerUrl(next());
     } else if (value === '--credential') {
       credentialPath = privateCredentialPath(next());
+    } else if (value === '--kind') {
+      const candidate = next();
+      if (!(INJECTION_KINDS as readonly string[]).includes(candidate)) throw new Error(`--kind must be one of ${INJECTION_KINDS.join(', ')}.`);
+      kind = candidate as Args['kind'];
+    } else if (value === '--from') {
+      from = privateCredentialPath(next(), '--from');
     } else if (value === '--authority') {
       const candidate = next();
       if (candidate !== 'script-properties' && candidate !== 'workbook-control') throw new Error('--authority must be script-properties or workbook-control.');
@@ -182,7 +205,9 @@ export function parseArgs(argv: readonly string[]): Args {
     ...(operation ? { operation } : {}),
     ...(expect ? { expect } : {}),
     ...(workerUrl ? { workerUrl } : {}),
-    ...(credentialPath ? { credentialPath } : {})
+    ...(credentialPath ? { credentialPath } : {}),
+    ...(kind ? { kind } : {}),
+    ...(from ? { from } : {})
   };
 }
 

@@ -8,6 +8,7 @@ import { controlReadCheck, evaluateExpectation, type ControlReadCheckResult } fr
 import { AttemptBudget, ReadBudget } from '../../../scripts/staging/measure-worker.mjs';
 import {
   exitCodeFor,
+  reportFor,
   runReadChecks,
   validateCheckList,
   type ReadCheckEntry
@@ -406,6 +407,46 @@ describe('read-matrix driver command', () => {
       expect(unconfirmed.status).toBe(1);
       expect(unconfirmed.stderr).toContain('Refusing to send any read');
     });
+  });
+
+  it('assembles the report the CLI writes, including both ledger readings', async () => {
+    // The confirmed CLI path cannot be reached from a test without sending real
+    // reads, and an undefined field there once crashed a live run after its
+    // attempts were spent. The report is therefore built by an exported pure
+    // function and asserted here.
+    const results = [
+      { index: 0, label: 'served identity', operation: 'session.me', expectation: 'ok', issued: true, status: 200, code: null, reason: null, reads: 1, plannedReads: 1, durationMs: 120, observedInFlight: 1, passed: true, detail: 'served' },
+      { index: 1, label: 'pending refusal', operation: 'admin.schedule.read', expectation: 'failed:UNAVAILABLE:control-pending', issued: true, status: 200, code: 'UNAVAILABLE', reason: 'control-pending', reads: 1, plannedReads: 3, durationMs: 90, observedInFlight: 1, passed: true, detail: 'refused' }
+    ];
+    const report = reportFor(
+      { workerUrl: WORKER_URL, credentialPath: 'staging-local/credential-rehearsal.txt', reportPath: 'staging-local/read-matrix-representative.json', checks: [] },
+      results,
+      {
+        startedAt: '2026-09-30T02:40:00.000Z',
+        budget: { limit: 40, windowMs: 60_000, observed: () => 5 } as unknown as ReadBudget,
+        attemptLedger: { limit: 1_000, observed: () => 531 } as unknown as AttemptBudget,
+        attemptsBeforeRun: 529,
+        attemptLogPath: 'staging-local/read-matrix-representative.json.attempts.jsonl'
+      }
+    );
+
+    expect(report).toMatchObject({
+      startedAt: '2026-09-30T02:40:00.000Z',
+      passed: true,
+      sanitized: true,
+      retries: 0,
+      summary: { checks: 2, passed: 2, failed: 0, issued: 2, deferred: 0, reads: 2, plannedReads: 4, observedMaxInFlight: 1 },
+      budget: { limit: 40, windowSeconds: 60, observedReadsInLastWindow: 5, attempts: { limit: 1_000, spentBeforeRun: 529, spentAfterRun: 531 } }
+    });
+    // A run that leaves an expectation unmet is not a passing report.
+    const unmet: typeof results = [{ ...results[0]!, passed: false }];
+    expect(reportFor({ workerUrl: WORKER_URL, credentialPath: 'x', reportPath: 'y', checks: [] }, unmet, {
+      startedAt: 'now',
+      budget: { limit: 40, windowMs: 60_000, observed: () => 0 } as unknown as ReadBudget,
+      attemptLedger: { limit: 1_000, observed: () => 1 } as unknown as AttemptBudget,
+      attemptsBeforeRun: 0,
+      attemptLogPath: 'z'
+    }).passed).toBe(false);
   });
 
   it('fails the command when any expectation is unmet', () => {

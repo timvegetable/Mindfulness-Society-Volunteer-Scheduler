@@ -72,6 +72,39 @@ export declare function planFor(checkList: NormalizedCheckList, budget: ReadBudg
   attemptLogPath: string;
 };
 
+export declare function reportFor(checkList: NormalizedCheckList, results: ReadCheckResult[], options: {
+  startedAt: string;
+  budget: ReadBudget;
+  attemptLedger: AttemptBudget;
+  attemptsBeforeRun: number;
+  attemptLogPath: string;
+}): {
+  generatedAt: string;
+  startedAt: string;
+  workerUrl: string;
+  checks: ReadCheckResult[];
+  summary: {
+    checks: number;
+    passed: number;
+    failed: number;
+    issued: number;
+    deferred: number;
+    reads: number;
+    plannedReads: number;
+    observedMaxInFlight: number;
+  };
+  passed: boolean;
+  budget: {
+    limit: number;
+    windowSeconds: number;
+    observedReadsInLastWindow: number;
+    attempts: { limit: number; spentBeforeRun: number; spentAfterRun: number };
+  };
+  attemptLogPath: string;
+  retries: 0;
+  sanitized: true;
+};
+
 export declare function exitCodeFor(passed: boolean): 0 | 1;
 
 export declare function runReadChecks(checkList: NormalizedCheckList, options: {

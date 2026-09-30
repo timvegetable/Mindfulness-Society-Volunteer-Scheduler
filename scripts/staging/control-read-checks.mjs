@@ -111,6 +111,47 @@ export function planFor(checkList, budget, attemptLedger) {
 }
 
 /**
+ * The report one run writes. Pure and exported: the CLI path that assembles it
+ * is not otherwise reachable from a test without sending real reads, and an
+ * undefined field there once crashed a live run after its attempts were spent.
+ */
+export function reportFor(checkList, results, options) {
+  const failed = results.filter((result) => !result.passed).length;
+  const numericReads = (result) => (typeof result.reads === 'number' ? result.reads : 0);
+  return {
+    generatedAt: new Date().toISOString(),
+    startedAt: options.startedAt,
+    workerUrl: checkList.workerUrl,
+    checks: results,
+    summary: {
+      checks: results.length,
+      passed: results.length - failed,
+      failed,
+      issued: results.filter((result) => result.issued).length,
+      deferred: results.filter((result) => !result.issued).length,
+      reads: results.reduce((total, result) => total + numericReads(result), 0),
+      plannedReads: results.reduce((total, result) => total + result.plannedReads, 0),
+      observedMaxInFlight: Math.max(0, ...results.map((result) => result.observedInFlight))
+    },
+    passed: failed === 0,
+    budget: {
+      limit: options.budget.limit,
+      windowSeconds: options.budget.windowMs / 1000,
+      observedReadsInLastWindow: options.budget.observed(),
+      attempts: {
+        limit: options.attemptLedger.limit,
+        spentBeforeRun: options.attemptsBeforeRun,
+        spentAfterRun: options.attemptLedger.observed()
+      }
+    },
+    attemptLogPath: options.attemptLogPath,
+    retries: 0,
+    // Sanitization: no credential, no response body, no row value.
+    sanitized: true
+  };
+}
+
+/**
  * A run that leaves one expectation unmet fails the command, so a matrix result
  * can never be mistaken for a passing one when a shell ignores stderr.
  */
@@ -292,34 +333,7 @@ async function main() {
   });
 
   const failed = results.filter((result) => !result.passed).length;
-  const numericReads = (result) => (typeof result.reads === 'number' ? result.reads : 0);
-  const report = {
-    generatedAt: new Date().toISOString(),
-    startedAt,
-    workerUrl: checkList.workerUrl,
-    checks: results,
-    summary: {
-      checks: results.length,
-      passed: results.length - failed,
-      failed,
-      issued: results.filter((result) => result.issued).length,
-      deferred: results.filter((result) => !result.issued).length,
-      reads: results.reduce((total, result) => total + numericReads(result), 0),
-      plannedReads: results.reduce((total, result) => total + result.plannedReads, 0),
-      observedMaxInFlight: Math.max(0, ...results.map((result) => result.observedInFlight))
-    },
-    passed,
-    budget: {
-      limit: budget.limit,
-      windowSeconds: budget.windowMs / 1000,
-      observedReadsInLastWindow: budget.observed(),
-      attempts: { limit: attemptLedger.limit, spentBeforeRun, spentAfterRun: attemptLedger.observed() }
-    },
-    attemptLogPath,
-    retries: 0,
-    // Sanitization: no credential, no response body, no row value.
-    sanitized: true
-  };
+  const report = reportFor(checkList, results, { startedAt, budget, attemptLedger, attemptsBeforeRun, attemptLogPath });
   await mkdir(dirname(checkList.reportPath), { recursive: true });
   await writeFile(checkList.reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   console.log(JSON.stringify({ passed, summary: report.summary, reportPath: checkList.reportPath, attemptLogPath }, null, 2));

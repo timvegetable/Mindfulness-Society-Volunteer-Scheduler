@@ -19,6 +19,7 @@ import {
   commitMutationRecord,
   controlOperationId,
   controlCounters,
+  CONTROL_COLUMNS,
   controlRecordFromRows,
   ControlError,
   ControlMutationWriter,
@@ -38,7 +39,7 @@ import { legacyAdmission, type ControlReadOutcome } from '../../src/server/workb
 import { accessTokenFor } from './google-auth.mjs';
 import { createWorkbookApi, workbookControlTabs, workbookTabs, type StagingProtectedRange } from './workbook.mjs';
 import { capturedCounters, controlWriterOverRest as writerOverRest, type ControlTabsApi } from './rehearsal-transitions.js';
-import { DEFAULT_FIRE_MS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, parseArgs, requiresStagingConfirmation, type Args, type Role } from './rehearsal-arguments.js';
+import { DEFAULT_FIRE_MS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, INJECTION_KINDS, parseArgs, requiresStagingConfirmation, type Args, type Role } from './rehearsal-arguments.js';
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const PRIVATE_DIR = 'staging-local';
@@ -245,6 +246,11 @@ async function controlWriterOverRest(api: Awaited<ReturnType<typeof createWorkbo
     controlColumns,
     journalColumns: definitions.get('ControlJournal') ?? JOURNAL_COLUMNS
   });
+}
+
+/** Zips positional control rows with their column names, for a whole-tab write. */
+function controlRowObjects(rows: readonly (readonly unknown[])[]): Record<string, unknown>[] {
+  return rows.map((row) => Object.fromEntries(CONTROL_COLUMNS.map((column, index) => [column, row[index] ?? ''])));
 }
 
 /** Reads the control record, or undefined when the workbook has none yet. */
@@ -480,6 +486,66 @@ async function commandLegacyAdmission(args: Args, api: Awaited<ReturnType<typeof
   };
 }
 
+/**
+ * B2: write one deliberately broken control state, snapshotting what was there.
+ *
+ * The read matrix has to see each failure class refused live, and every one of
+ * them is a control-row write. The pre-injection rows are saved first, so the
+ * `restore` step puts the workbook back exactly as it was — the matrix must not
+ * leave a malformed record behind for the next check to trip over.
+ */
+async function commandInject(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  const kind = args.kind;
+  if (!kind) throw new Error(`inject needs --kind ${INJECTION_KINDS.join('|')}.`);
+  const at = new Date().toISOString();
+  const before = ((await api.readTabs(['WorkbookControl'])).WorkbookControl ?? []) as unknown[][];
+  const snapshotPath = await report(`rehearsal-inject-snapshot-${args.role}`, { role: args.role, at, kind, controlRows: before });
+  const dataRows = before.filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
+  const current = dataRows[0] ? controlRecordFromRows([dataRows[0]]) : undefined;
+  const need = (): ControlRecord => {
+    if (!current) throw new Error(`inject --kind ${kind} needs an existing control record.`);
+    return current;
+  };
+  let rows: unknown[][];
+  if (kind === 'missing') {
+    rows = [];
+  } else if (kind === 'duplicate') {
+    rows = [serializeControlRecord(need()), serializeControlRecord(need())];
+  } else if (kind === 'pending') {
+    const tabs = (args.tabs.length > 0 ? args.tabs : ['Assignments']) as never[];
+    rows = [serializeControlRecord(beginMutationRecord(need(), { operationId: controlOperationId('rehearsal.inject'), tabs, actorId: args.actor }, at))];
+  } else {
+    const row = serializeControlRecord(need());
+    const at_column = (name: (typeof CONTROL_COLUMNS)[number]): number => CONTROL_COLUMNS.indexOf(name);
+    if (kind === 'malformed') row[at_column('protocolVersion')] = 'two';
+    else if (kind === 'unsupported') row[at_column('protocolVersion')] = 99;
+    else row[at_column('authority')] = 'script-properties';
+    rows = [row];
+  }
+  await api.writeTab('WorkbookControl', controlRowObjects(rows));
+  const after = ((await api.readTabs(['WorkbookControl'])).WorkbookControl ?? []) as unknown[][];
+  const readBack = after.filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined)).length;
+  const path = await report(`rehearsal-inject-${args.role}`, { role: args.role, at, kind, snapshotPath, rowsWritten: rows.length, readBack });
+  return { path, snapshotPath, kind, rowsWritten: rows.length, readBackDataRows: readBack, apiCalls: api.callCount() };
+}
+
+/** Puts the control tab back exactly as an `inject` step found it. */
+async function commandRestore(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
+  if (!args.from) throw new Error('restore needs --from PATH (the snapshot the inject step wrote).');
+  const snapshot = JSON.parse(await readFile(resolve(args.from), 'utf8')) as { controlRows?: unknown[][] };
+  if (!Array.isArray(snapshot.controlRows)) throw new Error(`The snapshot at ${args.from} carries no controlRows array.`);
+  await api.writeTab('WorkbookControl', controlRowObjects(snapshot.controlRows));
+  const after = ((await api.readTabs(['WorkbookControl'])).WorkbookControl ?? []) as unknown[][];
+  const record = after.find((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
+  const path = await report(`rehearsal-restore-${args.role}`, { role: args.role, at: new Date().toISOString(), from: args.from, rowsWritten: snapshot.controlRows.length, readBack: after });
+  return {
+    path,
+    restoredRows: snapshot.controlRows.length,
+    recordAuthority: record ? controlRecordFromRows([record]).authority : null,
+    apiCalls: api.callCount()
+  };
+}
+
 /** Reads the private Google ID token the browser leg captured. */
 async function readCredential(path: string): Promise<string> {
   const raw = await readFile(resolve(path), 'utf8');
@@ -518,16 +584,22 @@ async function commandStraddle(args: Args, api: Awaited<ReturnType<typeof create
   });
   await new Promise((resolveWait) => setTimeout(resolveWait, fireMs));
 
-  // The transition pair: begin publishes the marker, abort clears it and moves
-  // the generation while leaving every counter exactly where it was.
+  // The transition the read has to straddle. `abort` fires a pair: begin
+  // publishes the marker, abort clears it and moves the generation while leaving
+  // every counter exactly where it was, so the read must reject on the tuple and
+  // not on a counter. `begin` fires the marker alone, which leaves the workbook
+  // interrupted on purpose for the pending variant and the recovery drill.
   const at = new Date().toISOString();
   const tabs = (args.tabs.length > 0 ? args.tabs : ['Assignments']) as never[];
+  const fireEvent = args.event ?? 'abort';
   const opened = beginMutationRecord(before, { operationId: controlOperationId('rehearsal.straddle'), tabs, actorId: args.actor }, at);
   await writeRecord(api, opened);
   await journal(api, 'begin', opened.operationId, args.actor, tabs, before, opened, 'straddle instrumentation', at);
-  const aborted = abortMutationRecord(opened, args.actor, at);
-  await writeRecord(api, aborted);
-  await journal(api, 'abort', opened.operationId, args.actor, tabs, opened, aborted, 'straddle instrumentation', at);
+  if (fireEvent === 'abort') {
+    const aborted = abortMutationRecord(opened, args.actor, at);
+    await writeRecord(api, aborted);
+    await journal(api, 'abort', opened.operationId, args.actor, tabs, opened, aborted, 'straddle instrumentation', at);
+  }
 
   const response = await pending;
   const body = await response.json().catch(() => undefined) as { ok?: boolean; error?: { code?: string; details?: { reason?: string } } } | undefined;
@@ -544,10 +616,14 @@ async function commandStraddle(args: Args, api: Awaited<ReturnType<typeof create
     hostDeployedAt: response.headers.get('x-staging-host-deployed-at'),
     hasCorrelationId: response.headers.get('x-staging-correlation-id') !== null
   };
-  const wanted = expectation.split(':');
+  // The expectation is the refusal the raced read must produce, written
+  // `CODE[:reason]` (or `ok`). The default names STALE_REVISION and
+  // control-generation_changed; comparing the reason against the code slot made
+  // a correct refusal report itself as a failure.
+  const wanted = expectation.startsWith('failed:') ? expectation.slice('failed:'.length).split(':') : expectation.split(':');
   const passed = wanted[0] === 'ok'
     ? observed.ok
-    : observed.ok === false && observed.errorCode === wanted[1] && (wanted[2] === undefined || observed.reason === wanted[2]);
+    : observed.ok === false && observed.errorCode === wanted[0] && (wanted[1] === undefined || observed.reason === wanted[1]);
   const after = await readRecord(api);
   const countersUnchanged = after !== undefined
     && after.dataRevision === before.dataRevision
@@ -560,12 +636,13 @@ async function commandStraddle(args: Args, api: Awaited<ReturnType<typeof create
     before: tuple(before),
     after: after ? tuple(after) : null,
     opened: tuple(opened),
-    aborted: tuple(aborted),
+    fired: fireEvent,
     observed,
     passed,
     countersUnchanged,
     generationAdvanced: after !== undefined && after.generation > before.generation,
-    idleAfter: after !== undefined && portableRevisionProvider(after).idle
+    idleAfter: after !== undefined && portableRevisionProvider(after).idle,
+    leftPending: after !== undefined && !portableRevisionProvider(after).idle
   });
   return {
     path,
@@ -599,6 +676,8 @@ async function main(): Promise<void> {
     rollback: () => commandRollback(args, api),
     fixture: () => commandFixture(args, api),
     cleanup: () => commandCleanup(args, api),
+    inject: () => commandInject(args, api),
+    restore: () => commandRestore(args, api),
     'legacy-admission': () => commandLegacyAdmission(args, api),
     straddle: () => commandStraddle(args, api)
   };

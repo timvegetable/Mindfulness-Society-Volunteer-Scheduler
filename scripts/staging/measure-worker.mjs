@@ -77,6 +77,14 @@ function resolveInsideRepository(path, label) {
   return resolved;
 }
 
+/**
+ * The Sheets reads one request of `operation` is expected to spend. A manifest
+ * may override the archived campaign's constant; the default is that constant.
+ */
+export function readsFor(manifest, operation) {
+  return manifest.readsPerRequest?.[operation] ?? OPERATION_READS[operation];
+}
+
 export function validateManifest(value, options = {}) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('The manifest must be a JSON object.');
   const manifest = value;
@@ -103,6 +111,21 @@ export function validateManifest(value, options = {}) {
   if (manifest.cold !== undefined) {
     if (typeof manifest.cold !== 'object' || manifest.cold === null) throw new Error('cold must describe the cold workload.');
     if (!Number.isSafeInteger(manifest.cold.requests) || manifest.cold.requests < 1) throw new Error('cold.requests must be a positive integer.');
+  }
+  if (manifest.readsPerRequest !== undefined) {
+    // A portable deployment pays more Sheets requests per read than the archived
+    // campaign did (the bracket adds a control read), and the rolling ledger
+    // paces on the reservation. Reserving the old constant would let a run spend
+    // more than the per-minute quota the ledger exists to respect, so a manifest
+    // may declare what a read actually costs. Defaults keep every existing
+    // manifest's behaviour.
+    if (typeof manifest.readsPerRequest !== 'object' || manifest.readsPerRequest === null || Array.isArray(manifest.readsPerRequest)) {
+      throw new Error('readsPerRequest must be a JSON object of operation to a positive integer.');
+    }
+    for (const [operation, reads] of Object.entries(manifest.readsPerRequest)) {
+      if (!(operation in OPERATION_READS)) throw new Error(`readsPerRequest names an unsupported operation: ${operation}`);
+      if (!Number.isSafeInteger(reads) || reads < 1) throw new Error(`readsPerRequest.${operation} must be a positive integer.`);
+    }
   }
   if (typeof manifest.reportPath !== 'string' || manifest.reportPath.length === 0) throw new Error('reportPath is required.');
   if (typeof manifest.credentialPath !== 'string' || manifest.credentialPath.length === 0) throw new Error('credentialPath is required.');
@@ -139,6 +162,11 @@ export class ReadBudget {
   async saveLedger() {
     if (this.ledgerPath === undefined) return;
     await writeFile(this.ledgerPath, `${JSON.stringify({ spent: this.spent })}\n`, 'utf8');
+  }
+
+  /** Await any write still in flight, so a finished run is fully recorded. */
+  async flush() {
+    await (this.saveQueue ?? Promise.resolve());
   }
 
   /** Reserves `reads` more reads once they fit inside the window. */
@@ -202,6 +230,11 @@ export class AttemptBudget {
     await writeFile(this.ledgerPath, `${JSON.stringify({ spent: this.spent })}\n`, 'utf8');
   }
 
+  /** Await any write still in flight, so a finished run is fully recorded. */
+  async flush() {
+    await (this.saveQueue ?? Promise.resolve());
+  }
+
   /** Reserves one attempt; `false` once the predeclared campaign cap is spent. */
   async reserve() {
     // Loaded once per process; saves serialize so concurrent workers never
@@ -236,6 +269,18 @@ export function classifyColdObservation(attempt, expectedHostDeployedAt) {
   return attempt.hostDeployedAt === expectedHostDeployedAt ? 'genuine' : 'version-lag';
 }
 
+/**
+ * The campaign-wide ledgers. Both tools that spend attempts or reads use these
+ * two files, so a run's spend is visible to every later run.
+ */
+export function campaignLedgerPaths() {
+  const directory = resolve(REPOSITORY_ROOT, 'staging-local');
+  return {
+    read: resolve(directory, '.read-budget-ledger.json'),
+    attempt: resolve(directory, '.attempt-budget-ledger.json')
+  };
+}
+
 export function planFor(manifest) {
   return {
     workerUrl: manifest.workerUrl,
@@ -243,7 +288,7 @@ export function planFor(manifest) {
     cold: manifest.cold ?? null,
     burst: manifest.burst,
     sustained: manifest.sustained,
-    expectedReadsPerRequest: Object.fromEntries(manifest.operations.map((operation) => [operation, OPERATION_READS[operation]])),
+    expectedReadsPerRequest: Object.fromEntries(manifest.operations.map((operation) => [operation, readsFor(manifest, operation)])),
     readBudgetPerWindow: READ_BUDGET_PER_WINDOW,
     windowSeconds: WINDOW_MS / 1000,
     attemptBudgetPerCampaign: ATTEMPT_BUDGET_PER_CAMPAIGN,
@@ -315,7 +360,7 @@ export async function runPhase(manifest, phase, workload, credential, budget, at
         continue;
       }
       const operation = manifest.operations[index % manifest.operations.length];
-      await budget.reserve(OPERATION_READS[operation]);
+      await budget.reserve(readsFor(manifest, operation));
       inFlight += 1;
       const attemptStartedAt = Date.now();
       const attempt = { phase, index, operation, startedAt: new Date(attemptStartedAt).toISOString(), durationMs: 0, status: 0, inFlight, failure: undefined };
@@ -407,12 +452,15 @@ async function main() {
   }
 
   const plan = planFor(manifest);
-  // The ledgers live next to the report in staging-local/, so every harness
-  // run in the campaign shares one rolling read window and one attempt count;
-  // neither quota resets when a new process starts.
-  const budget = new ReadBudget(undefined, undefined, undefined, resolve(dirname(manifest.reportPath), '.read-budget-ledger.json'));
+  // One campaign ledger, wherever the report happens to be written. Deriving it
+  // from the report's directory looked shared but was not: a manifest whose
+  // report sat in a subdirectory of staging-local silently started a second
+  // rolling window and a second attempt count, and the campaign cap and the
+  // per-minute quota were both enforced against the wrong numbers.
+  const ledgers = campaignLedgerPaths();
+  const budget = new ReadBudget(undefined, undefined, undefined, ledgers.read);
   await budget.loadLedger();
-  const attemptLedger = new AttemptBudget(undefined, resolve(dirname(manifest.reportPath), '.attempt-budget-ledger.json'));
+  const attemptLedger = new AttemptBudget(undefined, ledgers.attempt);
   await attemptLedger.loadLedger();
   const attemptsBeforeRun = attemptLedger.observed();
   const startedAt = new Date().toISOString();
@@ -470,6 +518,11 @@ async function main() {
     sanitized: true
   };
   await writeFile(manifest.reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  // The ledgers save asynchronously as reservations are made; without this the
+  // last few of a run's attempts can be missing from the file it just spent
+  // against.
+  await budget.flush();
+  await attemptLedger.flush();
   console.log(`Wrote ${manifest.reportPath} and ${plan.attemptLogPath}`);
 }
 
