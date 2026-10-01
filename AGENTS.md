@@ -11,6 +11,24 @@ Read `docs/architecture.md` before changing application boundaries, persistence,
 * Prefer the application's own operations for Sheet mutations. Direct Sheet/API writes bypass audit and revision bookkeeping; follow `docs/operations.md` if one is unavoidable.
 * Export a workbook snapshot before any server deployment or production Sheet mutation.
 * Never commit secrets or private roster/export material.
+* Live or shared external resources have a single-writer rule: once an approved live phase begins, exactly one designated operator subagent may perform its
+mutations/deployments; other agents remain read-only with respect to that environment.
+
+## Complex-task orchestration
+
+For complex, long-running, or multi-workstream tasks, use J-Space when
+available to maintain task state, bounded ownership, evidence, review,
+and acceptance gates.
+
+For delegated work:
+- give each agent bounded ownership;
+- keep acceptance-criteria changes with the root/coordinating agent;
+- independently review material findings before closure;
+- use a single writer for consequential shared/live resources;
+- do not maintain a competing orchestration ledger when J-Space is active.
+
+Routine implementation failures should be investigated and verified by the
+agent owning that workstream before escalation.
 
 ## Memory (mnemosyne MCP)
 
@@ -89,6 +107,10 @@ openspec validate <change-name> --strict
 ```
 
 Do not infer OpenSpec task completion merely because corresponding code exists.
+
+For multi-workstream OpenSpec execution or evidence-backed task closure,
+follow the J-Space orchestration rules above. Implementation agents must not
+weaken or rewrite acceptance criteria to make a task closable.
 
 ## Commits
 
