@@ -2,8 +2,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FIRE_MS, INJECTION_KINDS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, parseArgs, privateCredentialPath, requiresStagingConfirmation, stagingWorkerUrl } from '../../../scripts/staging/rehearsal-arguments.js';
 import { capturedCounters, controlWriterOverRest } from '../../../scripts/staging/rehearsal-transitions.js';
-import { activationTransition, controlCounters, controlRecordFromRows, emptyControlRecord, initializeControlRecord, JOURNAL_COLUMNS, rollbackTransition, serializeControlRecord, serializeJournalEntry, type ControlRecord } from '../workbook/control.js';
+import { activationTransition, CONTROL_LIMITS, controlCounters, controlRecordFromRows, emptyControlRecord, initializeControlRecord, JOURNAL_COLUMNS, rollbackTransition, serializeControlRecord, serializeJournalEntry, type ControlRecord } from '../workbook/control.js';
 import { tabDefinition } from '../workbook/schema.js';
+
+const HOST_DEPLOYED_AT = '2026-10-01T12:00:00.000Z';
 
 /**
  * The rehearsal runner addresses synthetic workbooks by role and refuses anything
@@ -33,12 +35,13 @@ describe('rehearsal runner arguments', () => {
   });
 
   it('accepts the straddle invocation and defaults the race to the pinned refusal', () => {
-    const straddle = parseArgs(['straddle', '--role', 'representative', '--worker-url', 'https://volunteer-scheduling-staging-gateway.example.workers.dev/exec', '--credential', 'staging-local/credential-rehearsal.txt', '--confirm-staging']);
+    const straddle = parseArgs(['straddle', '--role', 'representative', '--worker-url', 'https://volunteer-scheduling-staging-gateway.example.workers.dev/exec', '--credential', 'staging-local/credential-rehearsal.txt', '--host-deployed-at', HOST_DEPLOYED_AT, '--confirm-staging']);
 
     expect(straddle).toMatchObject({
       command: 'straddle',
       workerUrl: 'https://volunteer-scheduling-staging-gateway.example.workers.dev/exec',
       credentialPath: 'staging-local/credential-rehearsal.txt',
+      expectedHostDeployedAt: HOST_DEPLOYED_AT,
       confirm: true
     });
     expect(DEFAULT_STRADDLE_OPERATION).toBe('admin.schedule.read');
@@ -57,16 +60,21 @@ describe('rehearsal runner arguments', () => {
   });
 
   it('accepts an explicit operation, expectation and fire delay', () => {
-    expect(parseArgs(['straddle', '--role', 'larger', '--operation', 'admin.insights.read', '--expect', 'failed:UNAVAILABLE:control-pending', '--fire-ms', '250'])).toMatchObject({
+    expect(parseArgs(['straddle', '--role', 'larger', '--operation', 'admin.insights.read', '--expect', 'failed:UNAVAILABLE:control-pending', '--fire-ms', '250', '--host-deployed-at', HOST_DEPLOYED_AT])).toMatchObject({
       operation: 'admin.insights.read',
       expect: 'failed:UNAVAILABLE:control-pending',
       fireMs: 250
     });
-    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'ok'])).toMatchObject({ expect: 'ok' });
+    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'ok', '--host-deployed-at', HOST_DEPLOYED_AT])).toMatchObject({ expect: 'ok' });
     // The straddle's own form names the code first, with or without the
     // `failed:` prefix the read-matrix lists use.
-    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'STALE_REVISION:control-generation_changed'])).toMatchObject({ expect: 'STALE_REVISION:control-generation_changed' });
-    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'failed:UNAVAILABLE:control-pending'])).toMatchObject({ expect: 'failed:UNAVAILABLE:control-pending' });
+    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'STALE_REVISION:control-generation_changed', '--host-deployed-at', HOST_DEPLOYED_AT])).toMatchObject({ expect: 'STALE_REVISION:control-generation_changed' });
+    expect(parseArgs(['straddle', '--role', 'larger', '--expect', 'failed:UNAVAILABLE:control-pending', '--host-deployed-at', HOST_DEPLOYED_AT])).toMatchObject({ expect: 'failed:UNAVAILABLE:control-pending' });
+  });
+
+  it('requires a canonical expected Worker deployment marker for straddle', () => {
+    expect(() => parseArgs(['straddle', '--role', 'representative'])).toThrowError(/--host-deployed-at/u);
+    expect(() => parseArgs(['straddle', '--role', 'representative', '--host-deployed-at', '2026-10-01'])).toThrowError(/canonical UTC/u);
   });
 
   it('keeps a deployment target on https and staging-shaped', () => {
@@ -109,7 +117,10 @@ describe('rehearsal runner arguments', () => {
     ['an injection kind that is not a control state', ['inject', '--role', 'larger', '--kind', 'broken']],
     ['a restore snapshot outside the private directory', ['restore', '--role', 'larger', '--from', '/tmp/snapshot.json']]
   ])('refuses %s', (_label, argv) => {
-    expect(() => parseArgs(argv as string[])).toThrowError(/./u);
+    const withExpectedHost = argv[0] === 'straddle'
+      ? [...argv, '--host-deployed-at', HOST_DEPLOYED_AT]
+      : argv;
+    expect(() => parseArgs(withExpectedHost as string[])).toThrowError(/./u);
   });
 });
 
@@ -163,6 +174,7 @@ describe('rehearsal transitions over REST', () => {
       api: {
         readTabs: async () => ({ WorkbookControl: current === undefined ? [] : [current], ControlJournal: journalRows }),
         writeControlRow: async (_name: string, row: unknown[]) => { order.push('control'); current = row; return 1; },
+        replaceControlRows: async (_name: string, rows: readonly unknown[][]) => { order.push('control'); current = rows[0] ? [...rows[0]] : undefined; return rows.length; },
         appendRow: async (_name: string, values: unknown[]) => { order.push('journal'); journalRows.push(values); return 1; }
       }
     };
@@ -238,5 +250,22 @@ describe('rehearsal transitions over REST', () => {
     expect(() => capturedCounters({ dataRevision: 1, inputRevision: 2 })).toThrowError(/--tab-revisions/u);
     expect(() => capturedCounters({ dataRevision: 1, tabRevisions: {} })).toThrowError(/--input-revision/u);
     expect(capturedCounters({ dataRevision: 1, inputRevision: 2, tabRevisions: { Volunteers: 1 } })).toEqual({ dataRevision: 1, schedulingInputRevision: 2, tabRevisions: { Volunteers: 1 } });
+  });
+
+  it('reserves the default journal slot before a transition and allows the final available slot', async () => {
+    const retainedRows = (count: number) => Array.from({ length: count }, (_unused, index) => [`prior-${index}`]);
+    const atCapacity = fakeApi(serializedRecord(), retainedRows(CONTROL_LIMITS.journalEntries));
+    await expect(controlWriterOverRest(atCapacity.api, { at: AT, controlColumns, journalColumns }))
+      .rejects.toThrowError(/journal capacity.*200.*1 required/u);
+    expect(atCapacity.order).toEqual([]);
+    expect(atCapacity.journalRows).toHaveLength(CONTROL_LIMITS.journalEntries);
+
+    const oneSlotLeft = fakeApi(serializedRecord(), retainedRows(CONTROL_LIMITS.journalEntries - 1));
+    const facade = await controlWriterOverRest(oneSlotLeft.api, { at: AT, controlColumns, journalColumns });
+    facade.writer.activate({ captured: { dataRevision: 41, schedulingInputRevision: 5, tabRevisions: { Volunteers: 2 } }, actorId: 'operator@example.test', reason: 'last journal slot' });
+    await facade.apply();
+
+    expect(oneSlotLeft.order).toEqual(['journal', 'control']);
+    expect(oneSlotLeft.journalRows).toHaveLength(CONTROL_LIMITS.journalEntries);
   });
 });

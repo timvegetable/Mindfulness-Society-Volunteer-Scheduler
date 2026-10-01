@@ -72,7 +72,7 @@ An operation whose policy declares `expectedRevision` is refused with `INVALID_R
 
 ## Persistence and revisions
 
-Google Sheets stores domain rows. Revisions come from one of two authorities, selected per deployment by the `CONTROL_AUTHORITY` Script Property: **Script Properties** (the state of every deployed build until the approved migration runs, and of any deployment that has not been activated) or the workbook's **control record** (the portable authority). The two are never mixed: the record's own `authority` field must agree with the configuration, or every request fails closed. Which one a workbook uses is live state, read from the workbook, not inferred from configuration.
+Google Sheets stores domain rows. Revisions come from one of two authorities, selected per deployment by the `CONTROL_AUTHORITY` Script Property: **Script Properties** (the state of every deployed build until the approved migration runs, and of any deployment that has not been activated) or the workbook's **control record** (the portable authority). A portable deployment requires the record's own `authority` to agree with its configuration and fails closed on disagreement. A legacy deployment retains Script Properties reads for the pre-activation rollback posture; its mutation guard refuses an activated or unreadable control record. Which authority owns mutations is live state, read from the workbook, not inferred from configuration.
 
 | Revision | Script Properties authority | Control authority | Purpose |
 | --- | --- | --- | --- |

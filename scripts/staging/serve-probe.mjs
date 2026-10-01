@@ -8,7 +8,8 @@
 // probe's report is written there too. The server binds to loopback only, serves
 // one directory, and refuses any write outside staging-local/.
 import { createServer } from 'node:http';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { open, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ReadBudget } from './measure-worker.mjs';
@@ -68,6 +69,33 @@ export function createProbeServer(options = {}) {
     return target;
   };
 
+  const writeCredentialIntoStaging = async (name, contents) => {
+    if (!/^[a-z0-9.-]+$/i.test(name)) throw new Error('unsafe file name');
+    const root = resolve(stagingDirectory);
+    const target = resolve(join(root, name));
+    if (!target.startsWith(`${root}/`)) throw new Error('refusing to write outside staging-local');
+    await mkdir(root, { recursive: true });
+    const temporary = resolve(join(root, `.${name}.${randomUUID()}.tmp`));
+    try {
+      const file = await open(temporary, 'wx', 0o600);
+      try {
+        // Apply the private mode explicitly before any credential bytes are
+        // written; the umask can only make this stricter.
+        await file.chmod(0o600);
+        await file.writeFile(contents, 'utf8');
+      } finally {
+        await file.close();
+      }
+      // Replacing the destination atomically also replaces a pre-existing
+      // permissive file or symlink without following it.
+      await rename(temporary, target);
+      return target;
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
+  };
+
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://127.0.0.1:${port}`);
 
@@ -80,7 +108,7 @@ export function createProbeServer(options = {}) {
           return;
         }
         // The credential is written, never logged and never returned.
-        const path = await writeIntoStaging(`credential-${label}.txt`, body.credential);
+        const path = await writeCredentialIntoStaging(`credential-${label}.txt`, body.credential);
         console.log(`captured a credential for ${label}`);
         json(response, 200, { ok: true, path });
       } catch (error) {

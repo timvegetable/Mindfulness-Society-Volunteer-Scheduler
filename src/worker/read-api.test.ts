@@ -71,6 +71,8 @@ describe('read API transport', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
     expect(response.headers.get('vary')).toBe('Origin');
+    expect(response.headers.get('access-control-expose-headers')?.toLowerCase().split(',').map((header) => header.trim()))
+      .toContain('x-staging-host-deployed-at');
   });
 
   it('allows a request with no Origin header, which still needs a verified credential', async () => {

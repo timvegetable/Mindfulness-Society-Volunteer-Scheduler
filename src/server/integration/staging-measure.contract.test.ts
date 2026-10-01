@@ -1,7 +1,8 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { OPERATION_READS, ReadBudget, campaignLedgerPaths, classifyFailure, isStagingHost, parseArguments, readsFor, validateManifest } from '../../../scripts/staging/measure-worker.mjs';
+import { AttemptBudget, HOST_VERSION_PROPAGATION_MS, OPERATION_READS, ReadBudget, campaignLedgerPaths, classifyFailure, isStagingHost, parseArguments, planFor, readTimingsFrom, readsFor, summarize, validateManifest } from '../../../scripts/staging/measure-worker.mjs';
 
 /**
  * Contract tests for the campaign harness: the rolling-window Sheets read
@@ -10,6 +11,99 @@ import { OPERATION_READS, ReadBudget, campaignLedgerPaths, classifyFailure, isSt
  */
 
 describe('workload budget', () => {
+  it('shares one delayed first ledger load across concurrent reservations', async () => {
+    const now = 1_000_000;
+    const readBudget = new ReadBudget(10, 60_000, () => now);
+    const readLoads: Array<() => void> = [];
+    let readLoadCalls = 0;
+    readBudget.loadLedger = async () => {
+      readLoadCalls += 1;
+      await new Promise<void>((resolve) => { readLoads.push(resolve); });
+      readBudget.spent = [now - 1_000];
+    };
+    const readFirst = readBudget.reserve(1);
+    const readSecond = readBudget.reserve(1);
+    const concurrentReadLoads = readLoadCalls;
+    readLoads[0]?.();
+    await readFirst;
+    readLoads[1]?.();
+    await readSecond;
+
+    const attemptBudget = new AttemptBudget(10);
+    const attemptLoads: Array<() => void> = [];
+    let attemptLoadCalls = 0;
+    attemptBudget.loadLedger = async () => {
+      attemptLoadCalls += 1;
+      await new Promise<void>((resolve) => { attemptLoads.push(resolve); });
+      attemptBudget.spent = 4;
+    };
+    const attemptFirst = attemptBudget.reserve();
+    const attemptSecond = attemptBudget.reserve();
+    const concurrentAttemptLoads = attemptLoadCalls;
+    attemptLoads[0]?.();
+    await attemptFirst;
+    attemptLoads[1]?.();
+    await attemptSecond;
+
+    expect({
+      concurrentReadLoads,
+      readReservationsObserved: readBudget.observed(),
+      concurrentAttemptLoads,
+      attemptsObserved: attemptBudget.observed()
+    }).toEqual({
+      concurrentReadLoads: 1,
+      readReservationsObserved: 3,
+      concurrentAttemptLoads: 1,
+      attemptsObserved: 6
+    });
+  });
+
+  it('fails closed for unreadable or malformed existing ledgers while accepting missing ledgers', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'staging-invalid-ledger-'));
+    const now = 1_000_000;
+    try {
+      const missingReadBudget = new ReadBudget(10, 60_000, () => now, join(directory, 'missing-read.json'));
+      await missingReadBudget.reserve(1);
+      expect(missingReadBudget.observed()).toBe(1);
+
+      const malformedReadPath = join(directory, 'malformed-read.json');
+      await writeFile(malformedReadPath, '{not-json}\n', 'utf8');
+      const malformedReadBudget = new ReadBudget(10, 60_000, () => now, malformedReadPath);
+      await expect(malformedReadBudget.reserve(1)).rejects.toThrow(/read-budget ledger is malformed/u);
+      expect(malformedReadBudget.observed()).toBe(0);
+
+      const invalidReadPath = join(directory, 'invalid-read.json');
+      await writeFile(invalidReadPath, '{"spent":["not-a-timestamp"]}\n', 'utf8');
+      const invalidReadBudget = new ReadBudget(10, 60_000, () => now, invalidReadPath);
+      await expect(invalidReadBudget.reserve(1)).rejects.toThrow(/read-budget ledger has an invalid format/u);
+      expect(invalidReadBudget.observed()).toBe(0);
+
+      const unreadableReadPath = join(directory, 'read-ledger-directory');
+      await mkdir(unreadableReadPath);
+      const unreadableReadBudget = new ReadBudget(10, 60_000, () => now, unreadableReadPath);
+      await expect(unreadableReadBudget.reserve(1)).rejects.toThrow(/read-budget ledger could not be read/u);
+      expect(unreadableReadBudget.observed()).toBe(0);
+
+      const unreadableAttemptBudget = new AttemptBudget(10, unreadableReadPath);
+      await expect(unreadableAttemptBudget.reserve()).rejects.toThrow(/attempt-budget ledger could not be read/u);
+      expect(unreadableAttemptBudget.observed()).toBe(0);
+
+      const malformedAttemptPath = join(directory, 'malformed-attempt.json');
+      await writeFile(malformedAttemptPath, '{not-json}\n', 'utf8');
+      const malformedAttemptBudget = new AttemptBudget(10, malformedAttemptPath);
+      await expect(malformedAttemptBudget.reserve()).rejects.toThrow(/attempt-budget ledger is malformed/u);
+      expect(malformedAttemptBudget.observed()).toBe(0);
+
+      const invalidAttemptPath = join(directory, 'invalid-attempt.json');
+      await writeFile(invalidAttemptPath, '{"spent":-1}\n', 'utf8');
+      const invalidAttemptBudget = new AttemptBudget(10, invalidAttemptPath);
+      await expect(invalidAttemptBudget.reserve()).rejects.toThrow(/attempt-budget ledger has an invalid format/u);
+      expect(invalidAttemptBudget.observed()).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('budgets the preview operation at two reads like the other domain reads', () => {
     expect(OPERATION_READS['session.me']).toBe(1);
     expect(OPERATION_READS['admin.schedule.read']).toBe(2);
@@ -62,7 +156,7 @@ describe('workload budget', () => {
 
   it('flushes a budget ledger so a finished run is fully recorded', async () => {
     const ledgerPath = resolve('staging-local/.contract-test-flush.json');
-    await writeFile(ledgerPath, '{"spent":0}\n', 'utf8');
+    await writeFile(ledgerPath, '{"spent":[]}\n', 'utf8');
     const budget = new ReadBudget(10, 60_000, () => 1_000_000, ledgerPath);
     await budget.loadLedger();
     await budget.reserve(3);
@@ -89,7 +183,7 @@ describe('workload budget', () => {
 
   it('shares one rolling window across harness restarts through the ledger', async () => {
     const ledgerPath = resolve('staging-local/.contract-test-ledger.json');
-    await writeFile(ledgerPath, '[]\n', 'utf8');
+    await writeFile(ledgerPath, '{"spent":[]}\n', 'utf8');
     let clock = 1_000_000;
     const now = () => clock;
     const first = new ReadBudget(4, 60_000, now, ledgerPath);
@@ -117,6 +211,91 @@ describe('failure taxonomy', () => {
     expect(classifyFailure(200, { ok: false, error: { code: 'STALE_REVISION' } })).toBe('envelope-STALE_REVISION');
     expect(classifyFailure(200, { ok: true, data: {} })).toBe('parity-mismatch');
     expect(classifyFailure(0, undefined, Object.assign(new Error('x'), { name: 'AbortError' }))).toBe('timeout');
+  });
+});
+
+describe('phase summaries', () => {
+  it('summarizes each operation while excluding failed and version-lagged responses from latency populations', () => {
+    const expectedHostDeployedAt = '2026-09-30T12:00:00.000Z';
+    const summary = summarize([
+      { operation: 'admin.schedule.read', durationMs: 100, sheetsReads: 3, inFlight: 1, observedMaxInFlightDuringRequest: 3, hostDeployedAt: expectedHostDeployedAt },
+      { operation: 'admin.schedule.read', durationMs: 800, sheetsReads: 3, inFlight: 3, observedMaxInFlightDuringRequest: 4, failure: '5xx', hostDeployedAt: expectedHostDeployedAt },
+      { operation: 'admin.schedule.read', durationMs: 900, sheetsReads: 1, inFlight: 4, observedMaxInFlightDuringRequest: 4, hostDeployedAt: '2026-09-30T11:00:00.000Z' },
+      { operation: 'session.me', durationMs: 200, sheetsReads: 1, inFlight: 2, observedMaxInFlightDuringRequest: 3, hostDeployedAt: expectedHostDeployedAt }
+    ], 60_000, expectedHostDeployedAt, ['admin.schedule.read', 'session.me', 'admin.insights.read']);
+
+    // Keep the existing phase-level aggregate alongside the operation split.
+    expect(summary).toMatchObject({
+      attempts: 4,
+      successes: 3,
+      failures: { '5xx': 1 },
+      versionLag: 1,
+      latencyObservations: 2,
+      wallTimeMs: { min: 100, p50: 100, p95: 200, p99: 200, max: 200 },
+      latencyObservationsAtLeast3InFlight: 2,
+      wallTimeMsAtLeast3InFlight: { min: 100, p50: 100, p95: 200, p99: 200, max: 200 },
+      byOperation: {
+        'admin.schedule.read': {
+          attempts: 3,
+          successes: 2,
+          failures: { '5xx': 1 },
+          versionLag: 1,
+          latencyObservations: 1,
+          wallTimeMs: { min: 100, p50: 100, p95: 100, p99: 100, max: 100 },
+          latencyObservationsAtLeast3InFlight: 1,
+          wallTimeMsAtLeast3InFlight: { min: 100, p50: 100, p95: 100, p99: 100, max: 100 },
+          achieved: {
+            observedMaxInFlight: 4,
+            attemptsAtLeast3InFlight: 3,
+            successfulObservationsAtLeast3InFlight: 1,
+            versionLagAtLeast3InFlight: 1
+          }
+        },
+        'session.me': {
+          attempts: 1,
+          successes: 1,
+          failures: {},
+          versionLag: 0,
+          latencyObservations: 1,
+          wallTimeMs: { min: 200, p50: 200, p95: 200, p99: 200, max: 200 },
+          latencyObservationsAtLeast3InFlight: 1,
+          wallTimeMsAtLeast3InFlight: { min: 200, p50: 200, p95: 200, p99: 200, max: 200 },
+          achieved: {
+            observedMaxInFlight: 3,
+            attemptsAtLeast3InFlight: 1,
+            successfulObservationsAtLeast3InFlight: 1,
+            versionLagAtLeast3InFlight: 0
+          }
+        }
+      }
+    });
+    // Failed and stale-version responses remain visible in counts, but cannot
+    // distort the warm latency quantiles or the successful concurrency count.
+    expect(summary.byOperation['admin.schedule.read']!.wallTimeMs.max).toBe(100);
+    expect(summary.byOperation['admin.schedule.read']!.achieved.successfulObservationsAtLeast3InFlight).toBe(1);
+    expect(summary.byOperation['admin.insights.read']!).toMatchObject({
+      attempts: 0,
+      successes: 0,
+      failures: {},
+      versionLag: 0,
+      latencyObservations: 0,
+      wallTimeMs: { min: null, p50: null, p95: null, p99: null, max: null },
+      latencyObservationsAtLeast3InFlight: 0,
+      wallTimeMsAtLeast3InFlight: { min: null, p50: null, p95: null, p99: null, max: null },
+      achieved: {
+        observedMaxInFlight: 0,
+        attemptsAtLeast3InFlight: 0,
+        successfulObservationsAtLeast3InFlight: 0,
+        versionLagAtLeast3InFlight: 0
+      }
+    });
+  });
+
+  it('parses only complete per-read timing lists', () => {
+    expect(readTimingsFrom('5, 10,0', 3)).toEqual([5, 10, 0]);
+    expect(readTimingsFrom('5, 10', 3)).toBeNull();
+    expect(readTimingsFrom('5, nope', 2)).toBeNull();
+    expect(readTimingsFrom(null)).toBeNull();
   });
 });
 
@@ -151,6 +330,22 @@ describe('manifest validation', () => {
   it('keeps report and credential paths inside staging-local', () => {
     expect(() => validateManifest({ ...manifest, reportPath: 'reports/measure.json' })).toThrow('staging-local');
     expect(() => validateManifest({ ...manifest, credentialPath: 'secrets/credential.txt' })).toThrow('staging-local');
+  });
+
+  it('requires a canonical deployed-at marker and publishes its readiness guard', () => {
+    const hostDeployedAt = '2026-09-30T12:00:00.000Z';
+    const parsed = validateManifest({ ...manifest, hostDeployedAt }, { requireHostDeployedAt: true });
+    const readiness = planFor(parsed, Date.parse(hostDeployedAt) + HOST_VERSION_PROPAGATION_MS - 1_000).hostReadiness;
+    expect(readiness).toEqual({
+      required: true,
+      minimumDelayMs: 95_000,
+      readyAt: new Date(Date.parse(hostDeployedAt) + 95_000).toISOString(),
+      waitRemainingMs: 1_000
+    });
+    expect(() => validateManifest({ ...manifest, hostDeployedAt: 'not-a-date' })).toThrow(/hostDeployedAt/u);
+    expect(() => validateManifest({ ...manifest, hostDeployedAt: '2026-09-30' })).toThrow(/hostDeployedAt/u);
+    expect(() => validateManifest({ ...manifest, hostDeployedAt: 1 })).toThrow(/hostDeployedAt/u);
+    expect(() => validateManifest(manifest, { requireHostDeployedAt: true })).toThrow(/hostDeployedAt is required/u);
   });
 });
 

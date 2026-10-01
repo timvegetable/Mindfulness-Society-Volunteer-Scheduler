@@ -1,4 +1,5 @@
 import { resolve, sep } from 'node:path';
+import { validateHostDeployedAt } from './measure-worker.mjs';
 
 // Command-line contract for the staging rehearsal runner.
 //
@@ -32,6 +33,8 @@ export type Args = {
   expect?: string;
   /** Straddle: the deployed gateway URL the read is sent to. */
   workerUrl?: string;
+  /** Straddle: the expected `X-Staging-Host-Deployed-At` marker. */
+  expectedHostDeployedAt?: string;
   /** Straddle: the private credential file holding a Google ID token. */
   credentialPath?: string;
   /** Injection: which deliberately broken control state to write. */
@@ -83,9 +86,17 @@ export function privateCredentialPath(value: string, flag = '--credential'): str
   return value;
 }
 
+function canonicalHostDeployedAt(value: string): string {
+  try {
+    return validateHostDeployedAt(value);
+  } catch {
+    throw new Error('--host-deployed-at must be a canonical UTC deployment timestamp such as 2026-09-30T12:00:00.000Z.');
+  }
+}
+
 export function parseArgs(argv: readonly string[]): Args {
   const [command, ...rest] = argv;
-  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify|capture|transition|rollback|fixture|cleanup|inject|restore|legacy-admission|straddle> --role representative|larger [--baseline PATH] --confirm-staging');
+  if (!command) throw new Error('Usage: rehearse-portable-state <baseline|initialize|verify|capture|transition|rollback|fixture|cleanup|inject|restore|legacy-admission|straddle> --role representative|larger [--baseline PATH] [--host-deployed-at UTC_TIMESTAMP] --confirm-staging');
   let role: Role | undefined;
   let confirm = false;
   let baseline: string | undefined;
@@ -99,6 +110,7 @@ export function parseArgs(argv: readonly string[]): Args {
   let operation: string | undefined;
   let expect: string | undefined;
   let workerUrl: string | undefined;
+  let expectedHostDeployedAt: string | undefined;
   let credentialPath: string | undefined;
   let kind: Args['kind'];
   let from: string | undefined;
@@ -162,6 +174,8 @@ export function parseArgs(argv: readonly string[]): Args {
       expect = candidate;
     } else if (value === '--worker-url') {
       workerUrl = stagingWorkerUrl(next());
+    } else if (value === '--host-deployed-at') {
+      expectedHostDeployedAt = canonicalHostDeployedAt(next().trim());
     } else if (value === '--credential') {
       credentialPath = privateCredentialPath(next());
     } else if (value === '--kind') {
@@ -187,6 +201,9 @@ export function parseArgs(argv: readonly string[]): Args {
     }
   }
   if (!role) throw new Error('--role is required; the runner addresses workbooks by role, never by raw id.');
+  if (command === 'straddle' && expectedHostDeployedAt === undefined) {
+    throw new Error('straddle needs --host-deployed-at (the expected X-Staging-Host-Deployed-At marker).');
+  }
   return {
     command,
     role,
@@ -205,6 +222,7 @@ export function parseArgs(argv: readonly string[]): Args {
     ...(operation ? { operation } : {}),
     ...(expect ? { expect } : {}),
     ...(workerUrl ? { workerUrl } : {}),
+    ...(expectedHostDeployedAt ? { expectedHostDeployedAt } : {}),
     ...(credentialPath ? { credentialPath } : {}),
     ...(kind ? { kind } : {}),
     ...(from ? { from } : {})

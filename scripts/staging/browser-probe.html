@@ -22,11 +22,14 @@
     </p>
     <p>
       Query parameters: <code>api</code> (the staging Worker <code>/exec</code> URL), <code>client</code> (the
-      staging OAuth client id), <code>label</code> (the report name, default <code>probe</code>), and
-      <code>attempts</code> (attempts per operation, default 5, at most 60 — the rehearsal uses 30). The pool is
-      fixed at 4 requests in flight, because the contract's wall-time threshold applies to observations taken
-      with at least three in flight. Every attempt reserves its Sheets reads in the probe host's shared ledger
-      before it is issued.
+      staging OAuth client id), <code>label</code> (the report name, default <code>probe</code>),
+      <code>attempts</code> (attempts per operation, default 5, at most 60), <code>readPlan</code>
+      (<code>legacy</code> by default, or <code>portable</code> to reserve 2 identity / 4 domain reads), and
+      <code>hostDeployedAt</code> (the expected <code>X-Staging-Host-Deployed-At</code> timestamp; required for
+      <code>portable</code>). The probe waits until that deployment is at least 95 seconds old, then retains and
+      excludes responses from another host version from warm distributions. The pool has at most 4 requests;
+      reports count the observations that actually overlapped at least 3 requests. Every target request first
+      reserves its selected read cost in the probe host's shared ledger.
     </p>
     <p class="warn">
       Never run this against production. The probe refuses any target that is not a <code>*.workers.dev</code> host

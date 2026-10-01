@@ -5,16 +5,22 @@ Executed under [manifest 2](staging-rehearsal-manifest-2-2026-09-30.md), approve
 topology only. Raw reports, attempt logs and ledgers stay in ignored private
 `staging-local/`; this document carries the measured values and the digests.
 
-Result: **the read plan, the rejection matrix, the generation straddle and both
-4.2 drills are established live. One predeclared latency gate is missed on the
-larger fixture, so task 4.1 stays open with its measured value.**
+Result: served read counts, the generation straddle and the core 4.2 drills are
+established live. The rejection matrix is partial, a latency gate is breached,
+and browser evidence is absent. Task 4.1 remains open.
+
+The [2026-10-01 audit](delivery-checklist-2026-10-01.md) corrects matrix coverage,
+timing semantics, deployment counts and attempt accounting below.
 
 ## Deployments
 
 Each was a `deploy-staging.mjs` run with explicit `--var` values; `wrangler.jsonc`
 was never edited (`git diff --quiet wrangler.jsonc` after the window: unchanged).
-Every attempt was counted only after the response carried the expected
-`X-Staging-Host-Deployed-At` marker, following the documented 95 s version lag.
+The retained harness/straddle reports carry the expected host marker. Historical
+marker filtering does not establish that every tool enforced the 95 s wait
+before reservations; the corrected tools enforce that ordering. The four phases
+below contain six individual host/gateway invocations, despite the manifest's
+original five-deployment label.
 
 | # | Target | Marker (`X-Staging-Host-Deployed-At`) | Variables |
 | --- | --- | --- | --- |
@@ -59,7 +65,9 @@ each check; all five restores returned the record to `workbook-control`, idle.
 
 ## Latency, per read operation per fixture
 
-Burst phase, wall clock in milliseconds. The representative fixture ran 36
+Historical burst phase, wall clock in milliseconds through response headers
+(the old harness stopped timing before JSON parsing). The in-flight column is
+the observed maximum, not proof that every observation qualified at overlap ≥3. The representative fixture ran 36
 observations per operation at concurrency 4 plus 12 at concurrency 1; the larger
 fixture ran 30 plus 1, because the window's remaining attempt budget was spent
 there. Every attempt succeeded; no 429 was observed at any point.
@@ -99,9 +107,13 @@ plan, and the closing control read.
 | post-activation served read | 196, 338, 176 |
 | straddle attempt 1 (retained) | 298, 252, 192 |
 
-The control reads are 174–338 ms each and are not the dominant term in the
-larger fixture's Schedule p99; the plan read is. The header is absent when a
-request makes no Sheets read at all, which is asserted in the Worker suite.
+Correction from the 2026-10-01 source/evidence audit: these four isolated
+responses are not the larger fixture's Schedule burst population. The header
+positions mix the fused authorization/control request, domain plan and closing
+control request; the 338 ms sample is a plan request. The retained harness
+attempt logs omit this header, so neither the control contribution to that
+population nor the cause of its p99 breach is established. The header is absent
+when a request makes no Sheets read at all, which is asserted in the Worker suite.
 
 ## The generation straddle
 
@@ -194,11 +206,12 @@ refused with "No interrupted mutation is pending".
 4. **The straddle mis-reported a correct refusal as a failure.** Its expectation
    is written `CODE[:reason]`, but the parser read the reason from the code slot.
    Fixed; the pre-fix attempt is retained.
-5. **The straddle and transition subcommands are not attempt-ledgered.** Their
-   reads are real and are not counted against the campaign cap. Measured: seven
-   straddle and transition reads in this window. Recorded as a follow-up rather
-   than fixed here, because the cap is enforced by the tools that reserve and a
-   partial fix would be worse than the recorded gap.
+5. **Historical attempt accounting is incomplete.** The October 1 audit proves
+   three direct unledgered straddle requests; `transition` has no Worker fetch.
+   The earlier seven-request claim is not established. The 254 matrix-log entries
+   versus the 253 campaign-ledger increment remain unreconciled. Seven is retained
+   only as a conservative planning charge; the ledger itself is unchanged. New
+   straddle requests now reserve both campaign budgets.
 
 ## Not covered by this window
 

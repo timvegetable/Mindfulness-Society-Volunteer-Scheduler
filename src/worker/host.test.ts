@@ -58,10 +58,10 @@ function benchmarkRequest(operation: string, credential: string, extra: Record<s
   });
 }
 
-function execRequest(operation: string, credential: string, extra: Record<string, unknown> = {}): Request {
+function execRequest(operation: string, credential: string, extra: Record<string, unknown> = {}, origin?: string): Request {
   return new Request(`https://gateway.example.test${READ_API_PATH}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    headers: { 'Content-Type': 'text/plain;charset=utf-8', ...(origin === undefined ? {} : { Origin: origin }) },
     body: JSON.stringify(request(operation, credential, extra))
   });
 }
@@ -149,6 +149,17 @@ describe('benchmark preview enablement', () => {
     const noMarker = hostWith({ STAGING_PREVIEW_BENCHMARK_ENABLED: 'true' });
     const plain = await noMarker.host.fetch(benchmarkRequest(INTEGRATION_OPERATIONS.adminSchedulePreview, 'credential-placeholder'));
     expect(plain.headers.get('X-Staging-Host-Deployed-At')).toBeNull();
+  });
+
+  it('exposes the deployment marker on cross-origin /exec responses for browser version checks', async () => {
+    const marker = '2026-09-29T07:00:00.000Z';
+    const { host } = hostWith({ STAGING_DEPLOYED_AT: marker });
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.me, await idToken('admin@example.test'), {}, 'https://scheduling.example.test'));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-staging-host-deployed-at')).toBe(marker);
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://scheduling.example.test');
+    expect(response.headers.get('access-control-expose-headers')?.toLowerCase().split(',').map((header) => header.trim()))
+      .toContain('x-staging-host-deployed-at');
   });
 
   it('answers an enabled benchmark preflight like /exec', async () => {
@@ -396,11 +407,11 @@ describe('staging instrumentation bindings', () => {
   it('omits the timing header when the request read nothing', async () => {
     const { host, sheetsCalls } = hostWith();
 
-    // The transport refuses a mutation before dispatch, so the request never
-    // reaches the service and carries no read headers at all.
+    // The transport refuses a mutation before dispatch, so the service reports
+    // zero reads and no timing list.
     const refused = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminScheduleRerun, 'credential-placeholder'));
     expect(refused.headers.get('x-staging-read-ms')).toBeNull();
-    expect(refused.headers.get('x-staging-sheets-reads')).toBeNull();
+    expect(refused.headers.get('x-staging-sheets-reads')).toBe('0');
 
     // A request the service itself refuses before any Sheets call reports a
     // zero read count and no timing header: absent, not an empty list.
@@ -408,6 +419,20 @@ describe('staging instrumentation bindings', () => {
     expect(unauthorized.headers.get('x-staging-sheets-reads')).toBe('0');
     expect(unauthorized.headers.get('x-staging-read-ms')).toBeNull();
     expect(sheetsCalls).toEqual([]);
+  });
+
+  it('reports zero service reads on an early FORBIDDEN allowlist refusal without backend access', async () => {
+    const { host, sheetsCalls, urls, storage } = hostWith();
+    const response = await host.fetch(execRequest(INTEGRATION_OPERATIONS.adminScheduleRerun, 'credential-placeholder'));
+    const envelope = await response.json() as { ok: boolean; error?: { code: string } };
+
+    expect(response.status).toBe(200);
+    expect(envelope).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect(response.headers.get('x-staging-sheets-reads')).toBe('0');
+    expect(response.headers.get('x-staging-read-ms')).toBeNull();
+    expect(sheetsCalls).toEqual([]);
+    expect(urls).toEqual([]);
+    expect(storage).toEqual([]);
   });
 
   it('never puts row values, credentials or a digest into the timing header', async () => {

@@ -90,31 +90,36 @@ export class StagingWorkbookHost {
         benchmarkPreview: benchmarkEnabled,
         bracketHoldMs: stagingBracketHoldMs(this.env)
       });
+      const measurementHeaders = (): Record<string, string> => {
+        const stats = service.stats();
+        return {
+          'X-Staging-Sheets-Reads': String(stats.sheetsReads),
+          // Per-read durations in call order, so a measurement can price the
+          // control reads separately from the domain read without trusting a
+          // client-side stopwatch. Absent when the request made no read.
+          ...(stats.sheetsReadMs.length === 0 ? {} : { 'X-Staging-Read-Ms': stats.sheetsReadMs.join(',') }),
+          ...(stats.digest === undefined ? {} : { 'X-Staging-Snapshot-Digest': stats.digest })
+        };
+      };
       const api = createReadApi({
         origins: allowedOrigins(this.env),
         dispatch: (input, route) => service.handle(input, route),
         maxRequestBytes: READ_API_MAX_REQUEST_BYTES,
-        responseHeaders: () => {
-          const stats = service.stats();
-          return {
-            'X-Staging-Sheets-Reads': String(stats.sheetsReads),
-            // Per-read durations in call order, so a measurement can price the
-            // control reads separately from the domain read without trusting a
-            // client-side stopwatch. Absent when the request made no read.
-            ...(stats.sheetsReadMs.length === 0 ? {} : { 'X-Staging-Read-Ms': stats.sheetsReadMs.join(',') }),
-            ...(stats.digest === undefined ? {} : { 'X-Staging-Snapshot-Digest': stats.digest })
-          };
-        },
+        responseHeaders: measurementHeaders,
         benchmarkPreview: { enabled: benchmarkEnabled }
       });
       const response = await api.fetch(request);
+      // Stamp service counters after the API has answered so early allowlist
+      // refusals and other pre-dispatch responses report the zero reads the
+      // service actually made. Normal dispatch responses keep the same stats
+      // and digest values applied inside createReadApi.
+      const headers = new Headers(response.headers);
+      for (const [name, value] of Object.entries(measurementHeaders())) headers.set(name, value);
       // The deployment marker rides on every response the object serves, so a
       // lagging object is identifiable on a 404 as well as on a served request.
       const marker = hostDeployedMarker(this.env);
-      if (marker === undefined) return response;
-      const headers = new Headers(response.headers);
-      headers.set(HOST_DEPLOYED_AT_HEADER, marker);
-      return new Response(response.body, { status: response.status, headers });
+      if (marker !== undefined) headers.set(HOST_DEPLOYED_AT_HEADER, marker);
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     } catch {
       // Configuration errors can name bindings and hosts, and an unexpected
       // transport failure would otherwise become a platform error page. The

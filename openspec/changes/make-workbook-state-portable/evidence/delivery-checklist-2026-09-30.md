@@ -1,3 +1,7 @@
+> Historical record: coverage, timing semantics and budget claims are corrected by
+> [the 2026-10-01 audit](delivery-checklist-2026-10-01.md). This checklist does not
+> establish completion of the full plan.
+
 # Delivery checklist — j-space goal, line by line (2026-09-30)
 
 Goal under check: *Close tasks 4.1/4.2 of make-workbook-state-portable by

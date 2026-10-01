@@ -81,7 +81,11 @@ export function createSheetsReadClient(options: SheetsReadClientOptions): Sheets
     reads += 1;
     // Timed from the request itself: token acquisition is a separate dependency
     // and would otherwise be charged to the Sheets call. A failed request still
-    // records a duration, so positions stay aligned with `readCount()`.
+    // records a duration, so positions stay aligned with `readCount()`. Reserve
+    // the slot before `fetch`: concurrent responses may finish out of order, but
+    // the timing header is defined in request-call order.
+    const durationIndex = durationsMs.length;
+    durationsMs.push(0);
     const startedAt = nowMs();
     try {
       let response: Response;
@@ -101,7 +105,7 @@ export function createSheetsReadClient(options: SheetsReadClientOptions): Sheets
         throw new SheetsReadError('The Sheets API returned a malformed response.');
       }
     } finally {
-      durationsMs.push(Math.max(0, Math.round(nowMs() - startedAt)));
+      durationsMs[durationIndex] = Math.max(0, Math.round(nowMs() - startedAt));
     }
   };
 

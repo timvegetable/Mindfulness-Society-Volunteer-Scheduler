@@ -38,7 +38,8 @@ import {
 import { legacyAdmission, type ControlReadOutcome } from '../../src/server/workbook/legacy-admission.js';
 import { accessTokenFor } from './google-auth.mjs';
 import { createWorkbookApi, workbookControlTabs, workbookTabs, type StagingProtectedRange } from './workbook.mjs';
-import { capturedCounters, controlWriterOverRest as writerOverRest, type ControlTabsApi } from './rehearsal-transitions.js';
+import { capturedCounters, controlTuple, controlWriterOverRest as writerOverRest, createInjectionSnapshot, restoreInjectedControlSnapshot, type ControlTabsApi, type InjectionSnapshot } from './rehearsal-transitions.js';
+import { prepareRehearsalGatewayRead, prepareRehearsalStraddle, runRehearsalStraddle, straddleExpectationPassed } from './rehearsal-request.mjs';
 import { DEFAULT_FIRE_MS, DEFAULT_STRADDLE_EXPECTATION, DEFAULT_STRADDLE_OPERATION, INJECTION_KINDS, parseArgs, requiresStagingConfirmation, type Args, type Role } from './rehearsal-arguments.js';
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
@@ -241,7 +242,7 @@ async function controlWriterOverRest(api: Awaited<ReturnType<typeof createWorkbo
   const definitions = new Map((await workbookControlTabs()).map((tab) => [tab.name as string, tab.columns]));
   const controlColumns = definitions.get('WorkbookControl');
   if (!controlColumns) throw new Error('The workbook schema has no WorkbookControl definition.');
-  return await writerOverRest(api as unknown as ControlTabsApi, {
+  return await writerOverRest(controlTabsApi(api), {
     at,
     controlColumns,
     journalColumns: definitions.get('ControlJournal') ?? JOURNAL_COLUMNS
@@ -251,6 +252,16 @@ async function controlWriterOverRest(api: Awaited<ReturnType<typeof createWorkbo
 /** Zips positional control rows with their column names, for a whole-tab write. */
 function controlRowObjects(rows: readonly (readonly unknown[])[]): Record<string, unknown>[] {
   return rows.map((row) => Object.fromEntries(CONTROL_COLUMNS.map((column, index) => [column, row[index] ?? ''])));
+}
+
+/** Adapts the workbook API while keeping full-range repair explicit. */
+function controlTabsApi(api: Awaited<ReturnType<typeof createWorkbookApi>>): ControlTabsApi {
+  return {
+    readTabs: (names) => api.readTabs(names),
+    writeControlRow: (name, row) => api.writeControlRow(name, row),
+    replaceControlRows: (name, rows) => api.writeTab(name, controlRowObjects(rows)),
+    appendRow: (name, values) => api.appendRow(name, values)
+  };
 }
 
 /** Reads the control record, or undefined when the workbook has none yet. */
@@ -282,17 +293,7 @@ async function writeRecord(api: Awaited<ReturnType<typeof createWorkbookApi>>, r
 }
 
 function tuple(record: ControlRecord) {
-  return {
-    generation: record.generation,
-    completedGeneration: record.completedGeneration,
-    authority: record.authority,
-    authorityEpoch: record.authorityEpoch,
-    mutationState: record.mutationState,
-    dataRevision: record.dataRevision,
-    schedulingInputRevision: record.schedulingInputRevision,
-    tabRevisions: record.tabRevisions,
-    idle: portableRevisionProvider(record).idle
-  };
+  return controlTuple(record);
 }
 
 /**
@@ -490,20 +491,21 @@ async function commandLegacyAdmission(args: Args, api: Awaited<ReturnType<typeof
  * B2: write one deliberately broken control state, snapshotting what was there.
  *
  * The read matrix has to see each failure class refused live, and every one of
- * them is a control-row write. The pre-injection rows are saved first, so the
- * `restore` step puts the workbook back exactly as it was — the matrix must not
- * leave a malformed record behind for the next check to trip over.
+ * them is a control-row write. The pre-injection record and its counters are
+ * saved first, so `restore` returns to the reviewed idle authority while
+ * journaling recovery and advancing generation; it never rewinds control state.
  */
 async function commandInject(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
   const kind = args.kind;
   if (!kind) throw new Error(`inject needs --kind ${INJECTION_KINDS.join('|')}.`);
   const at = new Date().toISOString();
   const before = ((await api.readTabs(['WorkbookControl'])).WorkbookControl ?? []) as unknown[][];
-  const snapshotPath = await report(`rehearsal-inject-snapshot-${args.role}`, { role: args.role, at, kind, controlRows: before });
   const dataRows = before.filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
-  const current = dataRows[0] ? controlRecordFromRows([dataRows[0]]) : undefined;
+  const current = controlRecordFromRows(dataRows);
+  if (current.authority !== 'workbook-control' || current.mutationState !== 'idle') {
+    throw new Error('inject needs one idle workbook-control record so its restore snapshot has a reviewed baseline.');
+  }
   const need = (): ControlRecord => {
-    if (!current) throw new Error(`inject --kind ${kind} needs an existing control record.`);
     return current;
   };
   let rows: unknown[][];
@@ -522,6 +524,8 @@ async function commandInject(args: Args, api: Awaited<ReturnType<typeof createWo
     else row[at_column('authority')] = 'script-properties';
     rows = [row];
   }
+  const snapshot = createInjectionSnapshot({ role: args.role, kind, at, controlRows: before, injectedRows: rows });
+  const snapshotPath = await report(`rehearsal-inject-snapshot-${args.role}`, snapshot);
   await api.writeTab('WorkbookControl', controlRowObjects(rows));
   const after = ((await api.readTabs(['WorkbookControl'])).WorkbookControl ?? []) as unknown[][];
   const readBack = after.filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined)).length;
@@ -529,19 +533,46 @@ async function commandInject(args: Args, api: Awaited<ReturnType<typeof createWo
   return { path, snapshotPath, kind, rowsWritten: rows.length, readBackDataRows: readBack, apiCalls: api.callCount() };
 }
 
-/** Puts the control tab back exactly as an `inject` step found it. */
+/** Restores one role-matched injection through a journaled production recovery. */
 async function commandRestore(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
   if (!args.from) throw new Error('restore needs --from PATH (the snapshot the inject step wrote).');
-  const snapshot = JSON.parse(await readFile(resolve(args.from), 'utf8')) as { controlRows?: unknown[][] };
-  if (!Array.isArray(snapshot.controlRows)) throw new Error(`The snapshot at ${args.from} carries no controlRows array.`);
-  await api.writeTab('WorkbookControl', controlRowObjects(snapshot.controlRows));
+  const snapshot = JSON.parse(await readFile(resolve(args.from), 'utf8')) as InjectionSnapshot;
+  const at = new Date().toISOString();
+  const reason = args.reason.trim() || `Restore ${snapshot.kind} injection for ${snapshot.role} from reviewed generation ${snapshot.priorValidTuple?.generation ?? 'unknown'}.`;
+  const restored = await restoreInjectedControlSnapshot(controlTabsApi(api), {
+    snapshot,
+    role: args.role,
+    actorId: args.actor,
+    reason,
+    at,
+    controlColumns: CONTROL_COLUMNS,
+    journalColumns: JOURNAL_COLUMNS
+  });
   const after = ((await api.readTabs(['WorkbookControl'])).WorkbookControl ?? []) as unknown[][];
-  const record = after.find((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
-  const path = await report(`rehearsal-restore-${args.role}`, { role: args.role, at: new Date().toISOString(), from: args.from, rowsWritten: snapshot.controlRows.length, readBack: after });
+  const path = await report(`rehearsal-restore-${args.role}`, {
+    role: args.role,
+    kind: snapshot.kind,
+    at,
+    from: args.from,
+    reason,
+    priorValidTuple: restored.priorValidTuple,
+    generationFloor: restored.generationFloor,
+    observedGenerations: restored.observedGenerations,
+    recoveryMode: restored.recoveryMode,
+    events: restored.events,
+    restored: tuple(restored.record),
+    readBack: after
+  });
   return {
     path,
-    restoredRows: snapshot.controlRows.length,
-    recordAuthority: record ? controlRecordFromRows([record]).authority : null,
+    kind: snapshot.kind,
+    roleConfirmed: snapshot.role === args.role,
+    recordAuthority: restored.record.authority,
+    generationFloor: restored.generationFloor,
+    generation: restored.record.generation,
+    countersPreserved: true,
+    recoveryMode: restored.recoveryMode,
+    events: restored.events,
     apiCalls: api.callCount()
   };
 }
@@ -568,62 +599,102 @@ async function readCredential(path: string): Promise<string> {
 async function commandStraddle(args: Args, api: Awaited<ReturnType<typeof createWorkbookApi>>): Promise<unknown> {
   if (!args.workerUrl) throw new Error('straddle needs --worker-url (the deployed staging gateway /exec URL).');
   if (!args.credentialPath) throw new Error('straddle needs --credential (the private file holding a Google ID token).');
+  if (!args.expectedHostDeployedAt) throw new Error('straddle needs --host-deployed-at (the expected X-Staging-Host-Deployed-At marker).');
+  const workerUrl = args.workerUrl;
+  const expectedHostDeployedAt = args.expectedHostDeployedAt;
   const operation = args.operation ?? DEFAULT_STRADDLE_OPERATION;
   const expectation = args.expect ?? DEFAULT_STRADDLE_EXPECTATION;
   const fireMs = args.fireMs ?? DEFAULT_FIRE_MS;
   const credential = await readCredential(args.credentialPath);
-  const before = await readRecord(api);
-  if (!before) throw new Error('The workbook has no control record; capture it before racing a read against it.');
-  if (before.mutationState !== 'idle') throw new Error('The record already has a pending mutation; settle it before racing a read.');
+  const preflight = await readRecord(api);
+  if (!preflight) throw new Error('The workbook has no control record; capture it before racing a read against it.');
+  if (preflight.mutationState !== 'idle') throw new Error('The record already has a pending mutation; settle it before racing a read.');
 
+  // ReadBudget may pace until the rolling campaign window opens. Reserve before
+  // selecting the baseline used by the transition, then reread immediately
+  // after pacing so the fetched request and transition share a current tuple.
   const startedAt = Date.now();
-  const pending = fetch(args.workerUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ operation, payload: {}, idempotencyKey: `straddle-${startedAt}`, credential })
+  const attemptLogPath = resolve(PRIVATE_DIR, `rehearsal-straddle-attempts-${stamp()}.jsonl`);
+  const { prepared, baseline, hostReadiness } = await prepareRehearsalStraddle({
+    expectedHostDeployedAt,
+    prepare: () => prepareRehearsalGatewayRead({
+      workerUrl,
+      operation,
+      credential,
+      idempotencyKey: `straddle-${startedAt}`,
+      attemptLogPath,
+      expectedHostDeployedAt
+    }),
+    readBaseline: () => readRecord(api)
   });
-  await new Promise((resolveWait) => setTimeout(resolveWait, fireMs));
+  const before = baseline;
+  if (!before) throw new Error('The workbook control record disappeared while reserving the straddle request.');
+  if (before.mutationState !== 'idle') throw new Error('The record became pending while reserving the straddle request; no transition was started.');
 
-  // The transition the read has to straddle. `abort` fires a pair: begin
-  // publishes the marker, abort clears it and moves the generation while leaving
-  // every counter exactly where it was, so the read must reject on the tuple and
-  // not on a counter. `begin` fires the marker alone, which leaves the workbook
-  // interrupted on purpose for the pending variant and the recovery drill.
-  const at = new Date().toISOString();
   const tabs = (args.tabs.length > 0 ? args.tabs : ['Assignments']) as never[];
   const fireEvent = args.event ?? 'abort';
-  const opened = beginMutationRecord(before, { operationId: controlOperationId('rehearsal.straddle'), tabs, actorId: args.actor }, at);
-  await writeRecord(api, opened);
-  await journal(api, 'begin', opened.operationId, args.actor, tabs, before, opened, 'straddle instrumentation', at);
-  if (fireEvent === 'abort') {
-    const aborted = abortMutationRecord(opened, args.actor, at);
-    await writeRecord(api, aborted);
-    await journal(api, 'abort', opened.operationId, args.actor, tabs, opened, aborted, 'straddle instrumentation', at);
-  }
+  let transitionAt: string | undefined;
+  let opened: ControlRecord | undefined;
+  const workflow = await runRehearsalStraddle({
+    prepare: () => prepared,
+    fireMs,
+    transition: async () => {
+      // The transition the read has to straddle. `abort` fires a pair: begin
+      // publishes the marker, abort clears it and moves the generation while
+      // leaving every counter untouched. `begin` leaves it pending for recovery.
+      const at = new Date().toISOString();
+      transitionAt = at;
+      opened = beginMutationRecord(before, { operationId: controlOperationId('rehearsal.straddle'), tabs, actorId: args.actor }, at);
+      await writeRecord(api, opened);
+      await journal(api, 'begin', opened.operationId, args.actor, tabs, before, opened, 'straddle instrumentation', at);
+      if (fireEvent === 'abort') {
+        const aborted = abortMutationRecord(opened, args.actor, at);
+        await writeRecord(api, aborted);
+        await journal(api, 'abort', opened.operationId, args.actor, tabs, opened, aborted, 'straddle instrumentation', at);
+      }
+    }
+  });
 
-  const response = await pending;
-  const body = await response.json().catch(() => undefined) as { ok?: boolean; error?: { code?: string; details?: { reason?: string } } } | undefined;
+  type GatewayRequestOutcome = {
+    attempt: Record<string, unknown>;
+    response?: {
+      status: number;
+      durationMs: number;
+      ok: boolean;
+      errorCode?: string;
+      reason?: string;
+      sheetsReads: number;
+      readMs: string | null;
+      hostDeployedAt: string | null;
+      versionLag: boolean;
+      hasCorrelationId: boolean;
+    };
+    attemptLogPath: string;
+  };
+  const gateway = 'value' in workflow.gateway ? workflow.gateway.value as GatewayRequestOutcome : undefined;
+  const requestError = 'error' in workflow.gateway ? workflow.gateway.error : undefined;
+  const response = gateway?.response;
+  const failure = typeof gateway?.attempt.failure === 'string' ? gateway.attempt.failure : undefined;
   const observed = {
-    status: response.status,
-    durationMs: Date.now() - startedAt,
+    status: response?.status ?? 0,
+    durationMs: response?.durationMs ?? (typeof gateway?.attempt.durationMs === 'number' ? gateway.attempt.durationMs : Date.now() - startedAt),
     fireMs,
     operation,
-    ok: body?.ok === true,
-    errorCode: body?.ok === false ? body.error?.code : undefined,
-    reason: body?.ok === false ? body.error?.details?.reason : undefined,
-    sheetsReads: Number(response.headers.get('x-staging-sheets-reads') ?? '') || 0,
-    readMs: response.headers.get('x-staging-read-ms'),
-    hostDeployedAt: response.headers.get('x-staging-host-deployed-at'),
-    hasCorrelationId: response.headers.get('x-staging-correlation-id') !== null
+    ok: response?.ok === true,
+    errorCode: response?.errorCode,
+    reason: response?.reason,
+    sheetsReads: response?.sheetsReads ?? 0,
+    readMs: response?.readMs ?? null,
+    hostDeployedAt: response?.hostDeployedAt ?? null,
+    versionLag: gateway?.attempt.versionLag === true,
+    hasCorrelationId: response?.hasCorrelationId ?? false,
+    failure
   };
   // The expectation is the refusal the raced read must produce, written
   // `CODE[:reason]` (or `ok`). The default names STALE_REVISION and
   // control-generation_changed; comparing the reason against the code slot made
   // a correct refusal report itself as a failure.
-  const wanted = expectation.startsWith('failed:') ? expectation.slice('failed:'.length).split(':') : expectation.split(':');
-  const passed = wanted[0] === 'ok'
-    ? observed.ok
-    : observed.ok === false && observed.errorCode === wanted[0] && (wanted[1] === undefined || observed.reason === wanted[1]);
+  const passed = straddleExpectationPassed(expectation, response, gateway?.attempt);
   const after = await readRecord(api);
   const countersUnchanged = after !== undefined
     && after.dataRevision === before.dataRevision
@@ -631,22 +702,39 @@ async function commandStraddle(args: Args, api: Awaited<ReturnType<typeof create
     && JSON.stringify(after.tabRevisions) === JSON.stringify(before.tabRevisions);
   const path = await report(`rehearsal-straddle-${args.role}`, {
     role: args.role,
-    at,
+    at: transitionAt ?? new Date().toISOString(),
     expectation,
+    expectedHostDeployedAt,
+    hostReadiness,
     before: tuple(before),
     after: after ? tuple(after) : null,
-    opened: tuple(opened),
+    opened: opened ? tuple(opened) : null,
     fired: fireEvent,
     observed,
+    attemptLogPath: gateway?.attemptLogPath ?? attemptLogPath,
+    requestError,
+    transitionError: workflow.transitionError,
     passed,
     countersUnchanged,
     generationAdvanced: after !== undefined && after.generation > before.generation,
     idleAfter: after !== undefined && portableRevisionProvider(after).idle,
     leftPending: after !== undefined && !portableRevisionProvider(after).idle
   });
+  if (workflow.transitionError) {
+    throw new Error(`The straddle transition failed after its gateway attempt was retained at ${gateway?.attemptLogPath ?? attemptLogPath}; report: ${path}.`);
+  }
+  if (requestError) {
+    throw new Error(`The gateway response could not be retained; see ${path} and attempt log ${gateway?.attemptLogPath ?? attemptLogPath}.`);
+  }
+  if (!response) {
+    throw new Error(`The gateway transport attempt failed (${failure ?? 'unknown'}); it was retained at ${gateway?.attemptLogPath ?? attemptLogPath}; report: ${path}.`);
+  }
   return {
     path,
+    attemptLogPath: gateway?.attemptLogPath ?? attemptLogPath,
     expectation,
+    expectedHostDeployedAt,
+    hostReadiness,
     observed,
     passed,
     generationAdvanced: after !== undefined && after.generation > before.generation,

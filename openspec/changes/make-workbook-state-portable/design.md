@@ -91,54 +91,62 @@ Missing or malformed metadata never resolves to zero, and no path falls back to 
 
 ### Portable reader control read plan (task 1.7)
 
-Sequence for one served request: control read, then fresh `Users` authorization, then the named domain batch, then a second control read. `Users` is never cached and is never covered by a control check. Acceptance requires both control reads to parse, the protocol and authority to be supported, both reads to be idle, and the tuples (`generation`, `completedGeneration`, `dataRevision`, `schedulingInputRevision`, and `tabRevisions` for consumed tabs) to be identical.
+The original separate-request candidate priced three requests for identity and
+four for domain reads: first control, fresh Users, named plan, closing control.
+The implemented Worker fuses Users and the first control observation, as chosen
+in `plan.md` decision 3. The current table below supersedes those candidate
+counts; rejection costs follow the actual credential and hydration order.
+Users remains fresh per request. Both control observations on a served domain
+path must parse, support the authority/protocol, be idle and carry identical
+completed generation and consumed revision tuples.
 
-Reads paid per path, measured as Sheets read requests:
-
-| Path | Control | `Users` | Domain batch | Total |
-| --- | ---: | ---: | ---: | ---: |
-| Rejected: invalid, pending, unsupported or missing control state | 1 | 0 | 0 | 1 |
-| Rejected: unauthenticated or unauthorized | 2 | 1 | 0 | 2 |
-| Served identity read (`session.me`) | 2 | 1 | 0 | 3 |
-| Served domain read (Schedule, Insights cache hit or miss) | 2 | 1 | 1 | 4 |
-| Rejected: generation changed after hydration | 2 | 1 | 1 | 4 |
-
-The archived staging topology observed one identity read and two reads for domain or preview work, without control checks; those counts are not portable-state evidence and must not be carried into production claims. The portable plan costs two extra reads on every served path, and the rejection paths above are measured, not assumed: a path that costs more than its row is a finding, not a rounding difference.
-
-Quota and latency acceptance for the added checks: the `Sheets.Spreadsheets.Values.batchGet` and `spreadsheets.values.get` quota is per requesting identity, so a single service account serving all browsers sustains `60 / reads-per-request` served reads per minute — 20 identity reads or 15 domain reads with the counts above, against 60 and 30 without the control checks. Harness and browser probes therefore share the existing rolling read ledger, and control reads are counted in it. Latency acceptance is the unchanged contract threshold applied to the served read (warm p99 ≤ 1,500 ms per read operation per fixture), with the control-read contribution reported separately; no latency claim is made from the added reads until task 4.1 measures them. Correctness precedes a one-call target: reducing the plan to a single control read would end the completed-generation guarantee and is not an option.
+Acceptance remains unchanged: harness and browser share the rolling read ledger,
+including control requests; warm wall p99 must be ≤1,500 ms for every operation
+and fixture, with at least 30 successful warm observations at actual overlap ≥3.
+Retain phase timings separately. Correctness precedes a one-call target: a served
+domain read must preserve both control observations.
 
 **Implemented sequence and measured counts (task 4.1, 2026-09-30).** The Worker
 implements the plan above with one change: the authorization batch and the
-bracket's first control observation are the same Sheets request, so a served path
-pays one control read rather than two. The sequence is fused
+bracket's first control observation are the same Sheets request, so a served
+domain path pays one separate control request alongside the fused observation.
+The sequence is fused
 `Users`+`WorkbookControl`, then the named plan, then the closing control read, and
 every rejection that can be decided from the first observation is decided there.
-Measured live on both synthetic fixtures (evidence:
-`evidence/staging-rehearsal-live-checks-2-2026-09-30.md`), one attempt per path:
+Served paths were measured on both synthetic fixtures; rejection coverage varies
+by fixture. The table shows observed counts where the path was exercised, not a
+complete two-fixture matrix (see the [2026-10-01 audit](evidence/delivery-checklist-2026-10-01.md)).
 
 | Path | Control | `Users` | Domain batch | Total planned | Total measured |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Rejected: invalid, pending, malformed, duplicate, unsupported, missing or wrong authority | 1 | fused | 0 | 1 | **1** |
 | Rejected: unauthenticated | 0 | 0 | 0 | 0 | **0** |
+| Rejected: authenticated non-admin role | 1 | fused | 0 | 1 | not measured |
 | Served identity read (`session.me`) | 1 | fused | 0 | 1 | **1** |
 | Served domain read (Schedule or Insights) | 2 | fused | 1 | 3 | **3** |
 | Rejected: generation changed after hydration | 2 | fused | 1 | 3 | **3** |
 
-The unauthorised-role path stays at the two reads its row above names and was not
-measured live, because every served operation requires `administrator` and the
-window's captured credential is one; it is covered by the Worker contract suite.
+The unauthorised-role path was not measured live, because every served operation
+requires `administrator` and the window's captured credential is one. The
+non-admin staging account is now available; both fixtures still need that
+live role-refusal check. Contract counts alone do not complete the live matrix.
 The restored legacy deployment serves at the archived one and two reads, which is
 the rollback posture.
 
 Quota arithmetic from the measured counts: the fused batch keeps a served domain
 read at three requests, so one service account sustains 20 served domain reads or
-60 identity reads per minute against the 60-per-minute per-identity quota, the
-same as the two-control-read plan it replaced would have allowed at 15 and 20.
-Latency outcome: five of the six measured populations meet the warm p99 ≤ 1,500 ms
+60 identity reads per minute against the 60-per-minute per-identity quota,
+compared with 15 domain reads and 20 identity reads under the separate-read plan
+above.
+Historical header-only latency outcome: five of the six measured populations meet the warm p99 ≤ 1,500 ms
 gate (350–1,137 ms). The larger fixture's Schedule read does not — p99 2,882 ms —
-and task 4.1 remains open on it. The control reads' own contribution is 174–338 ms
-per read, taken from the per-read timing header, so the control checks are not the
-dominant term in that breach.
+and task 4.1 remains open on it. Four isolated responses retain per-read timing
+headers, but the harness did not retain those headers for the larger Schedule
+population. Those samples do not establish the control contribution to its p99
+or identify the cause of the breach. A follow-up window must retain timings for
+each latency observation and report the fused authorization/control batch, plan
+batch and closing control read separately. The fused request cannot isolate the
+cost of authorization from the first control observation.
 
 ### Writer protocol and consistent reads
 

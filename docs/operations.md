@@ -194,6 +194,65 @@ still owns.
 
 The `codex/read-api-prototype` branch at `a47b274` records a synthetic localhost Node experiment: two warmups and 40/40 successes per route, zero redirects, Schedule/Insights p95 6.2/5.9 ms. Its evidence lives in that branch's read-latency tasks, not master's production evidence. It does not test real Google identity verification, live Sheets, WAN behavior or Worker CPU. The [six-change roadmap](../openspec/changes/validate-worker-backend-feasibility/design.md#sequence-and-ownership) is proposed work; production remains Apps Script until separately approved releases establish otherwise.
 
+### Measuring portable state on synthetic staging
+
+The active [portable-state task list](../openspec/changes/make-workbook-state-portable/tasks.md)
+owns the remaining live evidence. Each staging deployment and workbook mutation
+batch requires its own approval and a snapshot first. During an approved window,
+one designated operator performs all deployments and workbook changes.
+
+Portable harness manifests set `hostDeployedAt` to the expected host marker and
+reserve conservative read costs with `readsPerRequest` (2 for identity and 4 for
+Schedule/Insights). The harness waits until that marker is at least 95 seconds
+old and excludes responses carrying another marker from warm distributions.
+Retained attempts include complete-response wall time and validated
+`X-Staging-Read-Ms` values. For a three-request domain read, those positions are
+the fused authorization/control request, the domain plan and the closing control
+request. The first position cannot isolate authorization from control latency.
+
+Confirmed harness runs require the expected marker. Confirmed matrix check
+lists also supply canonical `hostDeployedAt`; they wait
+before reservations and retain the exact response marker. The sole mutating
+policy probe is `admin.schedule.rerun`, expected to return `FORBIDDEN` with an
+explicit zero-read header before dispatch. The straddle CLI requires
+`--host-deployed-at`; wrong-version or non-200 refusals cannot pass its pinned
+expectation. Reservations price a conservative read ceiling; actual count
+acceptance still requires review of each response header against its path. A
+missing header is unmeasured, not zero. Matrix checks explicitly use
+`credentialMode: none` for missing-credential cases; role checks use separate
+invocations with the appropriate captured token. A target 429 stops new requests
+in harness, matrix and browser; already issued requests settle, and canceled
+reservations remain spent and recorded. These synthetic checks do not exercise a production writer.
+
+Start the browser probe host from the repository root:
+
+```sh
+node scripts/staging/serve-probe.mjs
+```
+
+Open its loopback page with `api`, `client`, `label`, `attempts=36`,
+`readPlan=portable` and `hostDeployedAt` query parameters. Portable mode requires
+the expected marker and reserves 2 identity / 4 domain reads. The real browser
+supplies CORS evidence; a Node fetch does not. Credential files and raw reports
+remain under ignored `staging-local/`.
+
+All read reservations share `.read-budget-ledger.json`. Run one reserving process
+at a time: stop the probe server before CLI measurements, and restart it after
+them so it reads the current ledger. The ledger serializes requests within one
+process; it does not provide cross-process locking. A failed or corrupt ledger
+must be investigated, never replaced with an empty window to continue a run.
+The applicable approved manifest defines whether browser observations consume
+the campaign attempt cap; the read quota applies to every tool either way.
+
+An injection snapshot records its fixture role, original valid tuple and exact
+injected rows. Restore refuses unrelated state and runs the production recovery
+transition, advancing the generation while preserving counters. Old snapshots
+without that evidence are not automatic restoration inputs. The append-only
+REST adapter refuses insufficient journal slots before transitioning (one for a
+single transition, two for begin/recover repair); it cannot reproduce production
+journal pruning. Verify enough headroom for the whole approved batch first. The REST rehearsal
+is a synthetic staging procedure, not authorization to repair production.
+
 ## Availability diagnostics
 
 Recurring availability is normalized by weekday and coalesces adjacent or overlapping intervals. A save may replace row IDs and reduce row count without removing a minute of coverage. Compare normalized coverage by volunteer/day/time zone, not row IDs or raw counts.

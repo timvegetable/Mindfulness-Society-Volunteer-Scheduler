@@ -28,9 +28,20 @@ const MAX_ATTEMPTS_PER_OPERATION = 60;
 // 60-second window. Each operation costs a known number of reads, and every
 // attempt reserves them in the probe host's shared ledger first, so the window
 // is held by the host rather than re-derived in the browser.
-const OPERATION_READS = { 'session.me': 1, 'admin.schedule.read': 2, 'admin.insights.read': 2 };
-const READ_BUDGET = 40;
-const BUDGET_WINDOW_MS = 60_000;
+// Keep the original rehearsal prices as the default. Portable reads have a
+// larger bracket and reserve conservatively at 2 identity / 4 domain reads,
+// even though the current live composition has been measured at 1 / 3 / 3.
+const READ_PLANS = {
+  legacy: { 'session.me': 1, 'admin.schedule.read': 2, 'admin.insights.read': 2 },
+  portable: { 'session.me': 2, 'admin.schedule.read': 4, 'admin.insights.read': 4 }
+};
+const MIN_READS_BY_PLAN = {
+  legacy: READ_PLANS.legacy,
+  portable: { 'session.me': 1, 'admin.schedule.read': 3, 'admin.insights.read': 3 }
+};
+const DEFAULT_READ_PLAN = 'legacy';
+const WARM_CONCURRENCY_FLOOR = 3;
+const MIN_HOST_AGE_MS = 95_000;
 // The contract's wall-time threshold applies to observations taken with at least
 // three requests in flight, so the probe drives a real in-flight pool. The width
 // is fixed here: a URL parameter must not be able to produce a population below
@@ -47,6 +58,18 @@ const parameters = new URLSearchParams(location.search);
 apiInput.value = parameters.get('api') ?? '';
 clientInput.value = parameters.get('client') ?? '';
 const accountLabel = parameters.get('label') ?? 'probe';
+
+function requestedReadPlan() {
+  const raw = parameters.get('readPlan');
+  const value = raw === null || raw.trim() === '' ? DEFAULT_READ_PLAN : raw.trim();
+  if (!Object.hasOwn(READ_PLANS, value)) return { error: `readPlan must be "legacy" or "portable", got "${raw}"` };
+  return { value };
+}
+
+function requestedHostDeployedAt() {
+  const value = parameters.get('hostDeployedAt')?.trim();
+  return value ? value : undefined;
+}
 
 let credential;
 
@@ -117,11 +140,13 @@ function countBy(labels) {
  * absent rather than as a plausible-looking reading: a partially parsed list
  * would silently misalign the positions the read plan is priced with.
  */
-function readTimingsFrom(headerValue) {
+function readTimingsFrom(headerValue, reportedReadCount) {
   if (typeof headerValue !== 'string' || headerValue.trim() === '') return undefined;
+  if (!Number.isSafeInteger(reportedReadCount) || reportedReadCount < 0) return undefined;
   const parts = headerValue.split(',').map((part) => part.trim());
-  if (parts.some((part) => !/^\d+$/.test(part))) return undefined;
-  return parts.map((part) => Number(part));
+  if (parts.length !== reportedReadCount || parts.some((part) => !/^\d+$/.test(part))) return undefined;
+  const timings = parts.map((part) => Number(part));
+  return timings.every(Number.isSafeInteger) ? timings : undefined;
 }
 
 /** Parses `X-Staging-Sheets-Reads` into the attempt's read count, or null. */
@@ -130,9 +155,30 @@ function readCountFrom(headerValue) {
   return Number(headerValue.trim());
 }
 
-function directResponseFacts(response, expectedUrl) {
+function canonicalDeploymentTime(marker) {
+  if (typeof marker !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(marker)) return undefined;
+  const parsed = Date.parse(marker);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== marker) return undefined;
+  return parsed;
+}
+
+/** Waits until the expected Durable Object version has completed its lag window. */
+async function waitForHostAge(marker, { wallNow, wait, onVersionWait }) {
+  if (marker === undefined) return null;
+  const deployedAt = canonicalDeploymentTime(marker);
+  if (deployedAt === undefined) throw new Error('hostDeployedAt must be a canonical ISO timestamp such as 2026-09-30T12:34:56.000Z.');
+  for (;;) {
+    const ageMs = wallNow() - deployedAt;
+    const remainingMs = MIN_HOST_AGE_MS - ageMs;
+    if (remainingMs <= 0) return ageMs;
+    onVersionWait(remainingMs);
+    await wait(remainingMs);
+  }
+}
+
+function directResponseFacts(response, expectedUrl, status = response.status) {
   return {
-    status: response.status,
+    status,
     // The resolved Cloudflare point of presence, as the contract requires.
     pointOfPresence: response.headers.get('cf-ray'),
     corsReadable: response.type === 'cors',
@@ -150,16 +196,28 @@ function directResponseFacts(response, expectedUrl) {
  */
 function summarizeOperation(operation, attempts) {
   const successful = attempts.filter((attempt) => !attempt.failure);
+  const warm = attempts.filter((attempt) => !attempt.failure && !attempt.versionLag);
+  const warmAtConcurrencyFloor = warm.filter((attempt) => (attempt.observedMaxInFlightDuringRequest ?? 0) >= WARM_CONCURRENCY_FLOOR);
   return {
     operation,
     attempts: attempts.length,
     successes: successful.length,
+    versionLag: attempts.filter((attempt) => attempt.versionLag).length,
     failureCodes: countBy(attempts.filter((attempt) => attempt.failure).map((attempt) => attempt.failure)),
     statuses: countBy(attempts.map((attempt) => String(attempt.facts?.status ?? 'none'))),
     non2xx: attempts.filter((attempt) => attempt.non2xx === true).length,
-    observedMaxInFlight: Math.max(0, ...attempts.map((attempt) => attempt.inFlight ?? 0)),
+    observedMaxInFlight: Math.max(0, ...attempts.map((attempt) => attempt.observedMaxInFlightDuringRequest ?? 0)),
     sheetsReads: attempts.reduce((total, attempt) => total + (attempt.sheetsReads ?? 0), 0),
-    wallTimeMs: wallTimeSummary(successful.map((attempt) => attempt.durationMs))
+    // `wallTimeMs` is the verified warm population when a host marker is
+    // expected. Version-lag attempts remain in perAttempt and successes, but
+    // cannot contaminate this distribution.
+    wallTimeMs: wallTimeSummary(warm.map((attempt) => attempt.durationMs)),
+    successfulWarmObservations: warm.length,
+    warmAtConcurrency3Plus: {
+      floor: WARM_CONCURRENCY_FLOOR,
+      observations: warmAtConcurrencyFloor.length,
+      wallTimeMs: wallTimeSummary(warmAtConcurrencyFloor.map((attempt) => attempt.durationMs))
+    }
   };
 }
 
@@ -177,6 +235,12 @@ function attemptRecord(attempt) {
     non2xx: attempt.non2xx === true,
     corsReadable: attempt.facts?.corsReadable ?? null,
     inFlight: attempt.inFlight,
+    observedMaxInFlightDuringRequest: attempt.observedMaxInFlightDuringRequest ?? null,
+    requestIssued: attempt.requestIssued === true,
+    reservedReads: attempt.reservedReads ?? null,
+    reservationGranted: attempt.reservationGranted === true,
+    hostDeployedAt: attempt.hostDeployedAt ?? null,
+    versionLag: attempt.versionLag === true,
     // What the attempt cost in Sheets reads, and the per-read timings behind
     // that count, in call order. `readMs` is null when the deployment predates
     // X-Staging-Read-Ms.
@@ -185,8 +249,15 @@ function attemptRecord(attempt) {
   };
 }
 
-function buildReport({ label, api, attempts, pacing, attemptsPerOperation, concurrency }) {
+function buildReport({ label, api, attempts, pacing, attemptsPerOperation, concurrency, readPlan, readsPerOperation, expectedHostDeployedAt, hostAgeAtStartMs, stopReason }) {
   const successful = attempts.filter((attempt) => !attempt.failure);
+  const warm = attempts.filter((attempt) => !attempt.failure && !attempt.versionLag);
+  const requestedAttempts = OPERATIONS.length * attemptsPerOperation;
+  const perAttemptReservedReads = attempts.reduce((total, attempt) => total + (attempt.reservedReads ?? 0), 0);
+  const issued = attempts.filter((attempt) => attempt.requestIssued);
+  const allTargetReadsReserved = issued.length > 0 && issued.every((attempt) => attempt.reservationGranted === true
+    && attempt.reservedReads === readsPerOperation[attempt.operation]);
+  const observedMaxInFlight = Math.max(0, ...attempts.map((attempt) => attempt.observedMaxInFlightDuringRequest ?? 0));
   const observedFacts = attempts.map((attempt) => attempt.facts).filter(Boolean);
   const withReadTimings = attempts.filter((attempt) => Array.isArray(attempt.readMs)).length;
   return {
@@ -195,10 +266,22 @@ function buildReport({ label, api, attempts, pacing, attemptsPerOperation, concu
     generatedAt: new Date().toISOString(),
     attemptsPerOperation,
     concurrency,
+    readPlan,
+    readsPerOperation,
+    expectedHostDeployedAt: expectedHostDeployedAt ?? null,
+    minimumHostAgeMs: expectedHostDeployedAt === undefined ? null : MIN_HOST_AGE_MS,
+    hostAgeAtStartMs,
+    requestedAttempts,
     attempts: attempts.length,
+    incomplete: issued.length < requestedAttempts,
+    stoppedReason: stopReason ?? null,
+    requestIssuedAttempts: issued.length,
     successes: successful.length,
+    successfulWarmObservations: warm.length,
+    versionLagAttempts: attempts.filter((attempt) => attempt.versionLag).length,
     failureCodes: countBy(attempts.filter((attempt) => attempt.failure).map((attempt) => attempt.failure)),
-    wallTimeMs: wallTimeSummary(successful.map((attempt) => attempt.durationMs)),
+    successfulWallTimeMs: wallTimeSummary(successful.map((attempt) => attempt.durationMs)),
+    wallTimeMs: wallTimeSummary(warm.map((attempt) => attempt.durationMs)),
     // The contract's gate is per read operation, so the distribution is reported
     // per operation as well as over the whole run.
     perOperation: OPERATIONS.map((operation) => summarizeOperation(operation, attempts.filter((attempt) => attempt.operation === operation))),
@@ -207,17 +290,19 @@ function buildReport({ label, api, attempts, pacing, attemptsPerOperation, concu
     readTimings: { attemptsWithReadMs: withReadTimings, attemptsWithoutReadMs: attempts.length - withReadTimings },
     // The transport evidence the platform alone can give.
     transport: {
-      allCorsReadable: observedFacts.every((facts) => facts.corsReadable),
+      allCorsReadable: observedFacts.length > 0 && observedFacts.every((facts) => facts.corsReadable),
       anyRedirected: observedFacts.some((facts) => facts.redirected),
-      allSameUrl: observedFacts.every((facts) => facts.sameUrl),
-      allJsonContentType: observedFacts.every((facts) => facts.jsonContentType),
-      allNoStore: observedFacts.every((facts) => facts.noStore)
+      allSameUrl: observedFacts.length > 0 && observedFacts.every((facts) => facts.sameUrl),
+      allJsonContentType: observedFacts.length > 0 && observedFacts.every((facts) => facts.jsonContentType),
+      allNoStore: observedFacts.length > 0 && observedFacts.every((facts) => facts.noStore)
     },
-    observedMaxInFlight: Math.max(0, ...attempts.map((attempt) => attempt.inFlight ?? 0)),
+    observedMaxInFlight,
     // The pacing evidence: every attempt reserved its reads in the shared
     // ledger first, closing the pacing gap the 2026-09-28 verdict recorded.
-    pacedThroughSharedLedger: pacing.reservedReads === attempts.reduce((total, attempt) => total + (attempt.operation in OPERATION_READS ? OPERATION_READS[attempt.operation] : 2), 0),
+    pacedThroughSharedLedger: issued.length > 0 && allTargetReadsReserved && pacing.reservedReads === perAttemptReservedReads,
+    allTargetReadsReserved,
     reservedReads: pacing.reservedReads,
+    reservationRefusals: attempts.filter((attempt) => attempt.failure === 'reservation-refused' || attempt.failure === 'reservation-transport' || attempt.failure === 'reservation-invalid-response').length,
     observedReadsInLastWindow: pacing.observedReadsInLastWindow ?? null,
     pointsOfPresence: [...new Set(attempts.map((attempt) => attempt.facts?.pointOfPresence).filter(Boolean))],
     // Every attempt, not a sample: the rehearsal's latency population is built
@@ -232,35 +317,58 @@ function buildReport({ label, api, attempts, pacing, attemptsPerOperation, concu
  * Sheets reads and the harness's attempts hold one rolling window.
  */
 async function reserveReads(reads, { fetchImpl, pacing }) {
-  for (;;) {
-    statusNode.textContent = `Holding for the shared read budget (reserving ${reads} reads)…`;
-    let response;
-    try {
-      response = await fetchImpl('/__reserve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reads })
-      });
-    } catch {
-      statusNode.textContent = 'The probe host could not be reached for read pacing.';
-      await new Promise((resolveWait) => setTimeout(resolveWait, 500));
-      continue;
-    }
-    if (response.ok) {
-      const granted = await response.json().catch(() => undefined);
-      pacing.reservedReads += reads;
-      pacing.observedReadsInLastWindow = granted?.observedReadsInLastWindow ?? null;
-      return;
-    }
-    statusNode.textContent = 'The probe host refused the read reservation.';
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  statusNode.textContent = `Holding for the shared read budget (reserving ${reads} reads)…`;
+  let response;
+  try {
+    response = await fetchImpl('/__reserve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reads })
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.name : 'unknown';
+    throw Object.assign(new Error(`The probe host could not be reached for read pacing (${reason}).`), { code: 'reservation-transport' });
   }
+  if (!response.ok) {
+    throw Object.assign(new Error(`The probe host refused the read reservation (HTTP ${response.status}).`), { code: 'reservation-refused' });
+  }
+  const granted = await response.json().catch(() => undefined);
+  if (granted?.ok !== true || granted.reads !== reads) {
+    throw Object.assign(new Error('The probe host returned an invalid read reservation.'), { code: 'reservation-invalid-response' });
+  }
+  pacing.reservedReads += reads;
+  pacing.observedReadsInLastWindow = granted.observedReadsInLastWindow ?? null;
+  return reads;
 }
 
-async function probeOnce({ operation, expectedUrl, credential: token, inFlight, fetchImpl, now, pacing }) {
-  await reserveReads(OPERATION_READS[operation] ?? 2, { fetchImpl, pacing });
+async function probeOnce({ operation, expectedUrl, credential: token, reads, expectedHostDeployedAt, fetchImpl, now, pacing, onRequestStart, onRequestFinish, canStartRequest, getStopReason, onTargetResponseStatus, onProgress }) {
+  const attempt = {
+    operation, durationMs: null, facts: null, errorCode: null, failure: null, inFlight: 0,
+    observedMaxInFlightDuringRequest: null, requestIssued: false, reservedReads: null,
+    reservationGranted: false, hostDeployedAt: undefined, versionLag: false,
+    non2xx: false, sheetsReads: null, readMs: undefined
+  };
+  try {
+    attempt.reservedReads = await reserveReads(reads, { fetchImpl, pacing });
+    attempt.reservationGranted = true;
+  } catch (error) {
+    attempt.failure = error?.code ?? 'reservation-invalid-response';
+    attempt.errorCode = attempt.failure;
+    attempt.errorMessage = error instanceof Error ? error.message : 'Read reservation failed.';
+    return attempt;
+  }
+  // A latched stop condition stops new target requests. A reservation already
+  // granted by a racing worker stays in the ledger and is retained here.
+  if (!canStartRequest()) {
+    attempt.failure = 'reservation-cancelled';
+    attempt.errorMessage = `Stopped after ${getStopReason() ?? 'another request failed'}; the reservation remains spent and no target request was issued.`;
+    return attempt;
+  }
+  const requestState = onRequestStart();
+  attempt.inFlight = requestState.inFlightAtStart;
+  attempt.requestIssued = true;
+  onProgress({ operation, inFlight: requestState.inFlightAtStart });
   const startedAt = now();
-  const attempt = { operation, durationMs: null, facts: null, errorCode: null, failure: null, inFlight, non2xx: false, sheetsReads: null, readMs: undefined };
   try {
     const response = await fetchImpl(expectedUrl, {
       method: 'POST',
@@ -272,11 +380,14 @@ async function probeOnce({ operation, expectedUrl, credential: token, inFlight, 
         credential: token
       })
     });
-    attempt.durationMs = Math.round(now() - startedAt);
-    attempt.facts = directResponseFacts(response, expectedUrl);
+    const responseStatus = response.status;
+    onTargetResponseStatus(responseStatus);
+    attempt.facts = directResponseFacts(response, expectedUrl, responseStatus);
     attempt.non2xx = attempt.facts.status < 200 || attempt.facts.status >= 300;
     attempt.sheetsReads = readCountFrom(response.headers.get('x-staging-sheets-reads'));
-    attempt.readMs = readTimingsFrom(response.headers.get('x-staging-read-ms'));
+    attempt.readMs = readTimingsFrom(response.headers.get('x-staging-read-ms'), attempt.sheetsReads);
+    attempt.hostDeployedAt = response.headers.get('x-staging-host-deployed-at') ?? undefined;
+    attempt.versionLag = expectedHostDeployedAt !== undefined && attempt.hostDeployedAt !== expectedHostDeployedAt;
     const body = await response.json().catch(() => undefined);
     if (response.status !== 200) attempt.failure = `status-${response.status}`;
     else if (body?.ok !== true) {
@@ -287,9 +398,14 @@ async function probeOnce({ operation, expectedUrl, credential: token, inFlight, 
       attempt.failure = `envelope-${attempt.errorCode}`;
     }
   } catch (error) {
-    attempt.durationMs = Math.round(now() - startedAt);
     attempt.failure = 'transport';
     attempt.errorCode = error instanceof Error ? error.name : 'unknown';
+  } finally {
+    // Include response-envelope consumption in wall time; the request remains
+    // in flight until the complete body has been read.
+    attempt.durationMs = Math.round(now() - startedAt);
+    onRequestFinish(requestState);
+    attempt.observedMaxInFlightDuringRequest = requestState.observedMaxInFlightDuringRequest;
   }
   return attempt;
 }
@@ -305,9 +421,15 @@ async function runProbe(options = {}) {
   const label = options.label ?? 'probe';
   const attemptsPerOperation = options.attemptsPerOperation ?? DEFAULT_ATTEMPTS_PER_OPERATION;
   const concurrency = options.concurrency ?? CONCURRENCY;
+  const readPlan = options.readPlan ?? DEFAULT_READ_PLAN;
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => performance.now());
+  const wallNow = options.wallNow ?? (() => Date.now());
+  const wait = options.wait ?? ((durationMs) => new Promise((resolveWait) => setTimeout(resolveWait, durationMs)));
   const onProgress = options.onProgress ?? (() => undefined);
+  const onVersionWait = options.onVersionWait ?? ((remainingMs) => {
+    statusNode.textContent = `Waiting ${Math.ceil(remainingMs / 1000)} seconds for the expected Worker version…`;
+  });
   const refusal = stagingTargetRefusal(api);
   if (refusal) throw new Error(refusal);
   if (typeof token !== 'string' || token.length === 0) throw new Error('The probe needs a real Google ID token: sign in first.');
@@ -317,25 +439,89 @@ async function runProbe(options = {}) {
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) {
     throw new Error('The in-flight pool must be between 1 and 8 requests wide.');
   }
+  if (typeof readPlan !== 'string' || !Object.hasOwn(READ_PLANS, readPlan)) throw new Error('readPlan must be "legacy" or "portable".');
+  const readsPerOperation = { ...READ_PLANS[readPlan] };
+  if (options.readsPerOperation !== undefined) {
+    if (typeof options.readsPerOperation !== 'object' || options.readsPerOperation === null || Array.isArray(options.readsPerOperation)) {
+      throw new Error('readsPerOperation must be an operation-to-integer object.');
+    }
+    for (const [operation, reads] of Object.entries(options.readsPerOperation)) {
+      if (!OPERATIONS.includes(operation)) throw new Error(`readsPerOperation names an unsupported operation: ${operation}`);
+      const minimum = MIN_READS_BY_PLAN[readPlan][operation];
+      if (!Number.isSafeInteger(reads) || reads < minimum || reads > 8) {
+        throw new Error(`readsPerOperation.${operation} must be a whole number between ${minimum} and 8 for the ${readPlan} plan.`);
+      }
+      readsPerOperation[operation] = reads;
+    }
+  }
+  const expectedHostDeployedAt = options.expectedHostDeployedAt;
+  if (expectedHostDeployedAt !== undefined && (typeof expectedHostDeployedAt !== 'string' || expectedHostDeployedAt.trim() === '')) {
+    throw new Error('expectedHostDeployedAt must be a non-empty deployment marker when supplied.');
+  }
+  if (readPlan === 'portable' && expectedHostDeployedAt === undefined) {
+    throw new Error('The portable read plan requires hostDeployedAt so the expected Worker version can be verified.');
+  }
+  if (expectedHostDeployedAt !== undefined && canonicalDeploymentTime(expectedHostDeployedAt) === undefined) {
+    throw new Error('hostDeployedAt must be a canonical ISO timestamp such as 2026-09-30T12:34:56.000Z.');
+  }
+  // Do not spend a read reservation or count a target attempt while the
+  // Durable Object may still be serving its previous deployment.
+  const hostAgeAtStartMs = await waitForHostAge(expectedHostDeployedAt, { wallNow, wait, onVersionWait });
   const pacing = { reservedReads: 0, observedReadsInLastWindow: null };
   const attempts = [];
+  const activeRequests = new Map();
+  let nextRequestId = 0;
   let inFlight = 0;
+  let stopReason;
   const queue = OPERATIONS.flatMap((operation) => Array.from({ length: attemptsPerOperation }, (_unused, index) => ({ operation, index })));
   const completed = { count: 0 };
+  const onRequestStart = () => {
+    inFlight += 1;
+    const requestState = { id: ++nextRequestId, inFlightAtStart: inFlight, observedMaxInFlightDuringRequest: inFlight };
+    activeRequests.set(requestState.id, requestState);
+    // Every active request records the maximum overlap observed during its own
+    // lifetime, including requests that started before the pool filled.
+    for (const active of activeRequests.values()) {
+      active.observedMaxInFlightDuringRequest = Math.max(active.observedMaxInFlightDuringRequest, inFlight);
+    }
+    return requestState;
+  };
+  const onRequestFinish = (requestState) => {
+    activeRequests.delete(requestState.id);
+    inFlight = Math.max(0, inFlight - 1);
+  };
   const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
     for (;;) {
+      if (stopReason) return;
       const next = queue.shift();
       if (!next) return;
-      inFlight += 1;
-      onProgress({ operation: next.operation, completed: completed.count + 1, total: OPERATIONS.length * attemptsPerOperation, inFlight });
-      const attempt = await probeOnce({ operation: next.operation, expectedUrl: api, credential: token, inFlight, fetchImpl, now, pacing });
-      inFlight -= 1;
+      const attempt = await probeOnce({
+        operation: next.operation,
+        expectedUrl: api,
+        credential: token,
+        reads: readsPerOperation[next.operation],
+        expectedHostDeployedAt,
+        fetchImpl,
+        now,
+        pacing,
+        onRequestStart,
+        onRequestFinish,
+        canStartRequest: () => stopReason === undefined,
+        getStopReason: () => stopReason,
+        onTargetResponseStatus: (status) => {
+          if (status === 429) stopReason ??= 'status-429';
+        },
+        onProgress: ({ operation, inFlight: active }) => onProgress({ operation, completed: completed.count + 1, total: OPERATIONS.length * attemptsPerOperation, inFlight: active })
+      });
+      if (attempt.failure === 'reservation-refused' || attempt.failure === 'reservation-transport' || attempt.failure === 'reservation-invalid-response') {
+        stopReason ??= attempt.failure;
+      }
       completed.count += 1;
       attempts.push(attempt);
     }
   });
   await Promise.all(workers);
-  return buildReport({ label, api, attempts, pacing, attemptsPerOperation, concurrency });
+  return buildReport({ label, api, attempts, pacing, attemptsPerOperation, concurrency, readPlan, readsPerOperation, expectedHostDeployedAt, hostAgeAtStartMs, stopReason });
 }
 
 /** The page's run: the form's URL and credential, the URL's population size. */
@@ -343,6 +529,11 @@ async function runPageProbe() {
   const attempts = requestedAttempts();
   if (attempts.error) {
     statusNode.textContent = `attempts: ${attempts.error}`;
+    return;
+  }
+  const readPlan = requestedReadPlan();
+  if (readPlan.error) {
+    statusNode.textContent = readPlan.error;
     return;
   }
   const api = apiInput.value.trim();
@@ -363,6 +554,11 @@ async function runPageProbe() {
       credential,
       label: accountLabel,
       attemptsPerOperation: attempts.value,
+      readPlan: readPlan.value,
+      expectedHostDeployedAt: requestedHostDeployedAt(),
+      onVersionWait: (remainingMs) => {
+        statusNode.textContent = `Waiting ${Math.ceil(remainingMs / 1000)} seconds for the expected Worker version…`;
+      },
       onProgress: ({ operation, completed, total, inFlight }) => {
         statusNode.textContent = `Running ${operation} (${completed}/${total}, ${inFlight} in flight)…`;
       }
@@ -383,7 +579,9 @@ async function runPageProbe() {
  * the report is on the page and the measurement is not lost.
  */
 async function captureReport(report) {
-  const summary = `Done: ${report.successes}/${report.attempts} succeeded`;
+  const summary = report.incomplete
+    ? `Stopped: ${report.successes}/${report.attempts} completed before ${report.stoppedReason ?? 'the requested population'}`
+    : `Done: ${report.successes}/${report.attempts} succeeded`;
   try {
     const captured = await fetch('/__report', {
       method: 'POST',

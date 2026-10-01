@@ -15,13 +15,17 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { controlReadCheck, evaluateExpectation } from './control-read-check.mjs';
-import { AttemptBudget, OPERATION_READS, ReadBudget, isStagingHost } from './measure-worker.mjs';
+import { AttemptBudget, HOST_VERSION_PROPAGATION_MS, OPERATION_READS, ReadBudget, isStagingHost, validateHostDeployedAt, waitForHostVersion } from './measure-worker.mjs';
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const STAGING_DIRECTORY = resolve(REPOSITORY_ROOT, 'staging-local');
 const USAGE = 'Usage: control-read-checks.mjs --checks PATH [--report PATH] [--allow-host HOST] [--plan] --confirm-staging';
 /** `ok`, `failed:<CODE>` or `failed:<CODE>:<reason>`; nothing else is a check. */
 const EXPECTATION_PATTERN = /^(?:ok|failed:[^:]+(?::[^:]+)?)$/;
+/** One registered mutator may appear only as an explicit no-write policy probe. */
+const POLICY_REFUSAL_CHECKS = Object.freeze({
+  'admin.schedule.rerun': { expectation: 'failed:FORBIDDEN', minimumReads: 2 }
+});
 
 export function parseArguments(argv) {
   const options = { checks: undefined, report: undefined, allowHost: undefined, confirmStaging: false, plan: false };
@@ -68,9 +72,14 @@ export function validateCheckList(value, options = {}) {
     throw new Error(`workerUrl host ${hostname} does not look like a staging Worker; pass --allow-host ${hostname} to confirm the target explicitly.`);
   }
   if (!Array.isArray(list.checks) || list.checks.length === 0) throw new Error('checks must list at least one check.');
+  if (options.requireHostDeployedAt && list.hostDeployedAt === undefined) {
+    throw new Error('hostDeployedAt is required for a confirmed read-matrix run.');
+  }
+  if (list.hostDeployedAt !== undefined) validateHostDeployedAt(list.hostDeployedAt);
   const checks = list.checks.map((entry, index) => {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error(`checks[${index}] must be an object.`);
-    if (typeof entry.operation !== 'string' || !Object.hasOwn(OPERATION_READS, entry.operation)) {
+    const policyRefusal = typeof entry.operation === 'string' && Object.hasOwn(POLICY_REFUSAL_CHECKS, entry.operation);
+    if (typeof entry.operation !== 'string' || (!Object.hasOwn(OPERATION_READS, entry.operation) && !policyRefusal)) {
       throw new Error(`checks[${index}] names an unsupported operation: ${entry.operation}`);
     }
     // The expectation is checked here as well as compared later: a typo must not
@@ -78,17 +87,28 @@ export function validateCheckList(value, options = {}) {
     if (typeof entry.expectation !== 'string' || !EXPECTATION_PATTERN.test(entry.expectation)) {
       throw new Error(`checks[${index}] expectation ${entry.expectation} must be \`ok\` or \`failed:CODE[:reason]\`.`);
     }
+    if (policyRefusal && entry.expectation !== POLICY_REFUSAL_CHECKS[entry.operation].expectation) {
+      throw new Error(`checks[${index}] policy-refusal operation ${entry.operation} requires expectation ${POLICY_REFUSAL_CHECKS[entry.operation].expectation}.`);
+    }
     if (entry.label !== undefined && typeof entry.label !== 'string') throw new Error(`checks[${index}].label must be a string.`);
+    const credentialMode = entry.credentialMode ?? 'configured';
+    if (credentialMode !== 'none' && credentialMode !== 'configured') {
+      throw new Error(`checks[${index}].credentialMode must be \`none\` or \`configured\`.`);
+    }
     // A portable read costs more than the archived counts, so a check may declare
     // what it reserves; the default is the operation's pinned cost.
-    const reads = entry.reads ?? OPERATION_READS[entry.operation];
+    const reads = entry.reads ?? (policyRefusal ? POLICY_REFUSAL_CHECKS[entry.operation].minimumReads : OPERATION_READS[entry.operation]);
     if (!Number.isSafeInteger(reads) || reads < 1) throw new Error(`checks[${index}].reads must be a positive integer.`);
-    return { index, label: entry.label ?? entry.operation, operation: entry.operation, expectation: entry.expectation, reads };
+    if (policyRefusal && reads < POLICY_REFUSAL_CHECKS[entry.operation].minimumReads) {
+      throw new Error(`checks[${index}] policy-refusal operation ${entry.operation} must reserve at least ${POLICY_REFUSAL_CHECKS[entry.operation].minimumReads} reads.`);
+    }
+    return { index, label: entry.label ?? entry.operation, operation: entry.operation, expectation: entry.expectation, reads, policyRefusal, credentialMode };
   });
   if (typeof list.reportPath !== 'string' || list.reportPath.length === 0) throw new Error('reportPath is required.');
   if (typeof list.credentialPath !== 'string' || list.credentialPath.length === 0) throw new Error('credentialPath is required.');
   return {
     workerUrl: list.workerUrl,
+    hostDeployedAt: list.hostDeployedAt,
     checks,
     reportPath: resolveInsideStaging(options.report ?? list.reportPath, 'reportPath'),
     credentialPath: resolveInsideStaging(list.credentialPath, 'credentialPath')
@@ -96,9 +116,19 @@ export function validateCheckList(value, options = {}) {
 }
 
 /** The reviewable dry run: the checks, the paths and the ceilings, no reads. */
-export function planFor(checkList, budget, attemptLedger) {
+export function planFor(checkList, budget, attemptLedger, now = Date.now()) {
+  const readyAtMs = checkList.hostDeployedAt === undefined
+    ? undefined
+    : Date.parse(checkList.hostDeployedAt) + HOST_VERSION_PROPAGATION_MS;
   return {
     workerUrl: checkList.workerUrl,
+    hostDeployedAt: checkList.hostDeployedAt ?? null,
+    hostReadiness: {
+      required: readyAtMs !== undefined,
+      minimumDelayMs: HOST_VERSION_PROPAGATION_MS,
+      readyAt: readyAtMs === undefined ? null : new Date(readyAtMs).toISOString(),
+      waitRemainingMs: readyAtMs === undefined ? null : Math.max(0, readyAtMs - now)
+    },
     checks: checkList.checks,
     expectedReads: checkList.checks.reduce((total, check) => total + check.reads, 0),
     readBudgetPerWindow: budget.limit,
@@ -117,11 +147,17 @@ export function planFor(checkList, budget, attemptLedger) {
  */
 export function reportFor(checkList, results, options) {
   const failed = results.filter((result) => !result.passed).length;
-  const numericReads = (result) => (typeof result.reads === 'number' ? result.reads : 0);
+  const reportedReads = results.filter((result) => typeof result.reads === 'number');
+  const versionMatched = results.filter((result) => result.issued && result.versionMatch === true);
+  const versionLagged = checkList.hostDeployedAt === undefined
+    ? null
+    : results.filter((result) => result.issued && result.status !== 0 && result.versionMatch !== true).length;
   return {
     generatedAt: new Date().toISOString(),
     startedAt: options.startedAt,
     workerUrl: checkList.workerUrl,
+    hostDeployedAt: checkList.hostDeployedAt ?? null,
+    hostReadiness: options.hostReadiness,
     checks: results,
     summary: {
       checks: results.length,
@@ -129,11 +165,18 @@ export function reportFor(checkList, results, options) {
       failed,
       issued: results.filter((result) => result.issued).length,
       deferred: results.filter((result) => !result.issued).length,
-      reads: results.reduce((total, result) => total + numericReads(result), 0),
+      // `reads` sums reported values only; missing headers stay visibly unknown.
+      reads: reportedReads.reduce((total, result) => total + result.reads, 0),
+      readCountObservations: reportedReads.length,
+      unreportedReadChecks: results.filter((result) => result.issued && result.reads === null).length,
+      versionMatchedObservations: checkList.hostDeployedAt === undefined ? null : versionMatched.length,
+      versionLaggedObservations: versionLagged,
+      readTimingObservations: results.filter((result) => Array.isArray(result.readMs) && (result.versionMatch !== false)).length,
       plannedReads: results.reduce((total, result) => total + result.plannedReads, 0),
       observedMaxInFlight: Math.max(0, ...results.map((result) => result.observedInFlight))
     },
     passed: failed === 0,
+    stoppedOn429: results.some((result) => result.issued && result.status === 429),
     budget: {
       limit: options.budget.limit,
       windowSeconds: options.budget.windowMs / 1000,
@@ -170,6 +213,9 @@ export async function runReadChecks(checkList, options) {
   const { budget, attemptLedger } = options;
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => Date.now());
+  if (checkList.hostDeployedAt === undefined) {
+    throw new Error('hostDeployedAt is required before a read-matrix run can reserve attempts or reads.');
+  }
   // A single check may never exceed the whole rolling window; refusing here
   // keeps a pacing error from spending an attempt before it is discovered.
   for (const check of checkList.checks) {
@@ -177,12 +223,46 @@ export async function runReadChecks(checkList, options) {
       throw new Error(`checks[${check.index}] reserves ${check.reads} reads, more than the whole ${budget.limit}-read window.`);
     }
   }
+  const hostReadiness = await waitForHostVersion(checkList, { now, wait: options.wait });
   await mkdir(dirname(options.attemptLog), { recursive: true });
   await writeFile(options.attemptLog, '', 'utf8');
 
   const results = [];
   let inFlight = 0;
+  let stoppedOn429 = false;
   for (const check of checkList.checks) {
+    if (stoppedOn429) {
+      const deferred = {
+        index: check.index,
+        label: check.label,
+        operation: check.operation,
+        expectation: check.expectation,
+        issued: false,
+        deferred: true,
+        deferredReason: 'http-429',
+        status: 0,
+        code: null,
+        reason: null,
+        reads: null,
+        readMs: null,
+        hostDeployedAt: null,
+        expectedHostDeployedAt: checkList.hostDeployedAt ?? null,
+        versionMatch: null,
+        policyRefusal: check.policyRefusal,
+        credentialMode: check.credentialMode,
+        plannedReads: check.reads,
+        durationMs: null,
+        observedInFlight: 0,
+        passed: false,
+        detail: 'not issued: an earlier target response returned HTTP 429'
+      };
+      results.push(deferred);
+      await appendFile(options.attemptLog, `${JSON.stringify(deferred)}\n`, 'utf8');
+      continue;
+    }
+    if (check.credentialMode === 'configured' && typeof options.credential !== 'string') {
+      throw new Error(`checks[${check.index}] requires a configured credential.`);
+    }
     if (!await attemptLedger.reserve()) {
       const deferred = {
         index: check.index,
@@ -194,6 +274,12 @@ export async function runReadChecks(checkList, options) {
         code: null,
         reason: null,
         reads: null,
+        readMs: null,
+        hostDeployedAt: null,
+        expectedHostDeployedAt: checkList.hostDeployedAt ?? null,
+        versionMatch: null,
+        policyRefusal: check.policyRefusal,
+        credentialMode: check.credentialMode,
         plannedReads: check.reads,
         durationMs: null,
         observedInFlight: 0,
@@ -213,17 +299,26 @@ export async function runReadChecks(checkList, options) {
       const read = await controlReadCheck({
         workerUrl: checkList.workerUrl,
         operation: check.operation,
-        credential: options.credential,
+        credential: check.credentialMode === 'none' ? undefined : options.credential,
         idempotencyKey: `readcheck-${startedAt}-${check.index}`,
-        fetchImpl
+        fetchImpl,
+        expectedHostDeployedAt: checkList.hostDeployedAt,
+        now
       });
-      const verdict = evaluateExpectation(read, check.expectation);
+      const verdict = evaluateExpectation(read, check.expectation, { requireZeroReads: check.policyRefusal });
+      if (read.status === 429) stoppedOn429 = true;
       attempt = {
         issued: true,
         status: read.status,
         code: read.errorCode ?? null,
         reason: read.reason ?? null,
         reads: read.sheetsReads,
+        readMs: read.readMs,
+        hostDeployedAt: read.hostDeployedAt,
+        expectedHostDeployedAt: read.expectedHostDeployedAt,
+        versionMatch: read.versionMatch,
+        policyRefusal: check.policyRefusal,
+        credentialMode: check.credentialMode,
         durationMs: read.durationMs,
         passed: verdict.passed,
         detail: verdict.detail
@@ -238,6 +333,12 @@ export async function runReadChecks(checkList, options) {
         code: null,
         reason: null,
         reads: null,
+        readMs: null,
+        hostDeployedAt: null,
+        expectedHostDeployedAt: checkList.hostDeployedAt ?? null,
+        versionMatch: null,
+        policyRefusal: check.policyRefusal,
+        credentialMode: check.credentialMode,
         durationMs: now() - startedAt,
         passed: false,
         failure,
@@ -258,7 +359,7 @@ export async function runReadChecks(checkList, options) {
     results.push(result);
     await appendFile(options.attemptLog, `${JSON.stringify(result)}\n`, 'utf8');
   }
-  return { results, passed: results.every((result) => result.passed) };
+  return { results, passed: results.every((result) => result.passed), stoppedOn429, hostReadiness };
 }
 
 async function main() {
@@ -282,7 +383,11 @@ async function main() {
 
   let checkList;
   try {
-    checkList = validateCheckList(JSON.parse(await readFile(resolve(options.checks), 'utf8')), { allowHost: options.allowHost, report: options.report });
+    checkList = validateCheckList(JSON.parse(await readFile(resolve(options.checks), 'utf8')), {
+      allowHost: options.allowHost,
+      report: options.report,
+      requireHostDeployedAt: options.confirmStaging
+    });
   } catch (error) {
     console.error(`The check list is not usable: ${error.message}`);
     process.exitCode = 1;
@@ -323,7 +428,7 @@ async function main() {
   const attemptsBeforeRun = attemptLedger.observed();
   const startedAt = new Date().toISOString();
 
-  const { results, passed } = await runReadChecks(checkList, {
+  const { results, passed, hostReadiness } = await runReadChecks(checkList, {
     credential,
     budget,
     attemptLedger,
@@ -333,7 +438,7 @@ async function main() {
   });
 
   const failed = results.filter((result) => !result.passed).length;
-  const report = reportFor(checkList, results, { startedAt, budget, attemptLedger, attemptsBeforeRun, attemptLogPath });
+  const report = reportFor(checkList, results, { startedAt, budget, attemptLedger, attemptsBeforeRun, attemptLogPath, hostReadiness });
   await mkdir(dirname(checkList.reportPath), { recursive: true });
   await writeFile(checkList.reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   console.log(JSON.stringify({ passed, summary: report.summary, reportPath: checkList.reportPath, attemptLogPath }, null, 2));

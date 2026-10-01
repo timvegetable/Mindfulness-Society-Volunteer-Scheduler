@@ -65,6 +65,28 @@ The staging tools are contract-tested in `src/server/integration/`, driven with 
 
 A contract test proves the path it drives, not the path the CLI takes: the read-matrix driver's report construction was unreachable from its tests and crashed a live run after spending its attempts. Prefer extracting the assembled artifact into an exported pure function over asserting a string in the source.
 
+Portable measurement regressions also cover mixed-operation phase summaries,
+corrupt-ledger refusal, concurrent first ledger loads, private-directory
+containment, HTTP 429 responses whose body claims success, and the 95-second
+expected-version wait. Harness and browser wall time includes response-body
+consumption; each attempt records its measured maximum overlap with active
+requests, excluding time spent waiting for a quota reservation. Reports separate
+successful expected-version observations with at least three requests in flight
+from failures, version lag and lower-concurrency observations. A configured pool
+width or phase maximum alone does not establish that population.
+
+`staging-rehearsal-request.contract.test.ts` exercises the actual gateway request
+helper: campaign/read reservations precede the straddle, an exhausted budget
+prevents its transition, and transport or transition failures retain the request
+outcome. Straddle and confirmed matrix tests enforce expected-marker age before
+reservations and reject matching envelopes from a wrong version or non-200
+response. The registered-mutation probe requires an explicit zero-read count;
+Worker-native contracts verify the header and zero backend access. The injection-restore contracts check generation advancement,
+unchanged counters, journal-before-control persistence, duplicate-row removal,
+and refusal of a mismatched role or unrelated newer state. Worker timing tests
+complete concurrent Sheets requests in reverse order to verify that the header
+still follows request order. Local contracts do not supply missing live evidence.
+
 ## What CI checks
 
 Two workflows split validation from release:

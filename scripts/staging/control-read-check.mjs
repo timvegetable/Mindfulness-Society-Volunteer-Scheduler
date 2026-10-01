@@ -6,14 +6,26 @@
 // server-generated headers are present), and `evaluateExpectation` turns an
 // expectation into a pass/fail. No credential, response body or row value is
 // ever printed or written by this module.
+import { readTimingsFrom, validateHostDeployedAt } from './measure-worker.mjs';
+
 const DEFAULT_TIMEOUT_MS = 20_000;
+
+function sheetsReadsFrom(value) {
+  if (typeof value !== 'string' || !/^\d+$/u.test(value.trim())) return null;
+  const reads = Number(value);
+  return Number.isSafeInteger(reads) ? reads : null;
+}
 
 /** Sends one read and reports what came back, without interpreting it. */
 export async function controlReadCheck(options) {
   const fetchImpl = options.fetchImpl ?? fetch;
+  const now = options.now ?? (() => Date.now());
+  const expectedHostDeployedAt = options.expectedHostDeployedAt === undefined
+    ? null
+    : validateHostDeployedAt(options.expectedHostDeployedAt);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const startedAt = Date.now();
+  const startedAt = now();
   try {
     const response = await fetchImpl(options.workerUrl, {
       method: 'POST',
@@ -22,21 +34,27 @@ export async function controlReadCheck(options) {
         operation: options.operation,
         payload: {},
         idempotencyKey: options.idempotencyKey ?? `control-read-check-${startedAt}`,
-        credential: options.credential
+        ...(options.credential === undefined ? {} : { credential: options.credential })
       }),
       signal: controller.signal
     });
-    const durationMs = Date.now() - startedAt;
     const body = await response.json().catch(() => undefined);
+    const durationMs = now() - startedAt;
+    const hostDeployedAt = response.headers.get('x-staging-host-deployed-at');
+    const sheetsReads = sheetsReadsFrom(response.headers.get('x-staging-sheets-reads'));
     return {
       status: response.status,
       durationMs,
       ok: body?.ok === true,
       errorCode: body?.ok === false ? body.error?.code : undefined,
       reason: body?.ok === false ? body.error?.details?.reason : undefined,
-      sheetsReads: Number(response.headers.get('x-staging-sheets-reads') ?? '') || 0,
+      sheetsReads,
+      readMs: sheetsReads === null ? null : readTimingsFrom(response.headers.get('x-staging-read-ms'), sheetsReads),
+      hostDeployedAt,
+      expectedHostDeployedAt,
+      versionMatch: expectedHostDeployedAt === null ? null : hostDeployedAt === expectedHostDeployedAt,
       hasCorrelationId: response.headers.get('x-staging-correlation-id') !== null,
-      hasHostMarker: response.headers.get('x-staging-host-deployed-at') !== null
+      hasHostMarker: hostDeployedAt !== null
     };
   } finally {
     clearTimeout(timeout);
@@ -48,10 +66,20 @@ export async function controlReadCheck(options) {
  * `failed:<CODE>[:<reason>]`. Returns `{ passed, detail }`; the caller decides
  * what a failure means.
  */
-export function evaluateExpectation(result, expectation) {
+export function evaluateExpectation(result, expectation, options = {}) {
+  if (typeof result.expectedHostDeployedAt === 'string' && result.hostDeployedAt !== result.expectedHostDeployedAt) {
+    return {
+      passed: false,
+      detail: `expected host marker ${result.expectedHostDeployedAt}, got ${result.hostDeployedAt ?? 'missing'}`
+    };
+  }
+  if (result.status !== 200) return { passed: false, detail: `expected HTTP 200, got ${result.status}` };
+  if (options.requireZeroReads && result.sheetsReads !== 0) {
+    return { passed: false, detail: `expected zero reported Sheets reads, got ${result.sheetsReads ?? 'unreported'}` };
+  }
   const parts = String(expectation).split(':');
   if (parts[0] === 'ok') {
-    if (result.ok) return { passed: true, detail: 'served' };
+    if (result.ok && result.status === 200) return { passed: true, detail: 'served' };
     const actual = `${result.errorCode ?? result.status}${result.reason ? `/${result.reason}` : ''}`;
     return { passed: false, detail: `expected a served read, got ${actual}` };
   }

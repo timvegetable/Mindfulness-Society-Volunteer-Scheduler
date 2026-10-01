@@ -6,8 +6,11 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { controlReadCheck, evaluateExpectation, type ControlReadCheckResult } from '../../../scripts/staging/control-read-check.mjs';
 import { AttemptBudget, ReadBudget } from '../../../scripts/staging/measure-worker.mjs';
+import { createReadApi } from '../../worker/read-api.js';
+import { INTEGRATION_OPERATIONS, OPERATION_POLICIES } from './request-policy.js';
 import {
   exitCodeFor,
+  planFor,
   reportFor,
   runReadChecks,
   validateCheckList,
@@ -27,11 +30,13 @@ import {
 const ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
 const DRIVER = join(ROOT, 'scripts/staging/control-read-checks.mjs');
 const WORKER_URL = 'https://volunteer-scheduling-staging-gateway.example-account.workers.dev/exec';
+const EXPECTED_HOST_DEPLOYED_AT = '2026-09-29T21:47:50.265Z';
 
 /** A declared list, normalized exactly as the command validates it. */
-function checkList(checks: ReadCheckEntry[]) {
+function checkList(checks: ReadCheckEntry[], hostDeployedAt = EXPECTED_HOST_DEPLOYED_AT) {
   return validateCheckList({
     workerUrl: WORKER_URL,
+    hostDeployedAt,
     credentialPath: 'staging-local/credential-rehearsal.txt',
     reportPath: 'staging-local/read-matrix-representative.json',
     checks
@@ -78,7 +83,7 @@ async function withChecks(list: unknown, run: (path: string) => Promise<void>): 
   });
 }
 
-const servedAnswer = { body: { ok: true, data: { revision: 43 } }, headers: { 'x-staging-sheets-reads': '4', 'x-staging-correlation-id': 'corr-1', 'x-staging-host-deployed-at': '2026-09-29T21:47:50.265Z' } };
+const servedAnswer = { body: { ok: true, data: { revision: 43 } }, headers: { 'x-staging-sheets-reads': '4', 'x-staging-read-ms': '3,5,8,13', 'x-staging-correlation-id': 'corr-1', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT } };
 
 function fetchReturning(status: number, body: unknown, headers: Record<string, string> = {}) {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -93,7 +98,7 @@ function fetchReturning(status: number, body: unknown, headers: Record<string, s
   return { fetchImpl, calls };
 }
 
-const servedHeaders = { 'x-staging-sheets-reads': '4', 'x-staging-correlation-id': 'corr-1', 'x-staging-host-deployed-at': '2026-09-29T21:47:50.265Z' };
+const servedHeaders = { 'x-staging-sheets-reads': '4', 'x-staging-read-ms': '3,5,8,13', 'x-staging-correlation-id': 'corr-1', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT };
 
 describe('control read check', () => {
   it('posts the operation envelope with the credential and reports the service answer', async () => {
@@ -112,6 +117,10 @@ describe('control read check', () => {
       errorCode: undefined,
       reason: undefined,
       sheetsReads: 4,
+      readMs: [3, 5, 8, 13],
+      hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT,
+      expectedHostDeployedAt: null,
+      versionMatch: null,
       hasCorrelationId: true,
       hasHostMarker: true
     });
@@ -132,13 +141,51 @@ describe('control read check', () => {
 
     const result = await controlReadCheck({ workerUrl: 'https://staging.example/exec', operation: 'admin.schedule.read', credential: 'c', fetchImpl });
 
-    expect(result).toMatchObject({ status: 503, ok: false, errorCode: undefined, sheetsReads: 0 });
+    expect(result).toMatchObject({ status: 503, ok: false, errorCode: undefined, sheetsReads: null, readMs: null, hostDeployedAt: null });
+  });
+
+  it('keeps absent read counts unknown and rejects timings that do not align with the reported count', async () => {
+    const missing = await controlReadCheck({
+      workerUrl: 'https://staging.example/exec',
+      operation: 'admin.schedule.read',
+      credential: 'c',
+      fetchImpl: fetchReturning(200, { ok: true }, { 'x-staging-read-ms': '5,10' }).fetchImpl
+    });
+    const mismatch = await controlReadCheck({
+      workerUrl: 'https://staging.example/exec',
+      operation: 'admin.schedule.read',
+      credential: 'c',
+      fetchImpl: fetchReturning(200, { ok: true }, { 'x-staging-sheets-reads': '3', 'x-staging-read-ms': '5,10' }).fetchImpl
+    });
+
+    expect(missing).toMatchObject({ sheetsReads: null, readMs: null });
+    expect(mismatch).toMatchObject({ sheetsReads: 3, readMs: null });
+  });
+
+  it('measures through response body hydration with an injected clock', async () => {
+    let now = 1_000;
+    const { fetchImpl } = fetchReturning(200, { ok: true }, servedHeaders);
+    const delayedFetch = (async (url: string, init: RequestInit) => {
+      const response = await fetchImpl(url, init) as unknown as Response;
+      return {
+        status: response.status,
+        headers: response.headers,
+        json: async () => {
+          now += 41;
+          return response.json();
+        }
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    const result = await controlReadCheck({ workerUrl: 'https://staging.example/exec', operation: 'admin.schedule.read', credential: 'c', fetchImpl: delayedFetch, now: () => now });
+
+    expect(result.durationMs).toBe(41);
   });
 });
 
 describe('expectation comparison', () => {
-  const served: ControlReadCheckResult = { status: 200, durationMs: 12, ok: true, sheetsReads: 4, hasCorrelationId: true, hasHostMarker: true };
-  const refused = (code: string, reason: string): ControlReadCheckResult => ({ status: 200, durationMs: 9, ok: false, errorCode: code, reason, sheetsReads: 1, hasCorrelationId: true, hasHostMarker: true });
+  const served: ControlReadCheckResult = { status: 200, durationMs: 12, ok: true, sheetsReads: 4, readMs: null, hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, expectedHostDeployedAt: null, versionMatch: null, hasCorrelationId: true, hasHostMarker: true };
+  const refused = (code: string, reason: string): ControlReadCheckResult => ({ status: 200, durationMs: 9, ok: false, errorCode: code, reason, sheetsReads: 1, readMs: null, hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, expectedHostDeployedAt: null, versionMatch: null, hasCorrelationId: true, hasHostMarker: true });
 
   it('accepts a served read against the served expectation', () => {
     expect(evaluateExpectation(served, 'ok')).toMatchObject({ passed: true });
@@ -160,6 +207,22 @@ describe('expectation comparison', () => {
     expect(evaluateExpectation(served, 'anything').passed).toBe(false);
     expect(evaluateExpectation(served, 'failed').passed).toBe(false);
   });
+
+  it('does not accept a matching error envelope on HTTP 429 or 500', () => {
+    expect(evaluateExpectation({ ...refused('UNAUTHORIZED', ''), status: 429 }, 'failed:UNAUTHORIZED').passed).toBe(false);
+    expect(evaluateExpectation({ ...refused('UNAUTHORIZED', ''), status: 500 }, 'failed:UNAUTHORIZED').passed).toBe(false);
+  });
+
+  it('requires HTTP 200, the expected host marker, and a reported zero-read policy refusal', () => {
+    expect(evaluateExpectation({ ...served, status: 429 }, 'ok').passed).toBe(false);
+    expect(evaluateExpectation({ ...refused('FORBIDDEN', ''), status: 500 }, 'failed:FORBIDDEN').passed).toBe(false);
+    expect(evaluateExpectation({ ...served, expectedHostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, versionMatch: true }, 'ok').passed).toBe(true);
+    expect(evaluateExpectation({ ...served, expectedHostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, hostDeployedAt: '2026-09-28T21:47:50.265Z', versionMatch: false }, 'ok').passed).toBe(false);
+    expect(evaluateExpectation({ ...served, expectedHostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, hostDeployedAt: null, versionMatch: false }, 'failed:FORBIDDEN').passed).toBe(false);
+    expect(evaluateExpectation({ ...refused('FORBIDDEN', ''), sheetsReads: null }, 'failed:FORBIDDEN', { requireZeroReads: true }).passed).toBe(false);
+    expect(evaluateExpectation({ ...refused('FORBIDDEN', ''), sheetsReads: 1 }, 'failed:FORBIDDEN', { requireZeroReads: true }).passed).toBe(false);
+    expect(evaluateExpectation({ ...refused('FORBIDDEN', ''), sheetsReads: 0 }, 'failed:FORBIDDEN', { requireZeroReads: true }).passed).toBe(true);
+  });
 });
 
 describe('read-matrix driver', () => {
@@ -170,7 +233,7 @@ describe('read-matrix driver', () => {
       const attemptLedger = new AttemptBudget(undefined, join(directory, '.attempt-budget-ledger.json'));
       const { fetchImpl, calls } = fetchSequence([
         servedAnswer,
-        { body: { ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-pending' } } }, headers: { 'x-staging-sheets-reads': '1' } }
+        { body: { ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-pending' } } }, headers: { 'x-staging-sheets-reads': '1', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT } }
       ]);
       const list = checkList([
         { label: 'served domain read', operation: 'admin.schedule.read', expectation: 'ok' },
@@ -192,6 +255,10 @@ describe('read-matrix driver', () => {
         code: null,
         reason: null,
         reads: 4,
+        readMs: [3, 5, 8, 13],
+        hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT,
+        expectedHostDeployedAt: EXPECTED_HOST_DEPLOYED_AT,
+        versionMatch: true,
         plannedReads: 2,
         durationMs: expect.any(Number) as unknown as number,
         observedInFlight: 1,
@@ -207,6 +274,8 @@ describe('read-matrix driver', () => {
         code: 'UNAVAILABLE',
         reason: 'control-pending',
         reads: 1,
+        hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT,
+        versionMatch: true,
         plannedReads: 1,
         observedInFlight: 1,
         passed: true
@@ -228,7 +297,7 @@ describe('read-matrix driver', () => {
         { operation: 'session.me', expectation: 'ok' }
       ]);
       const { fetchImpl, calls } = fetchSequence([
-        { body: { ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-authority_mismatch' } } }, headers: { 'x-staging-sheets-reads': '1' } },
+        { body: { ok: false, error: { code: 'UNAVAILABLE', details: { reason: 'control-authority_mismatch' } } }, headers: { 'x-staging-sheets-reads': '1', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT } },
         servedAnswer
       ]);
 
@@ -385,6 +454,244 @@ describe('read-matrix driver command', () => {
     ]
   };
 
+  it('requires a canonical marker for confirmed runs while allowing an unmarked dry plan', () => {
+    const legacyPlan = validateCheckList(validList);
+    expect(planFor(legacyPlan, new ReadBudget(), new AttemptBudget(), 0).hostReadiness).toEqual({
+      required: false,
+      minimumDelayMs: 95_000,
+      readyAt: null,
+      waitRemainingMs: null
+    });
+    expect(() => validateCheckList(validList, { requireHostDeployedAt: true })).toThrow(/hostDeployedAt is required/u);
+    expect(() => validateCheckList({ ...validList, hostDeployedAt: 'not-a-time' })).toThrow(/hostDeployedAt/u);
+  });
+
+  it('allows only the named registered rerun mutator as a conservative zero-read policy probe', async () => {
+    const operation = INTEGRATION_OPERATIONS.adminScheduleRerun;
+    expect(operation).toBe('admin.schedule.rerun');
+    expect(OPERATION_POLICIES[operation].mutating).toBe(true);
+
+    const normalized = checkList([{ operation, expectation: 'failed:FORBIDDEN' }]);
+    expect(normalized.checks[0]).toMatchObject({ operation, expectation: 'failed:FORBIDDEN', reads: 2, policyRefusal: true });
+
+    expect(() => checkList([{ operation, expectation: 'ok' }])).toThrow(/requires expectation failed:FORBIDDEN/u);
+    expect(() => checkList([{ operation, expectation: 'failed:READ_ONLY' }])).toThrow(/requires expectation failed:FORBIDDEN/u);
+    expect(() => checkList([{ operation, expectation: 'failed:FORBIDDEN', reads: 1 }])).toThrow(/at least 2 reads/u);
+    expect(() => checkList([{ operation: 'admin.insights.refresh', expectation: 'failed:FORBIDDEN' }])).toThrow(/unsupported operation/u);
+
+    let dispatchCalls = 0;
+    const api = createReadApi({
+      origins: [],
+      dispatch: async () => {
+        dispatchCalls += 1;
+        return { ok: true, data: {} } as never;
+      }
+    });
+    const response = await api.fetch(new Request('https://staging.example/exec', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ operation, payload: {}, idempotencyKey: 'read-only-policy-probe', credential: 'test-only' })
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect(dispatchCalls).toBe(0);
+  });
+
+  it('passes the rerun refusal only with an explicit zero-read header and matching marker', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const operation = INTEGRATION_OPERATIONS.adminScheduleRerun;
+      const list = checkList([{ operation, expectation: 'failed:FORBIDDEN' }]);
+      const answer = {
+        body: { ok: false, error: { code: 'FORBIDDEN' } },
+        headers: { 'x-staging-sheets-reads': '0', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT }
+      };
+      const budget = new ReadBudget();
+      const attemptLedger = new AttemptBudget();
+      const passing = await runReadChecks(list, {
+        credential: 'c',
+        budget,
+        attemptLedger,
+        attemptLog: join(directory, 'policy-zero-reads.jsonl'),
+        fetchImpl: fetchSequence([answer]).fetchImpl
+      });
+      expect(passing.passed).toBe(true);
+      expect(passing.results[0]).toMatchObject({ reads: 0, readMs: null, versionMatch: true, passed: true, policyRefusal: true });
+      expect(budget.observed()).toBe(2);
+      expect(attemptLedger.observed()).toBe(1);
+
+      const incompleteHeaders: Array<Record<string, string>> = [
+        { 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT },
+        { 'x-staging-sheets-reads': '1', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT }
+      ];
+      for (const [index, headers] of incompleteHeaders.entries()) {
+        const result = await runReadChecks(list, {
+          credential: 'c',
+          budget: new ReadBudget(),
+          attemptLedger: new AttemptBudget(),
+          attemptLog: join(directory, `policy-not-zero-${index}.jsonl`),
+          fetchImpl: fetchSequence([{ ...answer, headers }]).fetchImpl
+        });
+        expect(result.passed).toBe(false);
+        expect(result.results[0]?.detail).toMatch(/expected zero reported Sheets reads/u);
+      }
+    });
+  });
+
+  it('omits a per-check credential in none mode and retains the measured zero-read header', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const list = checkList([{ operation: 'session.me', expectation: 'failed:UNAUTHORIZED', credentialMode: 'none' }]);
+      const { fetchImpl, calls } = fetchSequence([{
+        body: { ok: false, error: { code: 'UNAUTHORIZED' } },
+        headers: { 'x-staging-sheets-reads': '0', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT }
+      }]);
+      const result = await runReadChecks(list, {
+        credential: 'captured-admin-credential',
+        budget: new ReadBudget(),
+        attemptLedger: new AttemptBudget(),
+        attemptLog: join(directory, 'no-credential.jsonl'),
+        fetchImpl
+      });
+      const body = JSON.parse(String(calls[0]?.body)) as Record<string, unknown>;
+      expect(Object.hasOwn(body, 'credential')).toBe(false);
+      expect(result.passed).toBe(true);
+      expect(result.results[0]).toMatchObject({ issued: true, credentialMode: 'none', reads: 0, versionMatch: true, passed: true });
+    });
+  });
+
+  it('stops the sequential matrix after the first HTTP 429 and records deferred checks', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const list = checkList([
+        { operation: 'session.me', expectation: 'ok' },
+        { operation: 'admin.schedule.read', expectation: 'ok' },
+        { operation: 'admin.insights.read', expectation: 'ok' }
+      ]);
+      const { fetchImpl, calls } = fetchSequence([{
+        status: 429,
+        body: { ok: false, error: { code: 'RATE_LIMITED' } },
+        headers: { 'x-staging-sheets-reads': '0', 'x-staging-host-deployed-at': EXPECTED_HOST_DEPLOYED_AT }
+      }]);
+      const budget = new ReadBudget();
+      const attemptLedger = new AttemptBudget();
+      const attemptLog = join(directory, 'stopped-matrix.jsonl');
+      const result = await runReadChecks(list, { credential: 'c', budget, attemptLedger, attemptLog, fetchImpl });
+
+      expect(calls).toHaveLength(1);
+      expect(result).toMatchObject({ passed: false, stoppedOn429: true });
+      expect(result.results[0]).toMatchObject({ issued: true, status: 429, passed: false });
+      expect(result.results.slice(1)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ issued: false, deferred: true, deferredReason: 'http-429', status: 0 }),
+        expect.objectContaining({ issued: false, deferred: true, deferredReason: 'http-429', status: 0 })
+      ]));
+      expect(attemptLedger.observed()).toBe(1);
+      expect(budget.observed()).toBe(1);
+      expect((await readFile(attemptLog, 'utf8')).trim().split('\n')).toHaveLength(3);
+    });
+  });
+
+  it('requires the expected version marker for served and policy-refusal observations', async () => {
+    const cases: Array<{ checks: ReadCheckEntry[]; body: unknown; headers: Record<string, string> }> = [
+      {
+        checks: [{ operation: 'session.me', expectation: 'ok' }],
+        body: { ok: true, data: {} },
+        headers: { 'x-staging-sheets-reads': '1' }
+      },
+      {
+        checks: [{ operation: INTEGRATION_OPERATIONS.adminScheduleRerun, expectation: 'failed:FORBIDDEN' }],
+        body: { ok: false, error: { code: 'FORBIDDEN' } },
+        headers: { 'x-staging-sheets-reads': '0', 'x-staging-host-deployed-at': '2026-09-28T21:47:50.265Z' }
+      }
+    ];
+    await withTemporaryDirectory(async (directory) => {
+      for (const [index, item] of cases.entries()) {
+        const { fetchImpl } = fetchSequence([{ body: item.body, headers: item.headers }]);
+        const { results, passed } = await runReadChecks(checkList(item.checks), {
+          credential: 'c',
+          budget: new ReadBudget(),
+          attemptLedger: new AttemptBudget(),
+          attemptLog: join(directory, `marker-mismatch-${index}.jsonl`),
+          fetchImpl
+        });
+        expect(passed).toBe(false);
+        expect(results[0]).toMatchObject({
+          expectedHostDeployedAt: EXPECTED_HOST_DEPLOYED_AT,
+          versionMatch: false,
+          passed: false
+        });
+        expect(results[0]?.detail).toContain('expected host marker');
+      }
+    });
+  });
+
+  it('waits 95 seconds before any matrix attempt or read reservation', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const hostDeployedAt = '2026-09-29T21:47:50.265Z';
+      const readyAt = Date.parse(hostDeployedAt) + 95_000;
+      let now = readyAt - 1_000;
+      expect(planFor(checkList([{ operation: 'session.me', expectation: 'ok' }], hostDeployedAt), new ReadBudget(), new AttemptBudget(), now).hostReadiness).toMatchObject({
+        required: true,
+        minimumDelayMs: 95_000,
+        readyAt: new Date(readyAt).toISOString(),
+        waitRemainingMs: 1_000
+      });
+      const waits: number[] = [];
+      const budget = new ReadBudget();
+      const attemptLedger = new AttemptBudget();
+      let readsReserved = 0;
+      let attemptsReserved = 0;
+      budget.reserve = async () => { readsReserved += 1; };
+      attemptLedger.reserve = async () => { attemptsReserved += 1; return true; };
+
+      const { results, passed, hostReadiness } = await runReadChecks(checkList([{ operation: 'session.me', expectation: 'ok' }], hostDeployedAt), {
+        credential: 'c',
+        budget,
+        attemptLedger,
+        attemptLog: join(directory, 'attempts.jsonl'),
+        now: () => now,
+        wait: async (durationMs) => {
+          waits.push(durationMs);
+          expect(readsReserved).toBe(0);
+          expect(attemptsReserved).toBe(0);
+          now += durationMs;
+        },
+        fetchImpl: fetchSequence([{
+          body: { ok: true, data: {} },
+          headers: { 'x-staging-sheets-reads': '1', 'x-staging-read-ms': '8', 'x-staging-host-deployed-at': hostDeployedAt }
+        }]).fetchImpl
+      });
+
+      expect(waits).toEqual([1_000]);
+      expect(attemptsReserved).toBe(1);
+      expect(readsReserved).toBe(1);
+      expect(passed).toBe(true);
+      expect(results[0]).toMatchObject({ versionMatch: true, readMs: [8] });
+      expect(hostReadiness).toMatchObject({ required: true, readyAt: new Date(readyAt).toISOString(), waitedMs: 1_000 });
+    });
+  });
+
+  it('refuses a missing marker before spending either budget', async () => {
+    const list = validateCheckList({
+      workerUrl: WORKER_URL,
+      credentialPath: 'staging-local/credential-rehearsal.txt',
+      reportPath: 'staging-local/read-matrix-representative.json',
+      checks: [{ operation: 'session.me', expectation: 'ok' }]
+    });
+    const budget = new ReadBudget();
+    const attemptLedger = new AttemptBudget();
+    let calls = 0;
+
+    await expect(runReadChecks(list, {
+      credential: 'c',
+      budget,
+      attemptLedger,
+      attemptLog: join(tmpdir(), 'staging-readcheck-no-marker.jsonl'),
+      fetchImpl: async () => { calls += 1; throw new Error('unexpected fetch'); }
+    })).rejects.toThrow(/hostDeployedAt is required/u);
+
+    expect(calls).toBe(0);
+    expect(budget.observed()).toBe(0);
+    expect(attemptLedger.observed()).toBe(0);
+  });
+
   it('prints the checks as a plan and sends nothing without --confirm-staging', async () => {
     await withChecks(validList, async (path) => {
       const planned = runDriver(['--checks', path, '--plan']);
@@ -406,6 +713,10 @@ describe('read-matrix driver command', () => {
       const unconfirmed = runDriver(['--checks', path]);
       expect(unconfirmed.status).toBe(1);
       expect(unconfirmed.stderr).toContain('Refusing to send any read');
+
+      const unmarkedConfirmed = runDriver(['--checks', path, '--confirm-staging']);
+      expect(unmarkedConfirmed.status).toBe(1);
+      expect(unmarkedConfirmed.stderr).toContain('hostDeployedAt is required');
     });
   });
 
@@ -415,27 +726,29 @@ describe('read-matrix driver command', () => {
     // attempts were spent. The report is therefore built by an exported pure
     // function and asserted here.
     const results = [
-      { index: 0, label: 'served identity', operation: 'session.me', expectation: 'ok', issued: true, status: 200, code: null, reason: null, reads: 1, plannedReads: 1, durationMs: 120, observedInFlight: 1, passed: true, detail: 'served' },
-      { index: 1, label: 'pending refusal', operation: 'admin.schedule.read', expectation: 'failed:UNAVAILABLE:control-pending', issued: true, status: 200, code: 'UNAVAILABLE', reason: 'control-pending', reads: 1, plannedReads: 3, durationMs: 90, observedInFlight: 1, passed: true, detail: 'refused' }
+      { index: 0, label: 'served identity', operation: 'session.me', expectation: 'ok', issued: true, status: 200, code: null, reason: null, reads: 1, readMs: [10], hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, expectedHostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, versionMatch: true, policyRefusal: false, credentialMode: 'configured' as const, plannedReads: 1, durationMs: 120, observedInFlight: 1, passed: true, detail: 'served' },
+      { index: 1, label: 'pending refusal', operation: 'admin.schedule.read', expectation: 'failed:UNAVAILABLE:control-pending', issued: true, status: 200, code: 'UNAVAILABLE', reason: 'control-pending', reads: 1, readMs: null, hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, expectedHostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, versionMatch: true, policyRefusal: false, credentialMode: 'configured' as const, plannedReads: 3, durationMs: 90, observedInFlight: 1, passed: true, detail: 'refused' }
     ];
     const report = reportFor(
-      { workerUrl: WORKER_URL, credentialPath: 'staging-local/credential-rehearsal.txt', reportPath: 'staging-local/read-matrix-representative.json', checks: [] },
+      { workerUrl: WORKER_URL, credentialPath: 'staging-local/credential-rehearsal.txt', reportPath: 'staging-local/read-matrix-representative.json', hostDeployedAt: EXPECTED_HOST_DEPLOYED_AT, checks: [] },
       results,
       {
         startedAt: '2026-09-30T02:40:00.000Z',
         budget: { limit: 40, windowMs: 60_000, observed: () => 5 } as unknown as ReadBudget,
         attemptLedger: { limit: 1_000, observed: () => 531 } as unknown as AttemptBudget,
         attemptsBeforeRun: 529,
-        attemptLogPath: 'staging-local/read-matrix-representative.json.attempts.jsonl'
+        attemptLogPath: 'staging-local/read-matrix-representative.json.attempts.jsonl',
+        hostReadiness: { required: true, readyAt: new Date(Date.parse(EXPECTED_HOST_DEPLOYED_AT) + 95_000).toISOString(), waitedMs: 0 }
       }
     );
 
     expect(report).toMatchObject({
       startedAt: '2026-09-30T02:40:00.000Z',
       passed: true,
+      stoppedOn429: false,
       sanitized: true,
       retries: 0,
-      summary: { checks: 2, passed: 2, failed: 0, issued: 2, deferred: 0, reads: 2, plannedReads: 4, observedMaxInFlight: 1 },
+      summary: { checks: 2, passed: 2, failed: 0, issued: 2, deferred: 0, reads: 2, readCountObservations: 2, unreportedReadChecks: 0, versionMatchedObservations: 2, versionLaggedObservations: 0, readTimingObservations: 1, plannedReads: 4, observedMaxInFlight: 1 },
       budget: { limit: 40, windowSeconds: 60, observedReadsInLastWindow: 5, attempts: { limit: 1_000, spentBeforeRun: 529, spentAfterRun: 531 } }
     });
     // A run that leaves an expectation unmet is not a passing report.
@@ -445,7 +758,8 @@ describe('read-matrix driver command', () => {
       budget: { limit: 40, windowMs: 60_000, observed: () => 0 } as unknown as ReadBudget,
       attemptLedger: { limit: 1_000, observed: () => 1 } as unknown as AttemptBudget,
       attemptsBeforeRun: 0,
-      attemptLogPath: 'z'
+      attemptLogPath: 'z',
+      hostReadiness: { required: false, readyAt: null, waitedMs: 0 }
     }).passed).toBe(false);
   });
 
@@ -475,9 +789,10 @@ describe('read-matrix driver command', () => {
       [{ credentialPath: '../credential.txt' }, 'inside staging-local'],
       [{ workerUrl: 'https://api.example.test/exec' }, 'does not look like a staging Worker'],
       [{ workerUrl: 'http://localhost:8787/exec' }, 'https'],
-      [{ checks: [{ operation: 'admin.schedule.rerun', expectation: 'ok' }] }, 'unsupported operation'],
+      [{ checks: [{ operation: 'admin.schedule.rerun', expectation: 'ok' }] }, 'requires expectation failed:FORBIDDEN'],
       [{ checks: [{ operation: 'session.me', expectation: 'anything' }] }, 'must be `ok` or `failed:CODE[:reason]`'],
       [{ checks: [{ operation: 'session.me', expectation: 'failed' }] }, 'must be `ok` or `failed:CODE[:reason]`'],
+      [{ checks: [{ operation: 'session.me', expectation: 'ok', credentialMode: 'automatic' }] }, 'credentialMode must be `none` or `configured`'],
       [{ checks: [] }, 'at least one check']
     ] as const) {
       await withChecks({ ...validList, ...override }, async (path) => {
