@@ -1,6 +1,9 @@
 # Synthetic staging manifest 3 — 2026-10-01
 
-Status: prepared, not authorized or executed. This window supplies the missing
+Status: budget policy and D1 approved for a fresh session with 1.5–2 hours
+available; D2–D5 and B1/B2 remain pending. No action has executed. See the
+[authorization record](staging-rehearsal-authorization-3-2026-10-01.md).
+This window supplies the missing
 live evidence identified in the [delivery audit](delivery-checklist-2026-10-01.md).
 It preserves all acceptance gates. Task 4.1 stays open if any gate or sample
 requirement remains unmet. No push, production, Apps Script deployment, paid
@@ -39,7 +42,8 @@ attempts and exclude them without retrying them away.
 D1 is reviewable through the prepared private deploy plan: `deploy-staging.mjs
 --target host --var STAGING_CONTROL_AUTHORITY:workbook-control --var
 STAGING_BRACKET_HOLD_MS:0 --report <private-report> --plan`. The real command
-adds `--confirm` only after D1 approval. It deploys the host and reprovisions its
+adds `--confirm` only in that approved fresh session after preflight and snapshot.
+It deploys the host and reprovisions its
 two existing Google secrets; their values are not printed or committed.
 
 D2–D5 each get their own fresh plan, snapshot and approval immediately before
@@ -166,6 +170,6 @@ adapter/protection checks remain tasks 5.2/5.3; preview and original 10.24/10.25
 remain open. Task closure is root's evidence adjudication after review, not an
 operator action.
 
-The first approval request covers the stated budget policy and **D1 only**.
-B1/B2 and D2–D5 remain separate pending approvals. Cleanup deployments are not
+The received fresh-session approval covers the stated budget policy and **D1
+only**. B1/B2 and D2–D5 remain separate pending approvals. Cleanup deployments are not
 implicitly authorized by approving an earlier phase.
