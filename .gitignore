@@ -1,0 +1,7 @@
+# agent stuff
+.agents/
+.claude/
+.minimax/
+.zcode
+.pi/
+skills-lock.json
