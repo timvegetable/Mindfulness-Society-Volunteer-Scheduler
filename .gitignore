@@ -6,3 +6,15 @@
 .pi/
 skills-lock.json
 plan.md
+
+# Local build, database state, and private operator inputs
+node_modules/
+dist/
+.wrangler/
+.dev.vars*
+.env*
+seed.sql
+!test/fixtures/seed.sql
+coverage/
+*.local.json
+*.local.sql

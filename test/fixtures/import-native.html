@@ -1,0 +1,22 @@
+<!doctype html>
+<table><tr>
+<td id="1791190800000"><table><tr><td class="gridText" nowrap>09:00</td></tr></table></td>
+<td id="1791194400000"><table><tr><td class="gridText" nowrap>10:00</td></tr></table></td>
+<td id="1791198000000"><table><tr><td class="gridText" nowrap>11:00</td></tr></table></td>
+</tr></table>
+<script>
+var respondents = new Array();
+var r1 = new Object();
+r1.id = "a";
+r1.name = "Alice";
+r1.myCanDos = "1791190800000,1791194400000".split(",");
+r1.myCanDosAll = "1791190800000,1791194400000".split(",");
+respondents["a"] = r1;
+var r2 = new Object();
+r2.id = "participant-2";
+r2.name = "Unmatched";
+r2.myCanDos = "".split(",");
+r2.myCanDosAll = "".split(",");
+respondents["participant-2"] = r2;
+throw new Error("Third-party scripts must never execute during import");
+</script>

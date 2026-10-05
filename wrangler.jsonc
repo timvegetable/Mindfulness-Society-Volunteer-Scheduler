@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mindfulness-scheduler",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-04",
+  "assets": { "directory": "./dist/client", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api", "/client-config"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "mindfulness-scheduler-prod", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "vars": {
+    "TIME_ZONE": "America/New_York",
+    "DISPLAY_INCREMENT_MINUTES": "30",
+    "OPERATING_HOURS_START": "09:00",
+    "OPERATING_HOURS_END": "21:00",
+    "OAUTH_CLIENT_ID": "replace-with-public-google-client-id",
+    "ADMIN_EMAILS": "admin@example.invalid",
+    "WHENISGOOD_ENDPOINT": "https://example.invalid/results/{resultId}",
+    "EMAIL_FROM": "Mindfulness Scheduler <scheduler@example.invalid>"
+  }
+}

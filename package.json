@@ -1,0 +1,35 @@
+{
+  "name": "mindfulness-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "vite --host localhost",
+    "dev:worker": "wrangler dev --local",
+    "test": "vitest run",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "build": "vite build && wrangler deploy --dry-run",
+    "db:init": "wrangler d1 execute DB --local --file=schema.sql",
+    "db:seed:test": "wrangler d1 execute DB --local --file=test/fixtures/seed.sql"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
+    "effect": "^4.0.0-beta.107",
+    "entities": "^8.1.0",
+    "jose": "^6.2.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261004.1",
+    "@types/node": "^26.6.4",
+    "happy-dom": "^20.14.5",
+    "miniflare": "^5.20261001.0-alpha",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.147.0"
+  }
+}
