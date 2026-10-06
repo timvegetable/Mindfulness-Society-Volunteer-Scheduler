@@ -8,10 +8,11 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true
   },
-  "include": ["src/worker", "src/shared", "test", "vite.config.ts", "vitest.config.ts"],
-  "exclude": ["test/unit/client*.test.ts"]
+  "include": ["src/worker", "src/shared", "test", "vite.config.ts", "vite.browser.config.ts", "vitest.config.ts"],
+  "exclude": ["test/unit/client*.test.ts", "test/browser"]
 }

@@ -8,13 +8,14 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:client": "vite --host localhost",
-    "dev:worker": "wrangler dev --local",
+    "dev:client": "vite --host localhost --port 5173 --strictPort",
+    "dev:worker": "wrangler dev --local --port 8787",
     "test": "vitest run",
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
     "build": "vite build && wrangler deploy --dry-run",
     "db:init": "wrangler d1 execute DB --local --file=schema.sql",
-    "db:seed:test": "wrangler d1 execute DB --local --file=test/fixtures/seed.sql"
+    "db:seed:test": "wrangler d1 execute DB --local --file=test/fixtures/seed.sql",
+    "dev:browser": "vite --config vite.browser.config.ts --host localhost"
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",

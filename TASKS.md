@@ -121,3 +121,11 @@ Production deployment and mutations are outside this implementation request.
 - Browser layout checks exercised Schedule, Import availability, Insights, and Center proposals with 40 synthetic rows each at desktop and 390px mobile widths. Tables remained contained, headers stayed pinned, keyboard scrolling worked, and the Insights heatmap followed the bounded volunteer list. Removed the temporary fixture after verification.
 - Confirmed the authenticated local Schedule and Insights tables also remain bounded, and the short proposals table does not stretch. Restored the normal browser viewport and left Insights open. Import verification used synthetic responses without fetching live results or promoting availability.
 - Strict typechecking, all 12 client DOM tests, and the Vite client build passed.
+
+## Browser validation environment on 2026-10-06
+
+- Added an opt-in Vite browser workspace with 40 synthetic records per table, the real client/style/API decoding, automatic synthetic sign-in, and no real fetch or write operations. Production assets exclude the harness.
+- Its visible report checks the target path, actual viewport dimensions, completed rendering, page containment, table height/overflow, sticky headers, row count, and keyboard access. A requested viewport mismatch produced a failed report during validation.
+- Schedule, Import availability, Insights, and Center proposals passed at actual 1280×720 and 390×844 viewports. Schedule preview/return, synthetic import staging, overlap count sorting, heatmap membership agreement, and native End-key scrolling were exercised. Restored the browser viewport and closed the temporary harness tab.
+- The preview launcher applies Wrangler logging/telemetry settings, rejects occupied ports, reports both services ready, optionally writes a local log, and stops both process groups if a service exits. Verified occupied-port rejection, readiness, a newly created log's 0600 permissions, and both services stopping after the client exited; restored the local preview afterward.
+- Strict typechecks, all 202 functional tests across 11 files, and the full client build/Worker dry run passed. Browser checks use synthetic responses and do not establish Google or third-party integration compatibility.

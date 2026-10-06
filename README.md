@@ -60,7 +60,13 @@ Start both local processes:
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal. Vite proxies `/api` and `/client-config` to the local Worker at port 8787. To run the Worker alone after building client assets:
+Open the Vite URL printed in the terminal. Vite proxies `/api` and `/client-config` to the local Worker at port 8787.
+
+The launcher reports readiness for both services and rejects occupied ports. Optionally retain local diagnostics with `npm run dev -- --log-file /tmp/scheduler-preview.log`. These logs may contain private data; keep them local.
+
+For credential-free browser layout checks, run `npm run dev:browser` and open `http://localhost:5174/__browser-check`. This separate workspace uses synthetic data and the real client, with no Worker requests. See the [browser validation guide](docs/agents/browser-validation.md) for viewport assertions and workflow checks.
+
+To run the Worker alone after building client assets:
 
 ```sh
 npx vite build

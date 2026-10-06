@@ -12,6 +12,8 @@ For local Wrangler checks, apply the `WRANGLER_WRITE_LOGS` and `WRANGLER_SEND_ME
 
 ## Exercise the relevant interfaces
 
+For native table layout and interaction checks with synthetic data, use the [browser validation workspace](browser-validation.md). Its report verifies actual viewport dimensions and computed styles before screenshots; it complements authenticated browser-to-Worker checks.
+
 Use the existing public interfaces for functional coverage. For browser or Worker integration changes, distinguish mock coverage from evidence in the actual runtime. A mock passing does not establish that native APIs, authentication, or the development proxy work.
 
 For third-party imports and stored-data compatibility, verify the input structure before choosing a fixture. Build synthetic fixtures that preserve the relevant structure, identity collisions, escaping, empty values, and time representation. Synthetic names alone do not make an invented format representative. Validate the complete API response, including nested records, against its schema.
@@ -31,6 +33,8 @@ Before declaring completion, identify which requirements were exercised, which c
 Inspect Git status before editing and preserve existing work. Treat the ignored root `seed.sql`, `.dev.vars`, and local D1 state as operator-owned inputs. Validate their presence and configuration without printing values. Use disposable databases and synthetic fixtures for tests; follow README's setup distinction between a new database and an initialized private roster.
 
 Check preview readiness before browser actions, especially after a turn boundary or process restart. The client and Worker must both be reachable. If the preview stops, restore it before diagnosing an application transport failure. Record whether a refresh requires the user to sign in again.
+
+`npm run dev` reports readiness after both services respond and rejects occupied ports. Use `npm run dev -- --log-file /tmp/scheduler-preview.log` to retain diagnostics. Logs may contain private runtime information; keep them local and inspect only the relevant sanitized categories. The launcher applies the CI Wrangler logging/telemetry settings and stops both services when either exits.
 
 For sensitive runs, emit allowlisted status and error categories rather than environment dumps, request bodies, credentials, or raw private records. Preserve enough diagnostic signal to distinguish transport, authentication, schema, fetch, and parse failures. Use screenshots only within the user's authorized scope.
 

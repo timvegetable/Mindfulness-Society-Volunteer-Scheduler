@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "types": ["vite/client", "node", "vitest/globals"] },
-  "include": ["src/client", "src/shared", "test/unit/client*.test.ts"],
+  "include": ["src/client", "src/shared", "test/unit/client*.test.ts", "test/browser"],
   "exclude": []
 }
