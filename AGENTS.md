@@ -11,3 +11,11 @@ Use the default labels `needs-triage`, `needs-info`, `ready-for-agent`, `ready-f
 ### Domain docs
 
 Use the single-context layout for domain docs. See `docs/agents/domain.md`.
+
+### Validation
+
+When implementing, debugging, or validating integrations, read [validation guidance](docs/agents/validation.md).
+
+### Review
+
+When reviewing a change, read [coding standards](docs/CODING_STANDARDS.md) alongside its spec and subsequent user requirements.
