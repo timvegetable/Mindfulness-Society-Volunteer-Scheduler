@@ -10,9 +10,10 @@ Canonical requirements: local `plan.md`. All work uses local resources or determ
 - [x] Stage 6: preview, atomic publication, history and stale state tests
 - [x] Stage 7: candidate edits, advisory coverage, dated confirmation and conflict tests
 - [x] Stage 8: fixture-based WhenIsGood parsing, matching, staging, atomic promotion and provenance tests
-- [x] Stage 9: live insights, sortable table and accessible numeric heatmap; domain and DOM tests
+- [x] Stage 9: live insights, sortable leftover-volunteer table and accessible numeric heatmap; domain and DOM tests
 - [x] Stage 10: all role surfaces, in-memory credentials and confirmations; client API and DOM tests
 - [x] Stage 11: full tests, type checks, client/Worker build, local HTTP smoke checks and dry run
+- [x] Stage 12: sortable availability-overlap table alongside the heatmap, responsive containment, and client functional coverage
 
 ## Verification on 2026-10-04
 
@@ -103,3 +104,10 @@ Production deployment and mutations are outside this implementation request.
 - Unfilled places now reflects required staffing minus the assigned volunteers displayed in the published or preview table. A missing historical shortfall entry no longer defaults the display to zero. Cancelled sessions show zero required places.
 - Removed the legacy “Center session:” prefix from displayed session titles, including volunteer session lists and confirmation text, without editing stored titles.
 - Expanded the existing schedule publication workflow checks to include an unassigned session requiring two volunteers. All ten client DOM tests, strict TypeScript checks, and the Vite build passed.
+
+## Sortable availability-overlap table on 2026-10-06
+
+- Added a distinct Insights table with weekday, merged interval, available-volunteer count, and names. It uses the same current grid cells as the heatmap.
+- Sorting supports weekday/time and volunteer count from high to low, with weekday, time, and volunteer IDs as deterministic tie-breakers. Displayed intervals keep the existing AM/PM format without timezone labels.
+- The wide table stays inside a horizontal scroll area. Synthetic DOM coverage checks sorting, count ties, agreement with heatmap selection, refreshed data, empty intervals, and zero-coverage intervals.
+- `npm run check` passed; `npm test` passed all 202 tests across 11 files with approved loopback access for Miniflare; the Vite build and Wrangler deployment dry run passed. No deployment occurred.

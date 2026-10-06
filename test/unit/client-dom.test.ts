@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { startClient } from '../../src/client/app';
 import type { Role } from '../../src/shared/domain/models';
 const volunteer = { id: 'v1', name: 'Alice', email: 'alice@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 1 };
+const secondVolunteer = { id: 'v2', name: 'Bob', email: 'bob@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 2 };
+const thirdVolunteer = { id: 'v3', name: 'Cara', email: 'cara@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 3 };
 const center = { id: 'c1', name: 'Authorized Center', active: true };
 const session = { id: 's1', kind: 'center', centerId: 'c1', title: 'Morning session', date: '2026-10-06', start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' };
 const assignment = { id: 'a1', sessionId: 's1', volunteerId: 'v1', scheduleRevision: 1, status: 'assigned' };
@@ -14,6 +16,7 @@ let confirmAnswer: boolean;
 let previewRevision: number;
 let configId: string;
 let initialized: number;
+let insightsGrid: { weekday: number; start: string; end: string; count: number; volunteers: typeof volunteer[] }[];
 const click = (label: string) => {
   const node = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === label);
   expect(node, `Missing button ${label}`).toBeDefined(); node!.click();
@@ -34,7 +37,7 @@ async function mount() {
         participantCount: 1, matchedCount: 1, unmatched: [], stagedAvailability: [{ id: 'p1', name: volunteer.name, email: null, volunteerId: volunteer.id, intervals: [] }],
         ...(body.operation.endsWith('promote') ? { promotedAt: '2026-10-05T12:00:00Z' } : {}) },
     };
-    else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }] };
+    else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
     else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));
   } });
@@ -42,6 +45,7 @@ async function mount() {
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
   requests = []; roles = ['volunteer']; confirmAnswer = false; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0;
+  insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
 });
 async function signIn() { await mount(); callback({ credential: 'fake-credential' }); await settle(); }
@@ -97,6 +101,60 @@ describe('client DOM behaviors', () => {
   it('shows numeric heatmap counts and participant details on selection', async () => {
     roles = ['administrator']; await signIn(); click('Insights'); await settle(); click('9:00 AM–10:00 AM · 1'); await settle();
     expect(document.querySelector('.cell-details')?.textContent).toContain('1 volunteers available'); expect(document.querySelector('.cell-details li')?.textContent).toBe('Alice');
+  });
+  it('sorts overlap rows and keeps them aligned with heatmap selection and refreshed data', async () => {
+    roles = ['administrator'];
+    insightsGrid = [
+      { weekday: 5, start: '11:00', end: '12:00', count: 0, volunteers: [] },
+      { weekday: 2, start: '08:30', end: '09:00', count: 2, volunteers: [volunteer, thirdVolunteer] },
+      { weekday: 1, start: '10:00', end: '11:00', count: 1, volunteers: [volunteer] },
+      { weekday: 1, start: '09:00', end: '10:00', count: 2, volunteers: [volunteer, secondVolunteer] },
+    ];
+    await signIn(); click('Insights'); await settle();
+
+    const overlapTable = () => [...document.querySelectorAll('table')].find(node => node.querySelector('thead')?.textContent?.includes('Weekday'))!;
+    const tableRows = () => [...overlapTable().querySelectorAll('tbody tr')].map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent ?? ''));
+    expect(overlapTable().closest('.table-scroll')).not.toBeNull();
+    expect(overlapTable().classList.contains('overlap-table')).toBe(true);
+    expect(tableRows()).toEqual([
+      ['Monday', '9:00 AM–10:00 AM', '2', 'Alice, Bob'],
+      ['Monday', '10:00 AM–11:00 AM', '1', 'Alice'],
+      ['Tuesday', '8:30 AM–9:00 AM', '2', 'Alice, Cara'],
+      ['Friday', '11:00 AM–12:00 PM', '0', '—'],
+    ]);
+
+    const sort = [...document.querySelectorAll('label.field')].find(label => label.textContent?.includes('Sort overlap intervals by'))?.querySelector('select')!;
+    sort.value = 'count'; sort.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(tableRows().map(row => [row[0], row[1], row[2]])).toEqual([
+      ['Monday', '9:00 AM–10:00 AM', '2'],
+      ['Tuesday', '8:30 AM–9:00 AM', '2'],
+      ['Monday', '10:00 AM–11:00 AM', '1'],
+      ['Friday', '11:00 AM–12:00 PM', '0'],
+    ]);
+    const selectedRow = tableRows().find(row => row[0] === 'Monday' && row[1] === '9:00 AM–10:00 AM')!;
+    click(`${selectedRow[1]} · ${selectedRow[2]}`); await settle();
+    expect(document.querySelector('.cell-details h3')?.textContent).toBe(`${selectedRow[0]} · ${selectedRow[1]}`);
+    expect(document.querySelector('.cell-details')?.textContent).toContain(`${selectedRow[2]} volunteers available`);
+    expect([...document.querySelectorAll('.cell-details li')].map(item => item.textContent)).toEqual(selectedRow[3]!.split(', '));
+
+    insightsGrid = [{ weekday: 3, start: '13:00', end: '14:30', count: 1, volunteers: [thirdVolunteer] }];
+    click('Reload view'); await settle();
+    const refreshedRow = tableRows()[0]!;
+    expect(refreshedRow).toEqual(['Wednesday', '1:00 PM–2:30 PM', '1', 'Cara']);
+    expect([...document.querySelectorAll('.heatmap-cell')].map(item => item.getAttribute('aria-label'))).toEqual([`${refreshedRow[0]} ${refreshedRow[1]!.replace('–', ' to ')}, ${refreshedRow[2]} available volunteers`]);
+    click(`${refreshedRow[1]} · ${refreshedRow[2]}`); await settle();
+    expect([...document.querySelectorAll('.cell-details li')].map(item => item.textContent)).toEqual(refreshedRow[3]!.split(', '));
+  });
+  it('explains when overlap data is empty or has no available volunteers', async () => {
+    roles = ['administrator']; insightsGrid = []; await signIn(); click('Insights'); await settle();
+    expect(document.body.textContent).toContain('No availability intervals to show.');
+    expect(document.body.textContent).toContain('No overlap intervals are available.');
+
+    insightsGrid = [{ weekday: 1, start: '09:00', end: '09:30', count: 0, volunteers: [] }];
+    click('Reload view'); await settle();
+    expect(document.body.textContent).toContain('No volunteers are available during the listed intervals.');
+    click('9:00 AM–9:30 AM · 0'); await settle();
+    expect(document.querySelector('.cell-details')?.textContent).toContain('No volunteers are available in this interval.');
   });
   it('imports matched participants together without requiring mapping saves', async () => {
     roles = ['administrator']; confirmAnswer = true; await signIn(); click('Import availability'); await settle();

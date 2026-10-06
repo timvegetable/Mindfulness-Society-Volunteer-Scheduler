@@ -303,6 +303,27 @@ function insightsView(data: ResultOf<'admin.insights.read'>) {
   }
   append(overlap, grid, details);
   if (!data.grid.length) empty(overlap, 'No availability intervals to show.');
+
+  const overlapTable = card('Availability overlap table', 'Each row shows a merged weekday and time interval with its available volunteers.'); content.append(overlapTable);
+  if (data.grid.length) {
+    const order = select([['weekday', 'Weekday and time'], ['count', 'Available volunteer count (high to low)']], 'weekday');
+    const rows = el('div'); append(overlapTable, field('Sort overlap intervals by', order), rows);
+    const compareText = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+    const byWeekdayTime = (a: (typeof data.grid)[number], b: (typeof data.grid)[number]) => a.weekday - b.weekday || compareText(a.start, b.start) || compareText(a.end, b.end);
+    const volunteerKey = (cell: (typeof data.grid)[number]) => cell.volunteers.map(volunteer => volunteer.id).sort().join('\0');
+    function renderOverlapRows() {
+      const sorted = [...data.grid].sort((a, b) => order.value === 'count'
+        ? b.count - a.count || byWeekdayTime(a, b) || compareText(volunteerKey(a), volunteerKey(b))
+        : byWeekdayTime(a, b) || b.count - a.count || compareText(volunteerKey(a), volunteerKey(b)));
+      const rendered = table(['Weekday', 'Time', 'Available volunteers', 'Volunteers'], sorted.map(cell => [
+        days[cell.weekday - 1]!, timeRange(cell.start, cell.end), String(cell.count), cell.volunteers.map(volunteer => volunteer.name).join(', ') || '—',
+      ]));
+      rendered.querySelector('table')?.classList.add('overlap-table');
+      rows.replaceChildren(rendered);
+    }
+    order.addEventListener('change', renderOverlapRows); renderOverlapRows();
+    if (data.grid.every(cell => cell.count === 0)) empty(overlapTable, 'No volunteers are available during the listed intervals.');
+  } else empty(overlapTable, 'No overlap intervals are available.');
 }
 export async function startClient(options: { fetch?: typeof fetch; confirm?: (message: string) => boolean; prompt?: (message: string) => string | null; id?: () => string } = {}) {
   pageGeneration++; me = undefined; signingIn = false; activeTab = '';
