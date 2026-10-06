@@ -4,6 +4,14 @@
 
 Before a change, inspect `package.json`, the CI workflow, and the validation section of [README.md](../../README.md). Those files own the commands and configuration; use their current definitions.
 
+## Run local checks with the required permissions
+
+Local D1 tests use Miniflare, which binds a loopback Worker socket. An `EPERM` error while listening on `127.0.0.1` means the runtime could not start under the current permissions; it provides no evidence about the application assertions. Use the execution tool's approved loopback access and rerun the same check. Report runtime setup failures separately from assertion failures, including when establishing a regression against the original code.
+
+For local Wrangler checks, apply the `WRANGLER_WRITE_LOGS` and `WRANGLER_SEND_METRICS` settings from [CI](../../.github/workflows/ci.yml). These settings avoid writes to the user's Wrangler log directory and disable telemetry. A log-directory `EROFS` error identifies an environment write restriction; rerun with the CI settings and inspect the command's exit status and diagnostics before reporting its result.
+
+## Exercise the relevant interfaces
+
 Use the existing public interfaces for functional coverage. For browser or Worker integration changes, distinguish mock coverage from evidence in the actual runtime. A mock passing does not establish that native APIs, authentication, or the development proxy work.
 
 For third-party imports and stored-data compatibility, verify the input structure before choosing a fixture. Build synthetic fixtures that preserve the relevant structure, identity collisions, escaping, empty values, and time representation. Synthetic names alone do not make an invented format representative. Validate the complete API response, including nested records, against its schema.

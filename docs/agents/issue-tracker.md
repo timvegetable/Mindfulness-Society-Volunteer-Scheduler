@@ -5,13 +5,27 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
+- **Read an issue**: `gh issue view <number> --comments`. For structured output, request `number,title,state,url,body,labels,comments` with `--json`.
+- **List issues**: `gh issue list --state open --json number,title,state,labels` with appropriate `--search`, `--label`, and `--state` filters. Fetch the selected issue's body and comments with the read command.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
+
+## Ticket access and completion
+
+Before implementing a ticket, retrieve its body, labels, and comments and identify its acceptance criteria. Completion requires evidence for those criteria, including any required checks. Local notes can guide exploration while access is blocked; report the ticket as unavailable until its requirements have been retrieved.
+
+If a GitHub request fails:
+
+1. Distinguish connectivity from authentication. A connection error alone does not establish an authentication failure. Use a read-only HTTPS probe to `https://api.github.com/` that reports only status and error categories; a DNS failure identifies a transport problem.
+2. For a sandbox network restriction, use the execution tool's approved network access to retry the original read. If access remains unavailable, report the blocker. Further retries need a changed condition or new diagnostic evidence.
+3. Once GitHub is reachable, investigate authentication when the operation requires it, using `gh auth status --hostname github.com`. Complete browser authentication when credentials are missing. Report credential availability without printing tokens. A successful public issue read does not establish credentials for a push or issue mutation.
+
+## Bound discovery output
+
+List candidate tickets using compact metadata, then read the selected ticket. In the codebase, use `rg --files` to locate likely files and scope `rg -n` searches to the relevant directories or files. Read bounded sections around matches, expanding when dependencies require it. Narrow a truncated search or split a large read before relying on its output.
 
 ## Pull requests as a triage surface
 
@@ -31,7 +45,7 @@ Create a GitHub issue.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Use the read command and the ticket access procedure above.
 
 ## Wayfinding operations
 
