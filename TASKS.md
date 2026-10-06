@@ -114,3 +114,10 @@ Production deployment and mutations are outside this implementation request.
 - Browser verification used the authenticated local preview after restarting both services and user reauthentication. All 32 table intervals and counts matched the heatmap; selecting a four-volunteer interval confirmed matching names. Both sort modes, weekday/time ordering of count ties, and a read-only reload passed in the native browser.
 - Visually inspected the table at 1280×900, 390×844, and 320×740. At mobile widths, the 570px table content remained within 314px and 243px scroll areas; page widths stayed within the viewport. Horizontal scrolling revealed the names column. Restored the normal viewport and left Insights open. No application changes were needed.
 - Retained the separate sort/render functions: the small shared setup has different sort rules and row content, so a shared helper would add indirection without consolidating a domain rule.
+
+## Bounded table viewports on 2026-10-06
+
+- All tables use the shared scroll region, capped at the smaller of 28rem and 55vh. Column headers stay pinned during vertical scrolling; horizontal scrolling remains available. The region is named and keyboard-focusable. Short tables retain their natural height.
+- Browser layout checks exercised Schedule, Import availability, Insights, and Center proposals with 40 synthetic rows each at desktop and 390px mobile widths. Tables remained contained, headers stayed pinned, keyboard scrolling worked, and the Insights heatmap followed the bounded volunteer list. Removed the temporary fixture after verification.
+- Confirmed the authenticated local Schedule and Insights tables also remain bounded, and the short proposals table does not stretch. Restored the normal browser viewport and left Insights open. Import verification used synthetic responses without fetching live results or promoting availability.
+- Strict typechecking, all 12 client DOM tests, and the Vite client build passed.

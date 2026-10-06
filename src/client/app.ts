@@ -58,6 +58,7 @@ function form(parent: HTMLElement, label: string, action: () => Promise<void>) {
 function validRange(start: HTMLInputElement, end: HTMLInputElement) { end.setCustomValidity(start.value < end.value ? '' : 'End time must be later than start time.'); return end.reportValidity(); }
 function table(headers: string[], rows: (HTMLElement | string)[][]) {
   const wrapper = el('div', '', 'table-scroll'); const node = el('table'); const head = el('thead'); const heading = el('tr');
+  wrapper.tabIndex = 0; wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', `Table with ${headers.join(', ')} columns`);
   headers.forEach(title => { const cell = el('th', title); cell.scope = 'col'; heading.append(cell); }); head.append(heading); node.append(head);
   const body = el('tbody'); rows.forEach(row => { const line = el('tr'); row.forEach(value => { const cell = el('td'); cell.append(value); line.append(cell); }); body.append(line); }); node.append(body); wrapper.append(node); return wrapper;
 }
