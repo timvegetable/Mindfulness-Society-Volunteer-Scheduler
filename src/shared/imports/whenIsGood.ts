@@ -94,6 +94,76 @@ function jsonValues(html: string): unknown[] {
 
 type ParsedResults = { ok: true; participants: ImportParticipant[] } | { ok: false; error: string };
 
+type MappingIdentity = { kind: 'participantId' | 'email' | 'name'; value: string };
+type MappingIdentityFields = { sourceParticipantId?: string | null; sourceEmail?: string | null; sourceName?: string | null };
+
+export function normalizeImportEmail(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+export function normalizeImportName(value: string | null | undefined): string {
+  return value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? '';
+}
+
+function mappingIdentity(value: MappingIdentityFields): MappingIdentity | undefined {
+  if (value.sourceParticipantId) return { kind: 'participantId', value: value.sourceParticipantId };
+  const email = normalizeImportEmail(value.sourceEmail);
+  if (email) return { kind: 'email', value: email };
+  const name = normalizeImportName(value.sourceName);
+  return name ? { kind: 'name', value: name } : undefined;
+}
+
+/** Mapping rows use their strongest available identity; weaker fields are descriptive once a stronger key exists. */
+export function sameMappingIdentity(left: MappingIdentityFields, right: MappingIdentityFields): boolean {
+  const a = mappingIdentity(left);
+  const b = mappingIdentity(right);
+  return !!a && !!b && a.kind === b.kind && a.value === b.value;
+}
+
+/** Used to find the staged run affected by an upsert, using the same key precedence as mapping resolution. */
+export function participantMatchesMappingIdentity(participant: ImportParticipant, fields: MappingIdentityFields): boolean {
+  const identity = mappingIdentity(fields);
+  if (!identity) return false;
+  if (identity.kind === 'participantId') return participant.id === identity.value;
+  if (identity.kind === 'email') return normalizeImportEmail(participant.email) === identity.value;
+  return normalizeImportName(participant.name) === identity.value;
+}
+
+function frequencies(values: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const value of values) if (value) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return counts;
+}
+
+function mappingForParticipant(
+  participant: ImportParticipant,
+  mappings: ImportMapping[],
+  emailCounts: Map<string, number>,
+  nameCounts: Map<string, number>,
+): { found: false } | { found: true; mapping: ImportMapping | null } {
+  const lookup = (identity: MappingIdentity): { found: false } | { found: true; mapping: ImportMapping | null } => {
+    const matches = mappings.filter(mapping => {
+      const key = mappingIdentity(mapping);
+      return key?.kind === identity.kind && key.value === identity.value;
+    });
+    return matches.length ? { found: true, mapping: matches.length === 1 ? matches[0]! : null } : { found: false };
+  };
+
+  const participantId = lookup({ kind: 'participantId', value: participant.id });
+  if (participantId.found) return participantId;
+  const email = normalizeImportEmail(participant.email);
+  if (email && emailCounts.get(email) === 1) {
+    const byEmail = lookup({ kind: 'email', value: email });
+    if (byEmail.found) return byEmail;
+  }
+  const name = normalizeImportName(participant.name);
+  if (name && nameCounts.get(name) === 1) {
+    const byName = lookup({ kind: 'name', value: name });
+    if (byName.found) return byName;
+  }
+  return { found: false };
+}
+
 /** Read the site's data assignments as text; never execute third-party scripts. */
 function nativeResults(html: string, timeZone: string): ParsedResults | undefined {
   if (!/var\s+respondents\s*=\s*new Array\s*\(/.test(html)) return undefined;
@@ -183,17 +253,18 @@ export function parseWhenIsGood(html: string, timeZone: string): ParsedResults {
 
 export function stageParticipants(participants: ImportParticipant[], volunteers: Volunteer[], mappings: ImportMapping[]): { stagedAvailability: StagedParticipant[]; unmatched: ImportParticipant[]; matchedCount: number } {
   const volunteerIds = new Set(volunteers.map(volunteer => volunteer.id));
-  const normalize = (value: string | null | undefined) => value?.trim().toLowerCase() ?? '';
-  const normalizeName = (value: string) => normalize(value).replace(/\s+/g, ' ');
+  const sourceMappings = mappings.filter(mapping => mapping.source === 'whenIsGood');
+  const emailCounts = frequencies(participants.map(participant => normalizeImportEmail(participant.email)));
+  const nameCounts = frequencies(participants.map(participant => normalizeImportName(participant.name)));
   const stagedAvailability = participants.map(participant => {
-    const sourceMappings = mappings.filter(mapping => mapping.source === 'whenIsGood');
-    const mapping = sourceMappings.find(item => item.sourceParticipantId === participant.id)
-      ?? sourceMappings.find(item => !!participant.email && normalize(item.sourceEmail) === normalize(participant.email))
-      ?? sourceMappings.find(item => !!participant.name && !!item.sourceName && normalizeName(item.sourceName) === normalizeName(participant.name));
-    const emailMatches = participant.email ? volunteers.filter(volunteer => normalize(volunteer.email) === normalize(participant.email)) : [];
-    const nameMatches = normalizeName(participant.name)
-      ? volunteers.filter(volunteer => normalizeName(volunteer.name) === normalizeName(participant.name)) : [];
-    const volunteerId = mapping ? (volunteerIds.has(mapping.volunteerId) ? mapping.volunteerId : null)
+    const mappingResult = mappingForParticipant(participant, sourceMappings, emailCounts, nameCounts);
+    const email = normalizeImportEmail(participant.email);
+    const name = normalizeImportName(participant.name);
+    const emailMatches = email && emailCounts.get(email) === 1
+      ? volunteers.filter(volunteer => normalizeImportEmail(volunteer.email) === email) : [];
+    const nameMatches = name && nameCounts.get(name) === 1
+      ? volunteers.filter(volunteer => normalizeImportName(volunteer.name) === name) : [];
+    const volunteerId = mappingResult.found ? (mappingResult.mapping && volunteerIds.has(mappingResult.mapping.volunteerId) ? mappingResult.mapping.volunteerId : null)
       : emailMatches.length === 1 ? emailMatches[0]!.id
       : emailMatches.length === 0 && nameMatches.length === 1 ? nameMatches[0]!.id : null;
     return { ...participant, volunteerId };

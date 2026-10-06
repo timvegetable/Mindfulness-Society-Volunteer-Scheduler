@@ -231,6 +231,52 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     expect(state.importedAvailability).toMatchObject([{ volunteerId: 'volunteer-2', sourceParticipantId: 'a', importRunId: staged.import.id }]);
     expect(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'normal' })).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
   });
+  it('preserves distinct participant ID mappings for same-name participants through re-staging and promotion', async () => {
+    const app = await application();
+    app.setHtml(`<script>${JSON.stringify({ participants: [
+      { id: 'p1', name: 'Alex Lee', email: 'shared@example.test', availability: [{ weekday: 1, start: '09:00', end: '10:00' }] },
+      { id: 'p2', name: 'alex lee', email: ' SHARED@example.test ', availability: [{ weekday: 3, start: '13:00', end: '14:00' }] },
+    ] })}</script>`);
+    const staged = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'same-name' }));
+    expect(staged.import.stagedAvailability.map(({ id, volunteerId }) => [id, volunteerId])).toEqual([['p1', null], ['p2', null]]);
+
+    success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'p1', sourceEmail: 'shared@example.test', sourceName: 'Alex Lee', volunteerId: 'volunteer-1' }));
+    success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'p2', sourceEmail: 'shared@example.test', sourceName: 'alex lee', volunteerId: 'volunteer-2' }));
+    const mapped = await app.read();
+    expect(mapped.importMappings).toHaveLength(2);
+    expect(mapped.importMappings.map(({ sourceParticipantId, volunteerId }) => [sourceParticipantId, volunteerId])).toEqual(expect.arrayContaining([['p1', 'volunteer-1'], ['p2', 'volunteer-2']]));
+
+    const refreshed = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'same-name' }));
+    expect(refreshed.import.id).toBe(staged.import.id);
+    expect(refreshed.import.stagedAvailability.map(({ id, volunteerId }) => [id, volunteerId])).toEqual([['p1', 'volunteer-1'], ['p2', 'volunteer-2']]);
+    const promoted = success(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'same-name' }));
+    expect(promoted.import.status).toBe('completed');
+
+    const state = await app.read();
+    expect(state.importedAvailability.map(({ sourceParticipantId, volunteerId, weekday, start, end }) => [sourceParticipantId, volunteerId, weekday, start, end])).toEqual([
+      ['p1', 'volunteer-1', 1, '09:00', '10:00'], ['p2', 'volunteer-2', 3, '13:00', '14:00'],
+    ]);
+    expect(state.recurringAvailability.filter(({ volunteerId }) => volunteerId === 'volunteer-1' || volunteerId === 'volunteer-2').map(({ volunteerId, weekday, start, end }) => [volunteerId, weekday, start, end])).toEqual([
+      ['volunteer-1', 1, '09:00', '10:00'], ['volunteer-2', 3, '13:00', '14:00'],
+    ]);
+  });
+  it('normalizes name-only mapping keys consistently for upsert, re-staging and promotion', async () => {
+    const app = await application();
+    app.setHtml(`<script>${JSON.stringify({ participants: [
+      { id: 'legacy-id', name: 'Jamie  Doe', email: null, availability: [{ weekday: 5, start: '15:00', end: '16:00' }] },
+    ] })}</script>`);
+    const staged = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'normalized-name' }));
+    const first = success(await app.request('admin.import.mapping.upsert', { sourceName: '  JAMIE DOE ', volunteerId: 'volunteer-1' }));
+    const updated = success(await app.request('admin.import.mapping.upsert', { sourceName: 'jamie   doe', volunteerId: 'volunteer-2' }));
+    expect(updated.mapping.id).toBe(first.mapping.id);
+    expect((await app.read()).importMappings).toHaveLength(1);
+
+    const refreshed = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'normalized-name' }));
+    expect(refreshed.import.id).toBe(staged.import.id);
+    expect(refreshed.import.stagedAvailability[0]?.volunteerId).toBe('volunteer-2');
+    success(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'normalized-name' }));
+    expect((await app.read()).importedAvailability).toMatchObject([{ sourceParticipantId: 'legacy-id', volunteerId: 'volunteer-2', weekday: 5, start: '15:00', end: '16:00' }]);
+  });
   it('promotes reviewed content when a results page changes A to B and back to A', async () => {
     const app = await application();
     await app.db.prepare("UPDATE volunteers SET email='alice@example.test' WHERE id='volunteer-1'").run();

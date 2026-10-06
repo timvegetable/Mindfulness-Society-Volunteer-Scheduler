@@ -71,6 +71,24 @@ describe('participant matching', () => {
     ]);
     expect(result.stagedAvailability.map(item => item.volunteerId)).toEqual(['v2', 'v1']);
   });
+  it('normalizes weak mapping keys and leaves colliding participant identities unresolved', () => {
+    const result = stageParticipants([
+      { id: 'email-id', name: 'Email participant', email: ' PERSON@EXAMPLE.TEST ', intervals: [] },
+      { id: 'name-id', name: '  Jamie   Doe ', email: null, intervals: [] },
+    ], [volunteer('v1', 'one@example.test'), volunteer('v2', 'two@example.test')], [
+      { id: 'email-mapping', source: 'whenIsGood', sourceEmail: ' person@example.test ', sourceName: 'ignored', volunteerId: 'v1' },
+      { id: 'name-mapping', source: 'whenIsGood', sourceName: ' JAMIE DOE ', volunteerId: 'v2' },
+    ]);
+    expect(result.stagedAvailability.map(item => item.volunteerId)).toEqual(['v1', 'v2']);
+
+    const ambiguous = stageParticipants([
+      { id: 'first', name: 'First Person', email: 'shared@example.test', intervals: [] },
+      { id: 'second', name: 'Second Person', email: ' SHARED@example.test ', intervals: [] },
+    ], [volunteer('v1', 'shared@example.test')], [
+      { id: 'shared-email', source: 'whenIsGood', sourceEmail: ' shared@example.test ', volunteerId: 'v1' },
+    ]);
+    expect(ambiguous.stagedAvailability.map(item => item.volunteerId)).toEqual([null, null]);
+  });
   it('does not guess ambiguous email or name matches or apply another source mapping', () => {
     expect(stageParticipants(participants, [volunteer('v1', 'alice@example.test'), volunteer('v2', 'alice@example.test')], [{ id: 'm', source: 'other', sourceParticipantId: 'a', volunteerId: 'v1' }]).matchedCount).toBe(0);
   });

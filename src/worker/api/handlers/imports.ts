@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { ImportMapping, ImportRun, WeeklyInterval } from '../../../shared/domain/models';
 import { normalizeWeeklyIntervals } from '../../../shared/domain/intervals';
-import { parseWhenIsGood, stageParticipants } from '../../../shared/imports/whenIsGood';
+import { parseWhenIsGood, participantMatchesMappingIdentity, sameMappingIdentity, stageParticipants } from '../../../shared/imports/whenIsGood';
 import { WhenIsGoodClient } from '../../services/WhenIsGoodClient';
 import { IdGenerator } from '../../services/IdGenerator';
 import { AppError } from '../../../shared/api/errors';
@@ -53,18 +53,14 @@ export function upsertMapping(ctx: HandlerContext, input: MappingInput) {
   return Effect.gen(function* () {
     if (!ctx.state.volunteers.some((row) => row.id === input.volunteerId)) return yield* fail('NOT_FOUND', 'Volunteer not found.');
     const ids = yield* IdGenerator;
-    const existing = ctx.state.importMappings.find((row) => row.source === 'whenIsGood' && (
-      (input.sourceParticipantId && row.sourceParticipantId === input.sourceParticipantId)
-      || (input.sourceEmail && row.sourceEmail?.toLowerCase() === input.sourceEmail.toLowerCase())
-      || (input.sourceName && row.sourceName?.toLowerCase() === input.sourceName.toLowerCase())
-    ));
+    const existingMappings = ctx.state.importMappings.filter((row) => row.source === 'whenIsGood' && sameMappingIdentity(row, input));
+    if (existingMappings.length > 1) return yield* fail('CONFLICT', 'More than one mapping uses this participant identity.');
+    const existing = existingMappings[0];
     const mapping: ImportMapping = { ...existing, ...input, id: existing?.id ?? (yield* ids.next), source: 'whenIsGood',
       createdAt: existing?.createdAt ?? ctx.now.toISOString(), updatedAt: ctx.now.toISOString(), updatedBy: ctx.user.id };
     ctx.state.importMappings = [...ctx.state.importMappings.filter((row) => row.id !== mapping.id), mapping];
     const latest = latestStaged(ctx, (run) => run.stagedAvailability.some((participant) =>
-      (input.sourceParticipantId && participant.id === input.sourceParticipantId)
-      || (input.sourceEmail && participant.email?.toLowerCase() === input.sourceEmail.toLowerCase())
-      || (input.sourceName && participant.name.toLowerCase() === input.sourceName.toLowerCase())));
+      participantMatchesMappingIdentity(participant, input)));
     if (latest) {
       const participants = latest.stagedAvailability.map(({ volunteerId: _id, ...participant }) => participant);
       Object.assign(latest, stageParticipants(participants, ctx.state.volunteers, ctx.state.importMappings));
