@@ -127,6 +127,51 @@ describe('authorization, revisions and durable idempotency', () => {
 });
 
 describe('schedule publication and cancellation', () => {
+  it('uses the latest completed publication across reads, continuity, insights and cancellation', async () => {
+    const app = await application(); await addPublishedFixture(app);
+    await app.db.batch([
+      app.db.prepare("UPDATE volunteers SET readiness_rank=1 WHERE id IN ('volunteer-1','volunteer-2','volunteer-3')"),
+      ...[
+        { id: 'z-current', revision: 2, status: 'completed' },
+        { id: 'a-current', revision: 2, status: 'completed' },
+        { id: 'staged', revision: 3, status: 'staged' },
+        { id: 'failed', revision: 4, status: 'failed' },
+      ].map(run => app.db.prepare('INSERT INTO scheduling_runs (id,input_revision,output_revision,status) VALUES (?,0,?,?)').bind(run.id, run.revision, run.status)),
+      app.db.prepare("INSERT INTO assignments (id,session_id,volunteer_id,schedule_revision,status) VALUES ('current-assignment','session-1','volunteer-2',2,'assigned'),('staged-assignment','session-1','volunteer-1',3,'assigned'),('failed-assignment','session-1','volunteer-1',4,'assigned')"),
+      app.db.prepare("INSERT INTO backups (id,session_id,volunteer_id,schedule_revision,position,status) VALUES ('current-backup','session-1','volunteer-3',2,1,'available'),('staged-backup','session-1','volunteer-1',3,1,'available'),('failed-backup','session-1','volunteer-1',4,1,'available')"),
+    ]);
+    const before = await app.read();
+    const schedule = success(await app.request('admin.schedule.read'));
+    expect(schedule.run?.id).toBe('a-current');
+    expect(schedule.assignments.map(row => row.id)).toEqual(['current-assignment']);
+    expect(schedule.backups.map(row => row.id)).toEqual(['current-backup']);
+    expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).assignments).toEqual([]);
+    const preview = success(await app.request('admin.schedule.preview'));
+    expect(preview.output.assignments.find(row => row.sessionId === 'session-1')?.volunteerId).toBe('volunteer-2');
+    const insights = success(await app.request('admin.insights.read'));
+    expect(insights.leftoverVolunteers.map(row => row.id)).toContain('volunteer-1');
+    expect(insights.leftoverVolunteers.map(row => row.id)).not.toContain('volunteer-2');
+    expect(await app.read()).toEqual(before);
+    expect(await app.request('volunteer.assignment.cancel', { assignmentId: 'assignment-1' }, 'volunteer')).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
+    const cancelled = success(await app.request('volunteer.assignment.cancel', { assignmentId: 'current-assignment' }, 'multi'));
+    expect(cancelled.promotedAssignment).toMatchObject({ volunteerId: 'volunteer-3', scheduleRevision: 2 });
+    const after = await app.read();
+    expect(after.schedulingRuns).toHaveLength(5);
+    expect(after.assignments.filter(row => row.scheduleRevision !== 2)).toEqual(before.assignments.filter(row => row.scheduleRevision !== 2));
+    expect(after.backups.filter(row => row.scheduleRevision !== 2)).toEqual(before.backups.filter(row => row.scheduleRevision !== 2));
+  });
+  it('reports an absent schedule when publications are only staged or failed', async () => {
+    const app = await application(); await addPublishedFixture(app);
+    await app.db.batch([
+      app.db.prepare("UPDATE scheduling_runs SET status='staged'"),
+      app.db.prepare("INSERT INTO scheduling_runs (id,input_revision,output_revision,status) VALUES ('failed',0,2,'failed')"),
+    ]);
+    const before = await app.read();
+    expect(success(await app.request('admin.schedule.read'))).toMatchObject({ run: null, assignments: [], backups: [], shortfalls: [], stale: true });
+    expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).assignments).toEqual([]);
+    expect(await app.request('volunteer.assignment.cancel', { assignmentId: 'assignment-1' }, 'volunteer')).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
+    expect(await app.read()).toEqual(before);
+  });
   it('previews without writes, publishes matching output, retains history and reports stale inputs', async () => {
     const app = await application(); const before = await app.read();
     const preview = success(await app.request('admin.schedule.preview'));
