@@ -6,6 +6,7 @@
 .pi/
 skills-lock.json
 plan.md
+.impeccable/
 
 # Local build, database state, and private operator inputs
 node_modules/
@@ -16,5 +17,7 @@ dist/
 seed.sql
 !test/fixtures/seed.sql
 coverage/
+test-results/
+playwright-report/
 *.local.json
 *.local.sql

@@ -75,13 +75,16 @@ const names = (ids: string[], volunteers: readonly Volunteer[]) => ids.map(id =>
 
 function shell() {
   app.replaceChildren();
-  const header = el('header', '', 'header'); const brand = el('div', '', 'brand'); append(brand, el('span', '◌', 'brand-mark'), el('div', 'Mindfulness', 'brand-name'));
+  const header = el('header', '', 'header'); const brand = el('div', '', 'brand');
+  const logo = el('img', '', 'brand-logo'); logo.src = '/umd-mindfulness-icon.svg'; logo.alt = ''; logo.width = 48; logo.height = 48;
+  append(brand, logo, el('div', 'UMD Mindfulness Society', 'brand-name'));
   const identity = el('div', '', 'identity'); if (me) append(identity, el('span', me.user.email), button('Sign out', signOut, 'quiet'));
   append(header, brand, identity); app.append(header);
-  const main = el('main'); const intro = el('div', '', 'intro'); append(intro, el('p', 'VOLUNTEER COORDINATION', 'eyebrow'), el('h1', me ? 'Make room for meaningful work.' : 'A little time. A lasting difference.'), el('p', me ? 'Plan your time, coordinate sessions, and support your community.' : 'Sign in to manage your availability and help bring mindfulness to your community.', 'lede'));
-  main.append(intro); status = el('div', '', 'status'); status.role = 'alert'; status.tabIndex = -1; main.append(status);
+  const main = el('main');
+  if (me) main.append(el('h1', 'Volunteer scheduling', 'sr-only'));
+  else { const intro = el('div', '', 'intro'); intro.append(el('h1', 'Volunteer scheduling')); main.append(intro); }
+  status = el('div', '', 'status'); status.role = 'alert'; status.tabIndex = -1; main.append(status);
   nav = el('nav', '', 'tabs'); nav.setAttribute('aria-label', 'Workspace'); main.append(nav); content = el('div', '', 'content'); main.append(content); app.append(main);
-  app.append(el('footer', 'Mindfulness society · Time well shared'));
 }
 function signOut() { pageGeneration++; api.signOut(); me = undefined; activeTab = ''; window.google?.accounts.id.disableAutoSelect(); shell(); void signInView(); }
 async function signInView() {
@@ -180,35 +183,46 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [sessionTitle(session.title), session.date, timeRange(session.start, session.end), session.status]))) : empty(upcoming, 'No upcoming sessions.');
 }
 
+function scheduleSession(session: Session) {
+  const cell = el('div', '', 'schedule-session');
+  append(cell, el('span', sessionTitle(session.title), 'session-name'), el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
+  return cell;
+}
+function scheduleShortfall(count: number) {
+  return el('span', String(count), count > 0 ? 'shortfall has-shortfall' : 'shortfall');
+}
+
 function scheduleView(data: ResultOf<'admin.schedule.read'>) {
-  const publishedDescription = data.run ? `Published schedule ${data.run.outputRevision}` : 'No schedule has been published yet.';
-  const schedule = card('Session schedule'); content.append(schedule);
-  const description = el('p', publishedDescription, 'muted'); schedule.append(description);
-  const staleNotice = el('p', 'Availability or sessions have changed since publication. Review a fresh preview before publishing.', 'notice');
+  const publishedDescription = data.run ? `Published · Version ${data.run.outputRevision}` : 'Not yet published';
+  const schedule = card('Session schedule'); schedule.classList.add('schedule-panel'); content.append(schedule);
+  const heading = el('div', '', 'schedule-heading'); heading.append(schedule.querySelector('h2')!);
+  const description = el('p', publishedDescription, 'muted'); heading.append(description);
+  const toolbar = el('div', '', 'schedule-toolbar'); toolbar.append(heading); schedule.append(toolbar);
+  const staleNotice = el('p', 'Sessions or availability changed. Preview the updated schedule before publishing.', 'notice');
   if (data.stale) schedule.append(staleNotice);
   const scheduleArea = el('div'); let previewRevision: number | undefined;
-  const publish = button('Publish reviewed schedule', async () => { if (previewRevision === undefined) return; if (!confirmAction('Publish this reviewed schedule? This creates a new published schedule.')) return; await api.call('admin.schedule.rerun', {}, previewRevision); await showTab('schedule'); notify('The reviewed schedule has been published.'); }); publish.disabled = true; publish.hidden = true;
-  const back = button('Return to published schedule', () => renderPublished(), 'quiet'); back.hidden = true;
+  const publish = button('Publish schedule', async () => { if (previewRevision === undefined) return; if (!confirmAction('Publish this reviewed schedule? This creates a new published schedule.')) return; await api.call('admin.schedule.rerun', {}, previewRevision); await showTab('schedule'); notify('The reviewed schedule has been published.'); }); publish.disabled = true; publish.hidden = true;
+  const back = button('Back to published schedule', () => renderPublished(), 'quiet'); back.hidden = true;
   const previewButton = button('Preview schedule', async () => {
     const preview = await api.call('admin.schedule.preview', {});
     if (preview.dataRevision !== data.dataRevision) throw new ApiError('STALE_REVISION', 'Reload the schedule and review a new preview.');
     previewRevision = preview.dataRevision;
     schedule.querySelector('h2')!.textContent = 'Schedule preview';
-    description.textContent = 'Review these proposed assignments. The published schedule changes only when you publish.';
-    staleNotice.hidden = true; previewButton.textContent = 'Refresh preview'; back.hidden = false;
-    scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Ordered backups', 'Unfilled places'], data.sessions.filter(session => session.status !== 'cancelled').map(session => [
-      sessionText(session), names(preview.output.assignments.filter(item => item.sessionId === session.id).map(item => item.volunteerId), data.volunteers), names(preview.output.backups.filter(item => item.sessionId === session.id).sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), String(unfilledPlaces(session, preview.output.assignments.filter(item => item.sessionId === session.id).length)),
+    description.textContent = 'Preview · Unpublished changes';
+    staleNotice.hidden = true; previewButton.textContent = 'Refresh preview'; previewButton.classList.add('quiet'); back.hidden = false;
+    scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.filter(session => session.status !== 'cancelled').map(session => [
+      scheduleSession(session), names(preview.output.assignments.filter(item => item.sessionId === session.id).map(item => item.volunteerId), data.volunteers), names(preview.output.backups.filter(item => item.sessionId === session.id).sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, preview.output.assignments.filter(item => item.sessionId === session.id).length)),
     ])));
     publish.disabled = false; publish.hidden = false;
-  }, 'quiet');
-  append(schedule, append(el('div', '', 'actions'), previewButton, publish, back), scheduleArea);
+  });
+  toolbar.append(append(el('div', '', 'actions'), previewButton, publish, back)); schedule.append(scheduleArea);
   function renderPublished() {
     previewRevision = undefined; publish.disabled = true; publish.hidden = true; back.hidden = true;
-    previewButton.textContent = 'Preview schedule'; schedule.querySelector('h2')!.textContent = 'Session schedule';
+    previewButton.textContent = 'Preview schedule'; previewButton.classList.remove('quiet'); schedule.querySelector('h2')!.textContent = 'Session schedule';
     description.textContent = publishedDescription; staleNotice.hidden = false; scheduleArea.replaceChildren();
     if (!data.sessions.length) empty(scheduleArea, 'No sessions have been created. Confirm a center proposal to add one.');
-    else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Ordered backups', 'Unfilled places'], data.sessions.map(session => [
-      sessionText(session), session.status, names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), String(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
+    else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.map(session => [
+      scheduleSession(session), session.status, names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
     ])));
   }
   renderPublished();

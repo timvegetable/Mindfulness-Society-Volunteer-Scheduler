@@ -2,9 +2,22 @@ import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { connect } from 'node:net';
 import { parseArgs } from 'node:util';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const { values } = parseArgs({ options: { 'log-file': { type: 'string' } } });
-const log = values['log-file'] ? createWriteStream(values['log-file'], { flags: 'a', mode: 0o600 }) : undefined;
+const { values } = parseArgs({ options: { 'log-file': { type: 'string' }, browser: { type: 'boolean' }, check: { type: 'boolean' } } });
+const browserOnly = values.browser;
+const logFile = values['log-file'] ?? (browserOnly && !values.check ? join(tmpdir(), 'umd-browser-preview.log') : undefined);
+const log = logFile ? createWriteStream(logFile, { flags: 'a', mode: 0o600 }) : undefined;
+const urls = browserOnly ? ['http://localhost:5174/__browser-check'] : ['http://localhost:5173/', 'http://localhost:8787/client-config'];
+async function reachable(url) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
+    if (browserOnly) return response.ok && (await response.text()).includes('<title>Synthetic browser check</title>');
+    await response.body?.cancel();
+    return response.ok;
+  } catch { return false; }
+}
 const children = new Set();
 const env = { ...process.env, WRANGLER_WRITE_LOGS: 'false', WRANGLER_SEND_METRICS: 'false' };
 let stopping = false;
@@ -45,32 +58,37 @@ process.on('SIGTERM', () => stop(143));
 log?.on('error', error => { console.error('Preview log failed:', error.code); stop(1); });
 
 try {
-  for (const port of [5173, 8787]) {
+  if (values.check) {
+    const checks = await Promise.all(urls.map(reachable));
+    if (!checks.every(Boolean)) throw new Error('Preview unavailable; start the matching dev command before browser navigation.');
+    report(`Preview ready: ${urls.join(' and ')}`);
+    process.exit(0);
+  }
+  for (const port of browserOnly ? [5174] : [5173, 8787]) {
     if (await occupied(port)) throw new Error(`Port ${port} is occupied. Stop the existing preview before starting another.`);
   }
   if (stopping) throw new Error('Preview startup interrupted.');
-  // Wrangler needs the initial asset directory; no database initialization occurs.
-  const build = run(['exec', 'vite', 'build']);
-  const code = await new Promise(resolve => build.once('exit', resolve));
-  if (code !== 0 || stopping) throw new Error('Initial client build did not finish successfully.');
-  const worker = run(['run', 'dev:worker']);
-  const client = run(['run', 'dev:client']);
-  for (const child of [worker, client]) child.once('exit', code => {
+  const services = [];
+  if (browserOnly) services.push(run(['exec', 'vite', '--', '--config', 'vite.browser.config.ts', '--host', 'localhost']));
+  else {
+    // Wrangler needs the initial asset directory; no database initialization occurs.
+    const build = run(['exec', 'vite', 'build']);
+    const code = await new Promise(resolve => build.once('exit', resolve));
+    if (code !== 0 || stopping) throw new Error('Initial client build did not finish successfully.');
+    services.push(run(['run', 'dev:worker']), run(['run', 'dev:client']));
+  }
+  for (const child of services) child.once('exit', code => {
     if (!stopping) { report(`Preview service exited (${code ?? 'signal'}).`); stop(code || 1); }
   });
-  const urls = ['http://localhost:5173/', 'http://localhost:8787/client-config'];
   const deadline = Date.now() + 60_000;
   let ready = false;
   while (!stopping && Date.now() < deadline) {
-    const checks = await Promise.all(urls.map(async url => {
-      try { const response = await fetch(url, { signal: AbortSignal.timeout(1000) }); await response.body?.cancel(); return response.ok; }
-      catch { return false; }
-    }));
+    const checks = await Promise.all(urls.map(reachable));
     if (checks.every(Boolean)) { ready = true; break; }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   if (!stopping && !ready) throw new Error('Preview readiness timed out; inspect client and Worker diagnostics above.');
-  if (ready) report('Preview ready: client http://localhost:5173/ and Worker http://localhost:8787/');
+  if (ready) report(`Preview ready: ${urls.join(' and ')}${logFile ? ` · log ${logFile}` : ''}`);
 } catch (error) {
   if (!stopping) { report(error.message, true); stop(1); }
 }

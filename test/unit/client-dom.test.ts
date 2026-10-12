@@ -106,21 +106,21 @@ describe('client DOM behaviors', () => {
     expect(document.querySelector('tbody tr:last-child td:last-child')?.textContent).toBe('2');
     expect(document.querySelectorAll('table')).toHaveLength(1);
     expect(document.querySelector('h2')?.textContent).toBe('Schedule preview');
-    click('Return to published schedule'); await settle();
+    click('Back to published schedule'); await settle();
     expect(document.querySelectorAll('table')).toHaveLength(1);
     expect(document.querySelector('h2')?.textContent).toBe('Session schedule');
-    click('Preview schedule'); await settle(); click('Publish reviewed schedule'); await settle();
+    click('Preview schedule'); await settle(); click('Publish schedule'); await settle();
     expect(requests.find(item => item.operation === 'admin.schedule.rerun')?.expectedRevision).toBe(7);
   });
   it('blocks publication if preview and displayed session revisions differ', async () => {
     roles = ['administrator']; previewRevision = 8; confirmAnswer = true; await signIn(); click('Preview schedule'); await settle();
-    const publish = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === 'Publish reviewed schedule'); expect(publish?.disabled).toBe(true);
+    const publish = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === 'Publish schedule'); expect(publish?.disabled).toBe(true);
     expect(document.body.textContent).toContain('Reload this view'); expect(requests.some(item => item.operation === 'admin.schedule.rerun')).toBe(false);
   });
   it('offers only authorized centers and no administrative confirm controls to a contact', async () => {
     roles = ['center-contact']; await signIn();
     const options = [...document.querySelectorAll('option')].map(item => item.textContent);
-    expect(options).toContain('Authorized Center'); expect(options).not.toContain('Unauthorized Center'); expect(document.body.textContent).not.toContain('Publish reviewed schedule');
+    expect(options).toContain('Authorized Center'); expect(options).not.toContain('Unauthorized Center'); expect(document.body.textContent).not.toContain('Publish schedule');
   });
   it('shows numeric heatmap counts and participant details on selection', async () => {
     roles = ['administrator']; await signIn(); click('Insights'); await settle(); click('9:00 AM–10:00 AM · 1'); await settle();

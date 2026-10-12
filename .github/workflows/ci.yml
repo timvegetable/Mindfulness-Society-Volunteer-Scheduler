@@ -34,7 +34,20 @@ jobs:
         run: npm ci
       - name: Check types
         run: npm run check
+      - name: Check CSS formatting
+        run: npm run format:check
       - name: Run functional tests
         run: npm test
       - name: Build client and validate Worker deployment bundle
         run: npm run build
+      - name: Install browser test runtime
+        run: npx playwright install --with-deps chromium
+      - name: Check synthetic browser workflows
+        run: npm run test:browser
+      - name: Save browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: browser-failures
+          path: test-results/
+          if-no-files-found: ignore

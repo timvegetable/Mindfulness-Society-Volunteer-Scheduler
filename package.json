@@ -15,7 +15,11 @@
     "build": "vite build && wrangler deploy --dry-run",
     "db:init": "wrangler d1 execute DB --local --file=schema.sql",
     "db:seed:test": "wrangler d1 execute DB --local --file=test/fixtures/seed.sql",
-    "dev:browser": "vite --config vite.browser.config.ts --host localhost"
+    "dev:browser": "node scripts/dev.mjs --browser",
+    "dev:browser:status": "node scripts/dev.mjs --browser --check",
+    "test:browser": "playwright test",
+    "format:css": "prettier --write src/client/style.css",
+    "format:check": "prettier --check src/client/style.css"
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",
@@ -25,9 +29,11 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261004.1",
+    "@playwright/test": "^1.64.0",
     "@types/node": "^26.6.4",
     "happy-dom": "^20.14.5",
     "miniflare": "^5.20261001.0-alpha",
+    "prettier": "^3.9.10",
     "typescript": "^7.0.2",
     "vite": "^8.3.2",
     "vitest": "^5.0.3",

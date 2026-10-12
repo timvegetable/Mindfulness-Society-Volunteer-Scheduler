@@ -16,6 +16,10 @@ Use the single-context layout for domain docs. See `docs/agents/domain.md`.
 
 When implementing, debugging, or validating integrations, read [validation guidance](docs/agents/validation.md).
 
+### UI work
+
+For UI changes, read [product and brand context](PRODUCT.md) and [browser validation guidance](docs/agents/browser-validation.md). Give design tools a source-file target such as `src/client/app.ts`.
+
 ### Review
 
 When reviewing a change, read [coding standards](docs/CODING_STANDARDS.md) alongside its spec and subsequent user requirements.

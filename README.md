@@ -80,11 +80,15 @@ With placeholder credentials, Google sign-in and live imports are intentionally 
 ```sh
 npm test
 npm run check
+npm run format:check
+npm run test:browser
 npm run build
 npx wrangler deploy --dry-run
 ```
 
 `npm test` runs Vitest once, including real local D1 transaction tests. `check` runs strict TypeScript checking with unchecked-index protection. `build` builds the SPA and validates the Worker through Wrangler's deployment dry run; it does not deploy.
+
+`format:check` verifies the client stylesheet with Prettier. `test:browser` starts and stops its own synthetic preview and checks native Chromium layouts and navigation at desktop, tablet, and mobile sizes. Install its browser once with `npx playwright install chromium`; stop any manual preview on port 5174 first. See the [browser validation guide](docs/agents/browser-validation.md) for manual checks, logs, and failure artifacts. These browser tests require no credentials and do not exercise the Worker.
 
 Tests cover deterministic ranking and availability overlays, every role/operation combination, dated candidate confirmation, cancellation with live backup revalidation, import fixture parsing and atomic promotion, stale revisions, concurrent competing mutations, durable replay, and post-commit notification failures. See [TASKS.md](TASKS.md) for implementation and verification evidence.
 
