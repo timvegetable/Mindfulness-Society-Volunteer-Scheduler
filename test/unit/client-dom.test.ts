@@ -65,10 +65,34 @@ describe('client DOM behaviors', () => {
     configId = 'replace-with-public-google-client-id'; await mount();
     expect(document.body.textContent).toContain('Google sign-in is not configured yet'); expect(initialized).toBe(0);
   });
-  it('shows every authorized role tab and hides administrator views for a volunteer', async () => {
-    await signIn(); expect(document.querySelector('nav')?.textContent).toContain('My availability'); expect(document.querySelector('nav')?.textContent).not.toContain('Insights');
-    roles = ['volunteer', 'administrator', 'center-contact']; await signIn();
-    expect(document.querySelector('nav')?.textContent).toContain('Schedule'); expect(document.querySelector('nav')?.textContent).toContain('Center proposals'); expect(document.querySelector('nav')?.textContent).toContain('Insights');
+  it.each<{ authorizedRoles: Role[]; views: [string, string][] }>([
+    { authorizedRoles: ['volunteer'], views: [['My availability', 'Your assignments']] },
+    { authorizedRoles: ['administrator'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
+    { authorizedRoles: ['center-contact'], views: [['Center proposals', 'Center proposals']] },
+    { authorizedRoles: ['volunteer', 'administrator'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
+    { authorizedRoles: ['volunteer', 'center-contact'], views: [['My availability', 'Your assignments'], ['Center proposals', 'Center proposals']] },
+    { authorizedRoles: ['administrator', 'center-contact'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
+    { authorizedRoles: ['center-contact', 'administrator', 'volunteer'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
+  ])('navigates and reloads exactly the authorized views for $authorizedRoles', async ({ authorizedRoles, views }) => {
+    roles = authorizedRoles; await signIn();
+    expect([...document.querySelectorAll('nav button')].map(node => node.textContent)).toEqual([...views.map(([label]) => label), 'Reload view']);
+    const currentLabels = () => [...document.querySelectorAll('nav [aria-current="page"]')].map(node => node.textContent);
+    expect(currentLabels()).toEqual([views[0]![0]]);
+    for (const [label, heading] of views) {
+      click(label); await settle();
+      expect(currentLabels()).toEqual([label]);
+      expect(document.querySelector('.content h2')?.textContent).toBe(heading);
+      click('Reload view'); await settle();
+      expect(currentLabels()).toEqual([label]);
+      expect(document.querySelector('.content h2')?.textContent).toBe(heading);
+    }
+    click('Sign out'); await settle();
+    expect(document.querySelector('nav')?.textContent).toBe('');
+    expect(currentLabels()).toEqual([]);
+    expect(document.querySelector('.content h2')?.textContent).toBe('Welcome back');
+    roles = ['volunteer']; callback({ credential: 'another-credential' }); await settle();
+    expect([...document.querySelectorAll('nav button')].map(node => node.textContent)).toEqual(['My availability', 'Reload view']);
+    expect(currentLabels()).toEqual(['My availability']);
   });
   it('does not send a cancellation when confirmation is dismissed', async () => {
     await signIn(); click('Cancel assignment'); await settle();

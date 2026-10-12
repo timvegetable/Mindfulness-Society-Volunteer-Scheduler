@@ -83,7 +83,7 @@ function shell() {
   nav = el('nav', '', 'tabs'); nav.setAttribute('aria-label', 'Workspace'); main.append(nav); content = el('div', '', 'content'); main.append(content); app.append(main);
   app.append(el('footer', 'Mindfulness society · Time well shared'));
 }
-function signOut() { pageGeneration++; api.signOut(); me = undefined; window.google?.accounts.id.disableAutoSelect(); shell(); void signInView(); }
+function signOut() { pageGeneration++; api.signOut(); me = undefined; activeTab = ''; window.google?.accounts.id.disableAutoSelect(); shell(); void signInView(); }
 async function signInView() {
   const panel = card('Welcome back', 'Use your society-approved Google account to continue.'); content.append(panel);
   const target = el('div', '', 'google-signin'); panel.append(target);
@@ -117,13 +117,18 @@ function configureTabs() {
   if (roles.includes('volunteer')) tabs.push(['volunteer', 'My availability']);
   if (roles.includes('administrator')) tabs.push(['schedule', 'Schedule'], ['imports', 'Import availability'], ['insights', 'Insights']);
   if (roles.includes('administrator') || roles.includes('center-contact')) tabs.push(['candidates', 'Center proposals']);
-  tabs.forEach(([key, title]) => nav.append(button(title, () => showTab(key), 'tab')));
+  tabs.forEach(([key, title]) => {
+    const control = button(title, () => showTab(key), 'tab');
+    control.dataset.tab = key; nav.append(control);
+  });
   nav.append(button('Reload view', () => showTab(activeTab), 'quiet reload'));
   void execute(() => showTab(tabs[0]?.[0] ?? ''));
 }
 async function showTab(tab: string) {
   activeTab = tab; const generation = ++pageGeneration;
-  [...nav.querySelectorAll('.tab')].forEach((node, index) => { const keys = me!.user.roles.includes('volunteer') ? ['volunteer'] : []; if (me!.user.roles.includes('administrator')) keys.push('schedule', 'imports', 'insights'); keys.push('candidates'); node.setAttribute('aria-current', keys[index] === tab ? 'page' : 'false'); });
+  nav.querySelectorAll<HTMLButtonElement>('.tab').forEach(control => {
+    control.setAttribute('aria-current', control.dataset.tab === tab ? 'page' : 'false');
+  });
   content.replaceChildren(el('p', 'Loading…', 'empty')); content.setAttribute('aria-busy', 'true');
   try {
     if (tab === 'volunteer') { const data = await api.call('volunteer.dashboard', {}); if (generation === pageGeneration) { content.replaceChildren(); volunteerView(data); } }
