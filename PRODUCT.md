@@ -10,7 +10,7 @@ web
 
 Three co-primary groups use the scheduler:
 
-- **Volunteers** manage weekly availability and dated exceptions, view upcoming sessions and assignments, and cancel assignments when needed.
+- **Volunteers** review weekly availability imported from WhenIsGood and manage dated exceptions, view upcoming sessions and assignments, and cancel assignments when needed.
 - **Administrators** preview and publish schedules, review assignments, backups, and shortfalls, import availability, read staffing insights, and confirm center proposals.
 - **Center contacts** propose weekday session slots for their center, edit or withdraw unconfirmed proposals, and review advisory volunteer coverage.
 
@@ -24,7 +24,7 @@ Automated scheduling based on volunteer availability.
 
 ## Operating Context
 
-The mindfulness society runs sessions at three centers. Volunteers keep recurring weekly availability and date-specific exceptions. Administrators review a schedule preview before publishing or rerunning it, and can import availability from WhenIsGood. Center contacts propose weekday and time slots. Proposal coverage is advisory; confirming a proposal checks the actual upcoming date and creates one dated session rather than a permanent recurrence.
+The mindfulness society runs sessions at three centers. Volunteers submit weekly availability through WhenIsGood and review the imported times in the scheduler. They can add date-specific exceptions in the scheduler. Administrators review a schedule preview before publishing or rerunning it, and can import availability from WhenIsGood. Center contacts propose weekday and time slots. Proposal coverage is advisory; confirming a proposal checks the actual upcoming date and creates one dated session rather than a permanent recurrence.
 
 The configured defaults are America/New_York for time zone, 30 minutes for display increments, and 09:00–21:00 for operating hours.
 

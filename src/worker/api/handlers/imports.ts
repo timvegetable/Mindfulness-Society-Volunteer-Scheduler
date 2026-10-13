@@ -72,7 +72,7 @@ export function upsertMapping(ctx: HandlerContext, input: MappingInput) {
 export function promoteImport(ctx: HandlerContext, resultsCode: string) {
   return Effect.gen(function* () {
     const run = latestStaged(ctx, (row) => row.resultId === resultsCode);
-    if (!run) return yield* fail('NOT_FOUND', 'Preview this results code before promotion.');
+    if (!run) return yield* fail('NOT_FOUND', 'Preview the latest availability before importing.');
     const ids = yield* IdGenerator;
     const byVolunteer = new Map<string, WeeklyInterval[]>();
     for (const participant of run.stagedAvailability) {

@@ -1,5 +1,5 @@
 import { ApiClient, ApiError } from './api';
-import type { Candidate, Session, Volunteer, WeeklyInterval } from '../shared/domain/models';
+import type { Candidate, Session, Volunteer } from '../shared/domain/models';
 import type { ResultOf } from '../shared/api/schemas';
 
 declare global {
@@ -121,18 +121,20 @@ function configureTabs() {
   if (roles.includes('administrator')) tabs.push(['schedule', 'Schedule'], ['imports', 'Import availability'], ['insights', 'Insights']);
   if (roles.includes('administrator') || roles.includes('center-contact')) tabs.push(['candidates', 'Center proposals']);
   tabs.forEach(([key, title]) => {
-    const control = button(title, () => showTab(key), 'tab');
+    const control = button(title, () => key === activeTab ? refreshView(key) : showTab(key), 'tab');
     control.dataset.tab = key; nav.append(control);
   });
-  nav.append(button('Reload view', () => showTab(activeTab), 'quiet reload'));
+  nav.append(button('Reload view', () => refreshView(activeTab), 'quiet reload'));
   void execute(() => showTab(tabs[0]?.[0] ?? ''));
 }
-async function showTab(tab: string) {
+async function showTab(tab: string, keepContent = false) {
+  content.className = 'content';
   activeTab = tab; const generation = ++pageGeneration;
   nav.querySelectorAll<HTMLButtonElement>('.tab').forEach(control => {
     control.setAttribute('aria-current', control.dataset.tab === tab ? 'page' : 'false');
   });
-  content.replaceChildren(el('p', 'Loading…', 'empty')); content.setAttribute('aria-busy', 'true');
+  if (!keepContent) content.replaceChildren(el('p', 'Loading…', 'empty'));
+  content.setAttribute('aria-busy', 'true');
   try {
     if (tab === 'volunteer') { const data = await api.call('volunteer.dashboard', {}); if (generation === pageGeneration) { content.replaceChildren(); volunteerView(data); } }
     else if (tab === 'schedule') { const data = await api.call('admin.schedule.read', {}); if (generation === pageGeneration) { content.replaceChildren(); scheduleView(data); } }
@@ -142,42 +144,55 @@ async function showTab(tab: string) {
   } finally { if (generation === pageGeneration) content.setAttribute('aria-busy', 'false'); }
 }
 
+// Refresh saved data without collapsing the workspace or losing table position.
+async function refreshView(tab: string, message = '', focusSelector?: string) {
+  const top = content.getBoundingClientRect().top;
+  const tablePositions = [...content.querySelectorAll<HTMLElement>('.table-scroll')].map(region => ({ label: region.getAttribute('aria-label'), top: region.scrollTop, left: region.scrollLeft }));
+  const generation = pageGeneration + 1;
+  await showTab(tab, true);
+  if (activeTab !== tab || pageGeneration !== generation) return;
+  if (message) notify(message);
+  for (const [index, region] of [...content.querySelectorAll<HTMLElement>('.table-scroll')].entries()) {
+    const saved = tablePositions[index];
+    if (saved?.label === region.getAttribute('aria-label')) { region.scrollTop = saved.top; region.scrollLeft = saved.left; }
+  }
+  if (focusSelector) {
+    const target = content.querySelector<HTMLElement>(focusSelector);
+    if (target) { if (!target.matches('button, input, select, textarea')) target.tabIndex = -1; target.focus({ preventScroll: true }); }
+  }
+  window.scrollBy({ top: content.getBoundingClientRect().top - top, behavior: 'instant' });
+}
+
 function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
-  const assignments = card('Your assignments', `Welcome, ${data.volunteer.name}. Your confirmed commitments are listed below.`); content.append(assignments);
+  content.className = 'content volunteer-workspace';
+  const assignments = card('Your assignments'); assignments.classList.add('assignments-panel'); content.append(assignments);
   const rows = data.assignments.filter(item => item.status === 'assigned').map(assignment => {
     const session = data.sessions.find(item => item.id === assignment.sessionId);
     const cancel = button('Cancel assignment', async () => {
       if (!confirmAction(`Cancel your assignment for ${session ? sessionText(session) : 'this session'}? This will mark you unavailable for the session and notify the coordinator.`)) return;
       const reason = promptAction('Reason for cancellation (optional):') ?? '';
-      await api.call('volunteer.assignment.cancel', { assignmentId: assignment.id, reason }, data.dataRevision); await showTab('volunteer'); notify('Your assignment cancellation has been saved.');
+      await api.call('volunteer.assignment.cancel', { assignmentId: assignment.id, reason }, data.dataRevision); await refreshView('volunteer', 'Assignment cancelled.', '.assignments-panel h2');
     }, 'danger quiet');
-    return [session ? sessionText(session) : 'Session', cancel];
+    return [session ? scheduleSession(session) : 'Session', cancel];
   });
-  if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No assignments yet. Thank you for keeping your availability up to date.');
-  const recurring = card('Weekly availability', 'Add the times you can regularly help. Adjacent intervals will be combined when you save.'); content.append(recurring);
-  const edit = form(recurring, 'Save weekly availability', async () => {
-    const intervals: WeeklyInterval[] = [];
-    for (const row of intervalRows) {
-      if (!validRange(row.start, row.end)) return;
-      intervals.push({ weekday: Number(row.day.value) as WeeklyInterval['weekday'], start: row.start.value, end: row.end.value, timeZone: row.timeZone });
-    }
-    await api.call('volunteer.availability.recurring.update', { intervals }, data.dataRevision); await showTab('volunteer'); notify('Your weekly availability has been saved.');
-  });
-  const list = el('div', '', 'intervals'); const intervalRows: { node: HTMLElement; day: HTMLSelectElement; start: HTMLInputElement; end: HTMLInputElement; timeZone: string }[] = [];
-  const addInterval = (interval?: WeeklyInterval) => {
-    const node = el('div', '', 'interval-row'); const day = select(days.map((label, i) => [String(i + 1), label]), String(interval?.weekday ?? 1)); const start = input('time', interval?.start ?? '09:00'); const end = input('time', interval?.end ?? '12:00');
-    const row = { node, day, start, end, timeZone: interval?.timeZone ?? zone }; intervalRows.push(row);
-    append(node, field('Day', day), field('From', start), field('Until', end), button('Remove', () => { intervalRows.splice(intervalRows.indexOf(row), 1); node.remove(); }, 'quiet'));
-    list.append(node);
-    for (const control of [start, end]) control.addEventListener('input', () => end.setCustomValidity(''));
-  };
-  data.recurringAvailability.forEach(addInterval); append(edit.node, list, button('Add interval', () => addInterval(), 'quiet'), el('p', 'Saving an empty list clears weekly availability.', 'muted'), edit.submit);
-  const exceptions = card('A change of plans', 'Use a dated exception when one day differs from your usual week.'); content.append(exceptions);
+  if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No assignments.');
+  const recurring = card('Weekly availability', 'Update in WhenIsGood.'); content.append(recurring);
+  if (data.recurringAvailability.length) {
+    const saved = table(['Day', 'Time'], data.recurringAvailability.map(interval => [days[interval.weekday - 1]!, timeRange(interval.start, interval.end)]));
+    saved.querySelector('table')?.classList.add('weekly-availability-table'); recurring.append(saved);
+  } else empty(recurring, 'No weekly availability saved.');
+  const exceptions = card('Date exceptions'); content.append(exceptions);
   const date = input('date'); const kind = select([['unavailable', 'Unavailable'], ['available', 'Available']]); const start = input('time', '09:00'); const end = input('time', '12:00'); const reason = input('text', '', false);
-  const exceptionForm = form(exceptions, 'Save exception', async () => { if (!validRange(start, end)) return; await api.call('volunteer.availability.exception.create', { date: date.value, kind: kind.value as 'available' | 'unavailable', start: start.value, end: end.value, timeZone: zone, reason: reason.value }, data.dataRevision); await showTab('volunteer'); notify('Your dated exception has been saved.'); });
+  const exceptionForm = form(exceptions, 'Save exception', async () => {
+    if (!validRange(start, end)) return;
+    await api.call('volunteer.availability.exception.create', { date: date.value, kind: kind.value as 'available' | 'unavailable', start: start.value, end: end.value, timeZone: zone, reason: reason.value }, data.dataRevision);
+    await refreshView('volunteer', 'Exception saved.', '.exception-form button[type=submit]');
+  });
+  exceptionForm.node.classList.add('exception-form');
   append(exceptionForm.node, field('Date', date), field('Availability', kind), field('From', start), field('Until', end), field('Reason (optional)', reason), exceptionForm.submit);
   [start, end].forEach(control => control.addEventListener('input', () => end.setCustomValidity('')));
   if (data.availabilityExceptions.length) exceptions.append(table(['Date', 'Availability', 'Time', 'Reason'], data.availabilityExceptions.map(item => [item.date, item.kind, timeRange(item.start, item.end), item.reason ?? '—'])));
+  else empty(exceptions, 'No exceptions.');
   const upcoming = card('Upcoming sessions'); content.append(upcoming); const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const sessions = data.sessions.filter(session => session.date >= today && session.status !== 'cancelled').sort((a, b) => `${a.date}${a.start}`.localeCompare(`${b.date}${b.start}`));
   sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [sessionTitle(session.title), session.date, timeRange(session.start, session.end), session.status]))) : empty(upcoming, 'No upcoming sessions.');
@@ -201,7 +216,7 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
   const staleNotice = el('p', 'Sessions or availability changed. Preview the updated schedule before publishing.', 'notice');
   if (data.stale) schedule.append(staleNotice);
   const scheduleArea = el('div'); let previewRevision: number | undefined;
-  const publish = button('Publish schedule', async () => { if (previewRevision === undefined) return; if (!confirmAction('Publish this reviewed schedule? This creates a new published schedule.')) return; await api.call('admin.schedule.rerun', {}, previewRevision); await showTab('schedule'); notify('The reviewed schedule has been published.'); }); publish.disabled = true; publish.hidden = true;
+  const publish = button('Publish schedule', async () => { if (previewRevision === undefined) return; if (!confirmAction('Publish this reviewed schedule? This creates a new published schedule.')) return; await api.call('admin.schedule.rerun', {}, previewRevision); await refreshView('schedule', 'The reviewed schedule has been published.', '.schedule-toolbar button'); }); publish.disabled = true; publish.hidden = true;
   const back = button('Back to published schedule', () => renderPublished(), 'quiet'); back.hidden = true;
   const previewButton = button('Preview schedule', async () => {
     const preview = await api.call('admin.schedule.preview', {});
@@ -230,43 +245,43 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
 
 function candidatesView(data: ResultOf<'center.candidate.read'>) {
   const administrator = me!.user.roles.includes('administrator');
-  const panel = card('Center proposals', 'Propose the next weekday session for your center. Coverage is advisory; confirmation checks the actual upcoming date.'); content.append(panel);
+  const panel = el('section', '', 'card proposals-panel'); content.append(panel);
   let editing: Candidate | undefined;
-  const center = select(data.centers.filter(item => item.active).map(item => [item.id, item.name])); const day = select(days.slice(0, 5).map((label, i) => [String(i + 1), label])); const start = input('time', '09:00'); const end = input('time', '10:00'); const staff = select([['0', '0 volunteers'], ['1', '1 volunteer'], ['2', '2 volunteers']], '1'); const heading = el('h3', 'New proposal');
+  const center = select(data.centers.filter(item => item.active).map(item => [item.id, item.name])); const day = select(days.slice(0, 5).map((label, i) => [String(i + 1), label])); const start = input('time', '09:00'); const end = input('time', '10:00'); const staff = select([['0', '0 volunteers'], ['1', '1 volunteer'], ['2', '2 volunteers']], '1'); const heading = el('h2', 'New proposal');
   const editor = form(panel, 'Save proposal', async () => {
     if (!validRange(start, end)) return;
     await api.call('center.candidate.update', { ...(editing ? { candidateId: editing.id } : {}), centerId: center.value, weekday: Number(day.value) as 1 | 2 | 3 | 4 | 5, start: start.value, end: end.value, timeZone: editing?.timeZone ?? zone, requestedStaffCount: Number(staff.value) }, data.dataRevision);
-    await showTab('candidates'); notify('Proposal saved.');
+    await refreshView('candidates', 'Proposal saved.', '.proposal-form button[type=submit]');
   });
-  append(editor.node, heading, field('Center', center), field('Weekday', day), field('From', start), field('Until', end), field('Requested staffing', staff), editor.submit);
+  editor.node.classList.add('proposal-form');
+  const cancelEdit = button('Cancel editing', () => { editing = undefined; heading.textContent = 'New proposal'; editor.submit.textContent = 'Save proposal'; center.value = data.centers.find(item => item.active)?.id ?? ''; day.value = '1'; start.value = '09:00'; end.value = '10:00'; staff.value = '1'; end.setCustomValidity(''); cancelEdit.hidden = true; center.focus(); }, 'quiet'); cancelEdit.hidden = true;
+  const proposalActions = el('div', '', 'form-actions'); append(proposalActions, editor.submit, cancelEdit);
+  append(editor.node, heading, field('Center', center), field('Weekday', day), field('From', start), field('Until', end), field('Requested staffing', staff), proposalActions);
   [start, end].forEach(control => control.addEventListener('input', () => end.setCustomValidity('')));
   if (!data.centers.some(item => item.active)) { editor.submit.disabled = true; empty(panel, 'No active centers are available for proposals.'); }
   const rows = data.candidates.map(({ candidate, coverage }) => {
     const actions = el('div', '', 'actions');
     if (candidate.status === 'candidate') {
-      actions.append(button('Edit', () => { editing = candidate; heading.textContent = 'Edit proposal'; center.value = candidate.centerId; day.value = String(candidate.weekday); start.value = candidate.start; end.value = candidate.end; staff.value = String(candidate.requestedStaffCount); start.focus(); editor.node.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 'quiet'));
-      actions.append(button('Withdraw', async () => { if (!confirmAction('Withdraw this unconfirmed proposal?')) return; await api.call('center.candidate.update', { candidateId: candidate.id, status: 'cancelled' }, data.dataRevision); await showTab('candidates'); notify('Proposal withdrawn.'); }, 'quiet danger'));
-      if (administrator) actions.append(button('Confirm', async () => { if (!confirmAction(`Confirm ${data.centers.find(item => item.id === candidate.centerId)?.name ?? 'this center'} on the next ${days[candidate.weekday - 1]} at ${timeRange(candidate.start, candidate.end)}? This creates the next dated session.`)) return; await api.call('admin.center.candidate.confirm', { candidateId: candidate.id }, data.dataRevision); await showTab('candidates'); notify('Proposal confirmed and its next dated session created.'); }));
+      actions.append(button('Edit', () => { editing = candidate; heading.textContent = 'Edit proposal'; editor.submit.textContent = 'Save changes'; cancelEdit.hidden = false; end.setCustomValidity(''); center.value = candidate.centerId; day.value = String(candidate.weekday); start.value = candidate.start; end.value = candidate.end; staff.value = String(candidate.requestedStaffCount); start.focus(); editor.node.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'center' }); }, 'quiet'));
+      actions.append(button('Withdraw', async () => { if (!confirmAction('Withdraw this unconfirmed proposal?')) return; await api.call('center.candidate.update', { candidateId: candidate.id, status: 'cancelled' }, data.dataRevision); await refreshView('candidates', 'Proposal withdrawn.', '.proposal-list-heading'); }, 'quiet danger'));
+      if (administrator) actions.append(button('Confirm', async () => { if (!confirmAction(`Confirm ${data.centers.find(item => item.id === candidate.centerId)?.name ?? 'this center'} on the next ${days[candidate.weekday - 1]} at ${timeRange(candidate.start, candidate.end)}? This creates the next dated session.`)) return; await api.call('admin.center.candidate.confirm', { candidateId: candidate.id }, data.dataRevision); await refreshView('candidates', 'Proposal confirmed and its next dated session created.', '.proposal-list-heading'); }));
     }
     return [data.centers.find(item => item.id === candidate.centerId)?.name ?? 'Center', `${days[candidate.weekday - 1]} · ${timeRange(candidate.start, candidate.end)}`, String(candidate.requestedStaffCount), `${coverage.volunteers.length} available · ${coverage.shortfall} unfilled`, names(coverage.volunteers.map(item => item.id), coverage.volunteers), candidate.status, actions];
   });
-  if (rows.length) panel.append(table(['Center', 'Time', 'Staff requested', 'Advisory coverage', 'Volunteers', 'Status', 'Actions'], rows)); else empty(panel, 'No center proposals yet.');
+  panel.append(el('h2', 'Submitted proposals', 'proposal-list-heading'));
+  if (rows.length) panel.append(table(['Center', 'Time', 'Staff requested', 'Advisory coverage', 'Volunteers', 'Status', 'Actions'], rows)); else empty(panel, 'No proposals.');
 }
 
 function importsView(initialRevision: number, volunteers: readonly Volunteer[]) {
   const panel = card('Import availability', 'Import availability from WhenIsGood. Matching participants are linked automatically.'); content.append(panel);
   let revision = initialRevision;
   let reviewed: ResultOf<'admin.import.whenIsGood.preview'>['import'] | undefined;
-  let reviewedCode = '';
-  const resultsCode = input('text'); resultsCode.autocomplete = 'off';
   const resultArea = el('div');
-  const previewForm = form(panel, 'Preview results', async () => {
-    const code = resultsCode.value.trim();
-    const result = await api.call('admin.import.whenIsGood.preview', { resultsCode: code }, revision);
-    revision = result.dataRevision; reviewed = result.import; reviewedCode = code; renderImport();
+  const previewForm = form(panel, 'Preview latest availability', async () => {
+    const result = await api.call('admin.import.whenIsGood.preview', {}, revision);
+    revision = result.dataRevision; reviewed = result.import; renderImport();
   });
-  append(previewForm.node, field('WhenIsGood results code', resultsCode), previewForm.submit); panel.append(resultArea);
-  resultsCode.addEventListener('input', () => { reviewed = undefined; resultArea.replaceChildren(); });
+  previewForm.node.append(previewForm.submit); panel.append(resultArea);
   function renderImport() {
     if (!reviewed) return;
     const run = reviewed;
@@ -286,14 +301,14 @@ function importsView(initialRevision: number, volunteers: readonly Volunteer[]) 
       const mappingForm = form(mappingTarget, 'Save mapping', async () => {
         const result = await api.call('admin.import.mapping.upsert', { sourceParticipantId: participant.id, ...(participant.email ? { sourceEmail: participant.email } : {}), ...(participant.name ? { sourceName: participant.name } : {}), volunteerId: picker.value }, revision);
         revision = result.dataRevision;
-        const refreshed = await api.call('admin.import.whenIsGood.preview', { resultsCode: reviewedCode }, revision); revision = refreshed.dataRevision; reviewed = refreshed.import; renderImport(); notify('Mapping saved and the import preview refreshed.');
+        const refreshed = await api.call('admin.import.whenIsGood.preview', {}, revision); revision = refreshed.dataRevision; reviewed = refreshed.import; renderImport(); notify('Mapping saved and the import preview refreshed.');
       });
       append(mappingForm.node, field(`${participant.name} → volunteer`, picker), mappingForm.submit);
     }
     const promote = button('Import matched availability', async () => {
-      if (!reviewed || reviewedCode !== resultsCode.value.trim()) return;
+      if (!reviewed) return;
       if (!confirmAction(`Replace weekly availability for the ${reviewed.matchedCount ?? 0} matched participants? Unmatched participants will not be promoted.`)) return;
-      const result = await api.call('admin.import.whenIsGood.promote', { resultsCode: reviewedCode }, revision); revision = result.dataRevision; reviewed = result.import; renderImport(); notify('Matched availability has been promoted.');
+      const result = await api.call('admin.import.whenIsGood.promote', {}, revision); revision = result.dataRevision; reviewed = result.import; renderImport(); notify('Matched availability has been promoted.');
     });
     promote.disabled = !!run.promotedAt || !run.matchedCount;
     append(resultArea, el('p', 'Importing replaces weekly availability for all matched volunteers. Unmatched participants are skipped.', 'muted'), promote);

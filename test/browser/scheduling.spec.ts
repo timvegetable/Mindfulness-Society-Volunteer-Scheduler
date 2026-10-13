@@ -45,8 +45,8 @@ test('workspace tables stay contained and schedule preview returns to published 
   }
 
   await page.getByRole('button', { name: 'Import availability', exact: true }).click();
-  await page.getByLabel('WhenIsGood results code').fill('synthetic');
-  await page.getByRole('button', { name: 'Preview results', exact: true }).click();
+  await expect(page.getByLabel('WhenIsGood results code')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Preview latest availability', exact: true }).click();
   await expect(page.locator('.table-scroll')).toHaveCount(1);
   await checkLayout(page);
   await page.getByRole('button', { name: 'Insights', exact: true }).click();
@@ -56,4 +56,20 @@ test('workspace tables stay contained and schedule preview returns to published 
   await expect(page.locator('.table-scroll')).toHaveCount(1);
   await checkLayout(page);
   expect(errors).toEqual([]);
+});
+
+
+test('admin reload keeps the current reading position', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  await page.goto('/__browser-check?latency=50');
+  for (const view of ['Schedule', 'Insights', 'Center proposals']) {
+    await page.getByRole('button', { name: view, exact: true }).click();
+    await expect(page.locator('.content')).toHaveAttribute('aria-busy', 'false');
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const before = await page.evaluate(() => window.scrollY);
+    // Programmatic activation avoids scrolling up to the navigation button first.
+    await page.getByRole('button', { name: 'Reload view', exact: true }).evaluate(node => (node as HTMLButtonElement).click());
+    await expect(page.locator('.content')).toHaveAttribute('aria-busy', 'false');
+    expect(Math.abs(await page.evaluate(() => window.scrollY) - before)).toBeLessThanOrEqual(2);
+  }
 });

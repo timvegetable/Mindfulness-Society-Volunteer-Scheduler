@@ -1,4 +1,5 @@
 import { Effect, Schema } from 'effect';
+import { whenIsGoodSource } from '../../config';
 import { payloadSchemas, type Operation } from '../../../shared/api/schemas';
 import { computeInsights } from '../../../shared/domain/insights';
 import { canUseCenter } from '../policies';
@@ -23,8 +24,8 @@ export function handleOperation(operation: Operation, payload: unknown, ctx: Han
     case 'center.candidate.read': return Effect.succeed(readCandidates(ctx));
     case 'center.candidate.update': return updateCandidate(ctx, input('center.candidate.update'));
     case 'admin.center.candidate.confirm': return confirmCandidate(ctx, input('admin.center.candidate.confirm').candidateId);
-    case 'admin.import.whenIsGood.preview': return previewImport(ctx, input('admin.import.whenIsGood.preview').resultsCode);
-    case 'admin.import.whenIsGood.promote': return promoteImport(ctx, input('admin.import.whenIsGood.promote').resultsCode);
+    case 'admin.import.whenIsGood.preview': return previewImport(ctx, whenIsGoodSource.resultId);
+    case 'admin.import.whenIsGood.promote': return promoteImport(ctx, whenIsGoodSource.resultId);
     case 'admin.import.mapping.upsert': return upsertMapping(ctx, input('admin.import.mapping.upsert'));
     case 'admin.insights.read': return Effect.succeed(computeInsights(ctx.state, ctx.config));
   }

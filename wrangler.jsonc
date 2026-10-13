@@ -12,7 +12,6 @@
     "OPERATING_HOURS_END": "21:00",
     "OAUTH_CLIENT_ID": "replace-with-public-google-client-id",
     "ADMIN_EMAILS": "admin@example.invalid",
-    "WHENISGOOD_ENDPOINT": "https://example.invalid/results/{resultId}",
     "EMAIL_FROM": "Mindfulness Scheduler <scheduler@example.invalid>"
   }
 }

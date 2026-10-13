@@ -67,12 +67,12 @@ describe('client DOM behaviors', () => {
   });
   it.each<{ authorizedRoles: Role[]; views: [string, string][] }>([
     { authorizedRoles: ['volunteer'], views: [['My availability', 'Your assignments']] },
-    { authorizedRoles: ['administrator'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
-    { authorizedRoles: ['center-contact'], views: [['Center proposals', 'Center proposals']] },
-    { authorizedRoles: ['volunteer', 'administrator'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
-    { authorizedRoles: ['volunteer', 'center-contact'], views: [['My availability', 'Your assignments'], ['Center proposals', 'Center proposals']] },
-    { authorizedRoles: ['administrator', 'center-contact'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
-    { authorizedRoles: ['center-contact', 'administrator', 'volunteer'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'Center proposals']] },
+    { authorizedRoles: ['administrator'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['center-contact'], views: [['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['volunteer', 'administrator'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['volunteer', 'center-contact'], views: [['My availability', 'Your assignments'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['administrator', 'center-contact'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['center-contact', 'administrator', 'volunteer'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
   ])('navigates and reloads exactly the authorized views for $authorizedRoles', async ({ authorizedRoles, views }) => {
     roles = authorizedRoles; await signIn();
     expect([...document.querySelectorAll('nav button')].map(node => node.textContent)).toEqual([...views.map(([label]) => label), 'Reload view']);
@@ -182,8 +182,8 @@ describe('client DOM behaviors', () => {
   });
   it('imports matched participants together without requiring mapping saves', async () => {
     roles = ['administrator']; confirmAnswer = true; await signIn(); click('Import availability'); await settle();
-    const code = document.querySelector<HTMLInputElement>('input'); code!.value = 'synthetic-results';
-    const previewForm = code!.closest('form')!; previewForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+    expect(document.querySelector('input')).toBeNull();
+    click('Preview latest availability'); await settle();
     expect(document.body.textContent).toContain('All participants are matched. No mapping changes are needed.');
     expect(document.querySelector('details')?.open).toBe(false);
     click('Import matched availability'); await settle();

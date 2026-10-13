@@ -41,6 +41,8 @@ const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-
 
 const fixtureFetch: typeof fetch = async (input, init) => {
   if (input === '/client-config') return Response.json({ oauthClientId: 'synthetic.apps.googleusercontent.com', timeZone: 'America/New_York' });
+  const latency = Math.min(1000, Math.max(0, Number(new URLSearchParams(location.search).get('latency')) || 0));
+  if (latency) await new Promise(resolve => setTimeout(resolve, latency));
   if (input !== '/api') throw new Error('Synthetic workspace blocks external requests');
   const { operation } = JSON.parse(String(init?.body)) as { operation: string };
   let data: unknown;

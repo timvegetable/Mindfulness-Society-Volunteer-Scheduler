@@ -14,10 +14,12 @@ Resize the harness tab to the intended dimensions. Enter those dimensions in its
 
 ## Exercise each workflow
 
+For interactive volunteer and center-contact UI testing without Google sign-in, open `http://localhost:5174/__role-check`. Use the Test role selector to switch roles and Reset test data to restore the fixture. Weekly availability is shown read-only, with changes directed through WhenIsGood. Dated exceptions, assignment cancellation, and proposal creation/editing/withdrawal update fictional data in browser memory only. Switching roles or resetting clears those changes. The workspace uses the real client and response decoding with a simulated API; it does not verify Google authentication, Worker authorization, D1 persistence, email, or scheduling-rule correctness. The opt-in development route is excluded from production assets.
+
 At desktop and mobile sizes:
 
 1. Check Schedule, then use **Preview schedule** and **Back to published schedule**.
-2. Open Import availability, enter `synthetic`, and select **Preview results**. Check its participant table. This is synthetic staging, not an external fetch.
+2. Open Import availability, select **Preview latest availability**. Check its participant table. This is synthetic staging, not an external fetch.
 3. Open Insights and check both tables. Change overlap sorting between weekday/time and descending count. Inspect count ties and select a heatmap interval to compare its names and count with the table.
 4. Open Center proposals and check its table.
 5. Focus each scroll region with Tab, press End, and confirm rows scroll while the header stays pinned. Scroll horizontally to reveal trailing columns. These native keyboard checks supplement the report's programmatic scroll measurement.

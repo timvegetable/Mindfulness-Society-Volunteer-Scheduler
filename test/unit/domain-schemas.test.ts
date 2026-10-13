@@ -19,7 +19,7 @@ const payloads: Record<string, unknown> = {
   'session.me': {}, 'volunteer.dashboard': {}, 'volunteer.availability.recurring.update': { intervals: [weekly] },
   'volunteer.availability.exception.create': { date: '2026-10-05', kind: 'available', start: '10:00', end: '11:00', timeZone: 'America/New_York' },
   'volunteer.assignment.cancel': { assignmentId: 'a1' }, 'admin.schedule.read': {}, 'admin.schedule.preview': {}, 'admin.schedule.rerun': {},
-  'admin.import.whenIsGood.preview': { resultsCode: 'abc' }, 'admin.import.whenIsGood.promote': { resultsCode: 'abc' },
+  'admin.import.whenIsGood.preview': {}, 'admin.import.whenIsGood.promote': {},
   'admin.import.mapping.upsert': { sourceEmail: 'v@example.test', volunteerId: 'v1' },
   'admin.insights.read': {}, 'center.candidate.read': {}, 'center.candidate.update': { centerId: 'c1', ...weekly },
   'admin.center.candidate.confirm': { candidateId: 'c1' },

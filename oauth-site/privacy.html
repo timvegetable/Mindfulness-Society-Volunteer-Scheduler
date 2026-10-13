@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy policy · Mindfulness Society volunteer scheduler</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Mindfulness Society volunteer scheduler</p>
+    <h1>Privacy policy</h1>
+    <p>Last updated: October 12, 2026.</p>
+    <p>This policy describes the volunteer scheduler and its Scheduler Gmail Notifications component, operated for the Mindfulness Society.</p>
+    <h2>Information processed</h2>
+    <p>The scheduler processes volunteer names and email addresses, authorized user roles, center associations, weekly availability, dated exceptions, session proposals, assignments, cancellations, and scheduling history. When an administrator imports WhenIsGood results, it processes participant names, any provided email addresses, availability, and mapping information.</p>
+    <p>For Google sign-in, the application receives a Google sign-in credential, verifies its signature and verified email address, and uses that address to locate the authorized user in the society's roster. The browser holds the credential in memory until sign-out or a page reload; the application does not persist it in browser storage.</p>
+    <h2>Gmail access and notifications</h2>
+    <p>The operator separately authorizes the Gmail account used to send administrative notifications. The Gmail permission requested is <code>gmail.send</code>, which allows sending email on behalf of that account. The application does not request Gmail inbox, message-reading, or mailbox-management permissions.</p>
+    <p>The application stores the authorized sender's OAuth refresh credentials as server-side secrets and exchanges them for access tokens when sending notifications. Outgoing messages contain information about relevant scheduling or availability changes and are sent to the administrator recipients configured by the operator. Google processes these messages through Gmail, and recipients receive their contents.</p>
+    <h2>How information is used and shared</h2>
+    <p>Information is used to authenticate authorized users, calculate availability and schedules, manage staffing, display scheduling insights, import reviewed availability, and send administrative notifications. Authorized users can access the shared scheduling information made available to their roles.</p>
+    <p>Cloudflare hosts the application and its D1 database. Google provides sign-in and, when Gmail delivery is configured, email delivery. WhenIsGood supplies results pages requested by administrators. Hosting and email providers may process technical metadata, such as request times, IP addresses, and delivery information, under their own policies.</p>
+    <p>The application does not sell personal information or use Google user data for advertising or AI model training. Its use and transfer of information received from Google APIs adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+    <h2>Storage and protection</h2>
+    <p>Scheduling records and import history are stored in Cloudflare D1. Access requires an authorized account and is checked against server-side roles. Gmail credentials remain on the server and in private operator setup files, rather than being sent to volunteer browsers. Connections to Google and the deployed application use HTTPS.</p>
+    <p>Records remain until removed by the operator. Historical schedules and import provenance are retained to support administration; database backups and delivered emails may contain earlier copies. This application does not implement an automatic account or scheduling-history deletion period.</p>
+    <h2>Your choices and contact</h2>
+    <p>You can sign out of the scheduler and ask your center organizer or the scheduler administrator to correct or remove your stored information, or to end your access. The Gmail sender can revoke authorization through <a href="https://myaccount.google.com/permissions">Google Account connections</a>; this stops future Gmail notifications once Google invalidates the credentials, without deleting scheduling records or previously sent messages.</p>
+    <p>For privacy questions or requests, contact your center organizer or the scheduler administrator through your existing society contact channel.</p>
+    <h2>Changes</h2>
+    <p>Updates to this policy will be published on this page with a revised date.</p>
+    <p><a href="/">Return to the homepage</a></p>
+  </main>
+</body>
+</html>

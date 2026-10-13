@@ -3,9 +3,45 @@ import { describe, expect, it } from 'vitest';
 import { Clock, fixedClock } from '../../src/worker/services/Clock';
 import { IdGenerator, sequentialIds } from '../../src/worker/services/IdGenerator';
 import { makeResendEmail } from '../../src/worker/services/EmailService';
+import { makeGmailEmail } from '../../src/worker/services/GmailService';
 import { makeWhenIsGoodClient, MAX_IMPORT_BYTES } from '../../src/worker/services/WhenIsGoodClient';
 import { readBoundedText } from '../../src/worker/services/http';
 describe('external adapters with local fetch fakes', () => {
+  it('refreshes Gmail authorization and sends a Unicode notification as base64url MIME', async () => {
+    const requests: { url: string; init?: RequestInit }[] = [];
+    const service = makeGmailEmail({ clientId: 'client', clientSecret: 'secret', refreshToken: 'refresh', from: 'sender@gmail.com',
+      fetch: async (input, init) => { requests.push({ url: String(input), init });
+        return Response.json(requests.length === 1 ? { access_token: 'access' } : { id: 'sent' }); } });
+    const message = { to: ['admin@example.test'], subject: 'Availability — changed', text: 'José is available.\nNext line.' };
+    await Effect.runPromise(service.send(message));
+    expect(requests[0]?.url).toBe('https://oauth2.googleapis.com/token');
+    expect(String(requests[0]?.init?.body)).toContain('grant_type=refresh_token');
+    expect(requests[1]?.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/messages/send');
+    expect(requests[1]?.init?.headers).toMatchObject({ Authorization: 'Bearer access' });
+    const mime = Buffer.from(JSON.parse(String(requests[1]?.init?.body)).raw, 'base64url').toString('utf8');
+    expect(mime).toContain('From: sender@gmail.com\r\nTo: admin@example.test\r\n');
+    const encodedSubject = mime.match(/Subject: =\?UTF-8\?B\?(.+)\?=/)?.[1] ?? '';
+    expect(Buffer.from(encodedSubject, 'base64').toString('utf8')).toBe(message.subject);
+    expect(Buffer.from(mime.split('\r\n\r\n')[1] ?? '', 'base64').toString('utf8')).toBe(message.text);
+  });
+  it('reports Gmail authorization and delivery failures without sending after a rejected refresh', async () => {
+    for (const failRefresh of [true, false]) {
+      let calls = 0;
+      const service = makeGmailEmail({ clientId: 'client', clientSecret: 'secret', refreshToken: 'refresh', from: 'sender@gmail.com',
+        fetch: async () => { calls++; return calls === 1 && !failRefresh ? Response.json({ access_token: 'access' }) : new Response('', { status: 401 }); } });
+      await expect(Effect.runPromise(service.send({ to: ['admin@example.test'], subject: 'Test', text: 'Body' }))).rejects.toThrow('Administrative notification');
+      expect(calls).toBe(failRefresh ? 1 : 2);
+    }
+  });
+  it('rejects Gmail header injection and incomplete configuration before fetching', async () => {
+    for (const changes of [{ refreshToken: '' }, { from: 'sender@gmail.com\r\nBcc: other@example.test' }]) {
+      let fetched = false;
+      const service = makeGmailEmail({ clientId: 'client', clientSecret: 'secret', refreshToken: 'refresh', from: 'sender@gmail.com', ...changes,
+        fetch: async () => { fetched = true; return Response.json({}); } });
+      await expect(Effect.runPromise(service.send({ to: ['admin@example.test'], subject: 'Test', text: 'Body' }))).rejects.toThrow('Administrative notification');
+      expect(fetched).toBe(false);
+    }
+  });
   it('sends a configured notification and reports provider failure', async () => {
     const requests: { url: string; init?: RequestInit }[] = [];
     const service = makeResendEmail({ apiKey: 'fake-key', from: 'test@example.test', fetch: async (input, init) => { requests.push({ url: String(input), init }); return new Response('{}'); } });

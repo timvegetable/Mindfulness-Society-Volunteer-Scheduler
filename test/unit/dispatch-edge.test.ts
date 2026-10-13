@@ -117,23 +117,23 @@ describe('dispatch normalization, identity and failure boundaries', () => {
   it.each([[], {}])('permits explicitly empty import availability %j without calling it a parse failure', async (availability) => {
     const h = harness();
     h.setHtml(`<script>${JSON.stringify({ participants: [{ id: 'p1', name: 'Volunteer', email: 'v@example.test', availability }] })}</script>`);
-    const result = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.preview', { resultsCode: 'code' }, 'preview', 0, 'admin@example.test')));
+    const result = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.preview', {}, 'preview', 0, 'admin@example.test')));
     expect(result.ok).toBe(true); expect(result.data.import.status).toBe('staged');
     expect(result.data.import.stagedAvailability[0].intervals).toEqual([]);
   });
   it('retains valid parsed intervals when an import includes malformed intervals beside them', async () => {
     const h = harness();
     h.setHtml('<script>{"participants":[{"id":"p1","name":"Volunteer","email":"v@example.test","availability":[[1,"not-a-time","invalid"],[1,"10:00","11:00"]]}]}</script>');
-    const result = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.preview', { resultsCode: 'code' }, 'preview', 0, 'admin@example.test')));
+    const result = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.preview', {}, 'preview', 0, 'admin@example.test')));
     expect(result.data.import.status).toBe('staged');
     expect(result.data.import.stagedAvailability[0].intervals).toEqual([{ weekday: 1, start: '10:00', end: '11:00', timeZone: zone }]);
   });
   it('treats a malformed nonempty import availability payload as parse failure instead of destructive empty availability', async () => {
     const h = harness(); const before = structuredClone(h.state().recurringAvailability);
     h.setHtml('<script>{"participants":[{"id":"p1","name":"Volunteer","email":"v@example.test","availability":[[1,"not-a-time","also-invalid"]]}]}</script>');
-    const result = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.preview', { resultsCode: 'code' }, 'preview', 0, 'admin@example.test')));
+    const result = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.preview', {}, 'preview', 0, 'admin@example.test')));
     expect(result.ok).toBe(true); expect(result.data.import.status).toBe('failed');
-    const promoted = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.promote', { resultsCode: 'code' }, 'promote', 1, 'admin@example.test')));
+    const promoted = JSON.parse(await h.invoke(h.request('admin.import.whenIsGood.promote', {}, 'promote', 1, 'admin@example.test')));
     expect(promoted.ok).toBe(false); expect(h.state().recurringAvailability).toEqual(before);
   });
 });

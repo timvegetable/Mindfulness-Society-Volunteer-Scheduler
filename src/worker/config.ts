@@ -1,3 +1,6 @@
+// The scheduler imports from the society's single WhenIsGood results page.
+export const whenIsGoodSource = { endpoint: 'https://whenisgood.net/d7y3d5c/results/{resultId}', resultId: 'mx8t23j' };
+
 export interface AppConfig {
   timeZone: string;
   displayIncrementMinutes: number;

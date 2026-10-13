@@ -46,9 +46,10 @@ The fixture has three centers and five fictional volunteers. Tests create a sepa
 | `OPERATING_HOURS_START`, `OPERATING_HOURS_END` | `09:00`, `21:00` |
 | `OAUTH_CLIENT_ID` | Public Google Identity Services client ID |
 | `ADMIN_EMAILS` | Comma-separated administrative notification recipients |
-| `WHENISGOOD_ENDPOINT` | HTTPS URL template containing `{resultId}` |
 | `EMAIL_FROM` | Verified Resend sender address |
 | `EMAIL_API_KEY` | Resend API key, a Worker secret |
+| `EMAIL_PROVIDER` | `resend` by default; `gmail` selects Gmail API delivery |
+| `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Worker secrets for the authorized Gmail sender |
 
 For real local integrations, override placeholders in a private `.dev.vars` file. Configure Google Identity Services to allow the local Vite origin `http://localhost:5173`. The development command uses `localhost` to match the integration wizard; Google treats `127.0.0.1` as a different origin. The Worker verifies Google signatures with cached public JWKS, audience, issuer, expiration, and verified email, then reads the active user and roles from D1 for every request. Add authorized users to the private local seed; there is no anonymous or development authentication bypass.
 
@@ -73,7 +74,33 @@ npx vite build
 npx wrangler dev --local
 ```
 
-With placeholder credentials, Google sign-in and live imports are intentionally unavailable. Automated tests supply deterministic authentication, clock, IDs, captured email, and saved HTML through Effect services. They never send real email or fetch live WhenIsGood pages. The email adapter uses **Resend**; notification failure is logged after commit and does not undo a successful mutation.
+With placeholder credentials, Google sign-in and live imports are intentionally unavailable. Automated tests supply deterministic authentication, clock, IDs, captured email, and saved HTML through Effect services. They never send real email or fetch live WhenIsGood pages. Email uses **Resend** by default or **Gmail** when selected; notification failure is logged after commit and does not undo a successful mutation.
+
+### Gmail notifications without an owned domain
+
+Before publishing the Gmail OAuth app's audience, configure its Branding homepage and privacy-policy URLs with publicly reachable pages. `oauth-site/` contains an informational homepage and privacy policy, including a description of Scheduler Gmail Notifications. Review those disclosures before publication. They can be hosted as a separate static-only Worker without database or Gmail bindings; publishing that Worker requires explicit operator approval. Use the same privacy-policy URL in Branding and on the homepage. Providing these links does not itself establish Google domain ownership or complete app verification.
+
+Set `EMAIL_PROVIDER=gmail` and `EMAIL_FROM` to the plain Gmail address of the sending account. Gmail authorization is separate from application sign-in; volunteers do not grant Gmail access. Use a separate Google Cloud project with Gmail API enabled and a Desktop OAuth client. Configure its consent screen with the send-only `https://www.googleapis.com/auth/gmail.send` scope. For sustained delivery, authorize after setting publishing status to Production: Google issues seven-day refresh tokens for external apps left in Testing. Google's personal-use verification exception may apply when only the sending account authorizes the app; an unverified-app warning can remain. See [Google's verification exceptions](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification) and [token expiration guidance](https://developers.google.com/identity/protocols/oauth2#expiration).
+
+Publishing status and verification are separate: the personal-use Gmail project can remain unverified while its audience is In production. The YouTube demonstration is part of a sensitive-scope verification submission, which Google's personal-use exception does not require. If the console blocks publishing itself, inspect the Audience status and exact blocking message before starting verification. Leaving the project in Testing is suitable for temporary setup, but requires reauthorization after seven days.
+
+After creating the private production Wrangler config, download the Desktop client JSON and run locally:
+
+```sh
+node scripts/authorize-gmail.mjs /absolute/path/to/downloaded-client.json sender@gmail.com
+```
+
+This opens Google authorization with PKCE and a local loopback callback, saves the refresh credentials to ignored `gmail-secrets.production.local.json` with owner-only permissions, and updates the private production config's sender. Choose the same Gmail account as the supplied sender address. It sends no email and makes no Cloudflare changes. Keep both the downloaded client and saved credentials private. Reauthorize if access is revoked or the sender changes its Google password.
+
+After explicit approval to upload production secrets:
+
+```sh
+npx wrangler secret bulk gmail-secrets.production.local.json --config wrangler.production.local.json
+```
+
+For Gmail, skip the Resend key and domain setup in the production procedure below. Live email delivery remains a separate verification step. A `workers.dev` website address is sufficient; Gmail sends from the authorized account rather than that website domain.
+
+The WhenIsGood import uses the single society results page configured in `src/worker/config.ts`. Administrators preview the latest availability and confirm the import without entering a results code.
 
 ## Validation
 

@@ -13,8 +13,8 @@ const payloads: Record<Operation, unknown> = {
   'volunteer.availability.exception.create': { date: '2026-10-06', kind: 'unavailable', start: '10:00', end: '11:00', timeZone: interval.timeZone },
   'volunteer.assignment.cancel': { assignmentId: 'assignment-1' },
   'admin.schedule.read': {}, 'admin.schedule.preview': {}, 'admin.schedule.rerun': {},
-  'admin.import.whenIsGood.preview': { resultsCode: 'fixture-code' },
-  'admin.import.whenIsGood.promote': { resultsCode: 'fixture-code' },
+  'admin.import.whenIsGood.preview': {},
+  'admin.import.whenIsGood.promote': {},
   'admin.import.mapping.upsert': { sourceParticipantId: 'a', volunteerId: 'volunteer-1' },
   'admin.insights.read': {}, 'center.candidate.read': {},
   'center.candidate.update': { ...candidateInput, centerId: 'center-1' },
@@ -29,7 +29,7 @@ describe('every role against every public operation on local D1', () => {
   it.each(matrix)('$actor $operation allowed=$allowed', async ({ actor, operation, allowed }) => {
     const app = await application();
     await addPublishedFixture(app);
-    if (operation === 'admin.import.whenIsGood.promote') success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'fixture-code' }));
+    if (operation === 'admin.import.whenIsGood.promote') success(await app.request('admin.import.whenIsGood.preview', {}));
     const before = await app.read();
     const result = await app.request(operation, payloads[operation], actor);
     if (allowed) expect(result.ok, JSON.stringify(result)).toBe(true);
@@ -258,23 +258,32 @@ describe('candidate confirmation', () => {
 });
 
 describe('WhenIsGood staging, mappings and atomic promotion', () => {
+  it('uses the fixed society page and rejects caller-selected results pages without writes', async () => {
+    const app = await application(); const before = await app.read();
+    for (const operation of ['admin.import.whenIsGood.preview', 'admin.import.whenIsGood.promote'] as const) {
+      expect(await app.request(operation, { resultsCode: 'another-page' })).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+    }
+    expect(await app.read()).toEqual(before); expect(app.fetches).toEqual([]);
+    const staged = success(await app.request('admin.import.whenIsGood.preview'));
+    expect(app.fetches).toEqual(['mx8t23j']); expect(staged.import.resultId).toBe('mx8t23j');
+  });
   it('matches email, tracks unmatched participants, reuses identical staging, restages mapping overrides and promotes provenance', async () => {
     const app = await application(); await app.db.prepare("UPDATE volunteers SET email='alice@example.test' WHERE id='volunteer-1'").run();
     const original = await app.read();
-    const staged = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'normal' }));
+    const staged = success(await app.request('admin.import.whenIsGood.preview', {}));
     expect(staged.import).toMatchObject({ status: 'staged', participantCount: 2, matchedCount: 1 }); expect(staged.import.unmatched).toHaveLength(1);
     expect(staged.import.stagedAvailability.find(row => row.id === 'a')?.volunteerId).toBe('volunteer-1');
-    const reused = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'normal' })); expect(reused.import.id).toBe(staged.import.id); expect((await app.read()).imports).toHaveLength(1);
+    const reused = success(await app.request('admin.import.whenIsGood.preview', {})); expect(reused.import.id).toBe(staged.import.id); expect((await app.read()).imports).toHaveLength(1);
     success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'a', volunteerId: 'volunteer-2' }));
     const restaged = (await app.read()).imports[0]!; expect(restaged.stagedAvailability.find(row => row.id === 'a')?.volunteerId).toBe('volunteer-2');
     expect((await app.read()).recurringAvailability).toEqual(original.recurringAvailability);
-    const promoted = success(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'normal' }));
+    const promoted = success(await app.request('admin.import.whenIsGood.promote', {}));
     expect(promoted.import).toMatchObject({ status: 'completed', promotedBy: 'user-admin', promotedAt: '2026-10-04T12:00:00.000Z' }); expect(promoted.schedulingInputRevision).toBe(1);
     const state = await app.read();
     expect(state.recurringAvailability.filter(row => row.volunteerId === 'volunteer-2')).toMatchObject([{ weekday: 1, start: '09:00', end: '11:00', source: 'whenIsGood' }]);
     expect(state.recurringAvailability.filter(row => row.volunteerId !== 'volunteer-2')).toEqual(original.recurringAvailability.filter(row => row.volunteerId !== 'volunteer-2'));
     expect(state.importedAvailability).toMatchObject([{ volunteerId: 'volunteer-2', sourceParticipantId: 'a', importRunId: staged.import.id }]);
-    expect(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'normal' })).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
+    expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
   });
   it('preserves distinct participant ID mappings for same-name participants through re-staging and promotion', async () => {
     const app = await application();
@@ -282,7 +291,7 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
       { id: 'p1', name: 'Alex Lee', email: 'shared@example.test', availability: [{ weekday: 1, start: '09:00', end: '10:00' }] },
       { id: 'p2', name: 'alex lee', email: ' SHARED@example.test ', availability: [{ weekday: 3, start: '13:00', end: '14:00' }] },
     ] })}</script>`);
-    const staged = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'same-name' }));
+    const staged = success(await app.request('admin.import.whenIsGood.preview', {}));
     expect(staged.import.stagedAvailability.map(({ id, volunteerId }) => [id, volunteerId])).toEqual([['p1', null], ['p2', null]]);
 
     success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'p1', sourceEmail: 'shared@example.test', sourceName: 'Alex Lee', volunteerId: 'volunteer-1' }));
@@ -291,10 +300,10 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     expect(mapped.importMappings).toHaveLength(2);
     expect(mapped.importMappings.map(({ sourceParticipantId, volunteerId }) => [sourceParticipantId, volunteerId])).toEqual(expect.arrayContaining([['p1', 'volunteer-1'], ['p2', 'volunteer-2']]));
 
-    const refreshed = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'same-name' }));
+    const refreshed = success(await app.request('admin.import.whenIsGood.preview', {}));
     expect(refreshed.import.id).toBe(staged.import.id);
     expect(refreshed.import.stagedAvailability.map(({ id, volunteerId }) => [id, volunteerId])).toEqual([['p1', 'volunteer-1'], ['p2', 'volunteer-2']]);
-    const promoted = success(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'same-name' }));
+    const promoted = success(await app.request('admin.import.whenIsGood.promote', {}));
     expect(promoted.import.status).toBe('completed');
 
     const state = await app.read();
@@ -310,16 +319,16 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     app.setHtml(`<script>${JSON.stringify({ participants: [
       { id: 'legacy-id', name: 'Jamie  Doe', email: null, availability: [{ weekday: 5, start: '15:00', end: '16:00' }] },
     ] })}</script>`);
-    const staged = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'normalized-name' }));
+    const staged = success(await app.request('admin.import.whenIsGood.preview', {}));
     const first = success(await app.request('admin.import.mapping.upsert', { sourceName: '  JAMIE DOE ', volunteerId: 'volunteer-1' }));
     const updated = success(await app.request('admin.import.mapping.upsert', { sourceName: 'jamie   doe', volunteerId: 'volunteer-2' }));
     expect(updated.mapping.id).toBe(first.mapping.id);
     expect((await app.read()).importMappings).toHaveLength(1);
 
-    const refreshed = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'normalized-name' }));
+    const refreshed = success(await app.request('admin.import.whenIsGood.preview', {}));
     expect(refreshed.import.id).toBe(staged.import.id);
     expect(refreshed.import.stagedAvailability[0]?.volunteerId).toBe('volunteer-2');
-    success(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'normalized-name' }));
+    success(await app.request('admin.import.whenIsGood.promote', {}));
     expect((await app.read()).importedAvailability).toMatchObject([{ sourceParticipantId: 'legacy-id', volunteerId: 'volunteer-2', weekday: 5, start: '15:00', end: '16:00' }]);
   });
   it('promotes reviewed content when a results page changes A to B and back to A', async () => {
@@ -327,15 +336,15 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     await app.db.prepare("UPDATE volunteers SET email='alice@example.test' WHERE id='volunteer-1'").run();
     const html = (end: string) => `<script>{"participants":[{"id":"a","name":"Alice","email":"alice@example.test","availability":[{"weekday":1,"start":"09:00","end":"${end}"}]}]}</script>`;
     app.setHtml(html('10:00'));
-    const original = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'reverted' }));
+    const original = success(await app.request('admin.import.whenIsGood.preview', {}));
     app.setHtml(html('11:00'));
-    const changed = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'reverted' }));
+    const changed = success(await app.request('admin.import.whenIsGood.preview', {}));
     app.setHtml(html('10:00'));
-    const reviewed = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'reverted' }));
+    const reviewed = success(await app.request('admin.import.whenIsGood.preview', {}));
     expect(reviewed.import.id).not.toBe(original.import.id);
     expect(reviewed.import.contentHash).toBe(original.import.contentHash);
     expect(reviewed.import.contentHash).not.toBe(changed.import.contentHash);
-    const promoted = success(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'reverted' }, 'admin', { expectedRevision: reviewed.dataRevision }));
+    const promoted = success(await app.request('admin.import.whenIsGood.promote', {}, 'admin', { expectedRevision: reviewed.dataRevision }));
     expect(promoted.import.id).toBe(reviewed.import.id);
     expect((await app.read()).recurringAvailability.filter(row => row.volunteerId === 'volunteer-1')).toMatchObject([{ start: '09:00', end: '10:00' }]);
   });
@@ -345,18 +354,18 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     const stagedIds: string[] = [];
     for (let index = 0; index < 10; index++) {
       app.setHtml(`<script>{"participants":[{"id":"a","name":"Alice","email":"alice@example.test","availability":[{"weekday":1,"start":"09:00","end":"10:0${index}"}]}]}</script>`);
-      stagedIds.push(success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'changing' })).import.id);
+      stagedIds.push(success(await app.request('admin.import.whenIsGood.preview', {})).import.id);
     }
-    const promoted = success(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'changing' }));
+    const promoted = success(await app.request('admin.import.whenIsGood.promote', {}));
     expect(promoted.import.id).toBe(stagedIds.at(-1));
     expect((await app.read()).recurringAvailability.filter(row => row.volunteerId === 'volunteer-1')).toMatchObject([{ start: '09:00', end: '10:09' }]);
   });
   it('restages the latest applicable import rather than a newer unrelated import', async () => {
     const app = await application();
-    const applicable = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'applicable' }));
+    const applicable = success(await app.request('admin.import.whenIsGood.preview', {}));
     app.setHtml('<script>{"participants":[{"id":"unrelated","name":"Other Person","email":"other-person@example.test","availability":[{"weekday":2,"start":"09:00","end":"10:00"}]}]}</script>');
-    const unrelated = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'unrelated' }));
-    await app.db.prepare("UPDATE imports SET started_at='2026-10-04T12:01:00.000Z' WHERE id=?").bind(unrelated.import.id).run();
+    const unrelated = success(await app.request('admin.import.whenIsGood.preview', {}));
+    await app.db.prepare("UPDATE imports SET result_id='unrelated', started_at='2026-10-04T12:01:00.000Z' WHERE id=?").bind(unrelated.import.id).run();
     const unrelatedBefore = (await app.read()).imports.find(row => row.id === unrelated.import.id);
     success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'a', volunteerId: 'volunteer-2' }));
     const state = await app.read();
@@ -365,24 +374,24 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
   });
   it('parses alternate field names and preserves their normalized intervals during staging', async () => {
     const app = await application({ fixture: 'import-alternate.html' });
-    const staged = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'alternate' }));
+    const staged = success(await app.request('admin.import.whenIsGood.preview', {}));
     expect(staged.import.status).toBe('staged');
     expect(staged.import.stagedAvailability[0]).toMatchObject({ id: 'p1', name: 'Dana & Lee', email: 'dana@example.test' });
     expect(staged.import.stagedAvailability[0]!.intervals).toEqual(expect.arrayContaining([{ weekday: 1, start: '09:00', end: '11:00', timeZone: interval.timeZone }, { weekday: 2, start: '13:30', end: '15:00', timeZone: interval.timeZone }]));
   });
   it.each(['parse', 'fetch'] as const)('persists a failed %s import while leaving availability unchanged', async failure => {
     const app = await application(failure === 'parse' ? { fixture: 'import-invalid.html' } : { fetchFails: true }); const before = await app.read();
-    const result = success(await app.request('admin.import.whenIsGood.preview', { resultsCode: failure }));
+    const result = success(await app.request('admin.import.whenIsGood.preview', {}));
     expect(result.import.status).toBe('failed'); expect(result.import.diagnostic).toBeTruthy();
     const state = await app.read(); expect(state.recurringAvailability).toEqual(before.recurringAvailability); expect(state.schedulingInputRevision).toBe(0);
-    expect(await app.request('admin.import.whenIsGood.promote', { resultsCode: failure })).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
+    expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
   });
   it('rejects an entire promotion if any matched participant uses another time zone', async () => {
     const app = await application({ fixture: 'import-alternate.html' });
     success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'p1', volunteerId: 'volunteer-1' }));
-    success(await app.request('admin.import.whenIsGood.preview', { resultsCode: 'wrong-zone' }));
+    success(await app.request('admin.import.whenIsGood.preview', {}));
     const before = await app.read();
-    expect(await app.request('admin.import.whenIsGood.promote', { resultsCode: 'wrong-zone' })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
     expect(await app.read()).toEqual(before); expect((await app.read()).importedAvailability).toHaveLength(0);
   });
 });

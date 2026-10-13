@@ -8,6 +8,15 @@ export default mergeConfig(base, defineConfig({
     name: 'synthetic-browser-workspace',
     apply: 'serve',
     configureServer(server) {
+      server.middlewares.use('/__role-check', async (_request, response, next) => {
+        try {
+          const html = await server.transformIndexHtml('/__role-check', `<!doctype html>
+            <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Synthetic role UI check</title></head>
+            <body><aside id="role-check"></aside><div id="app"></div><script type="module" src="/test/browser/role-workspace.ts"></script></body></html>`);
+          response.setHeader('Content-Type', 'text/html');
+          response.end(html);
+        } catch (error) { next(error); }
+      });
       server.middlewares.use('/__browser-check', async (_request, response, next) => {
         try {
           const html = await server.transformIndexHtml('/__browser-check', `<!doctype html>
