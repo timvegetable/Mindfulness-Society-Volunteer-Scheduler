@@ -1,4 +1,4 @@
-import type { Snapshot } from '../../shared/domain/models';
+import type { Snapshot, StagedParticipant } from '../../shared/domain/models';
 
 type TableKey = Exclude<keyof Snapshot, 'dataRevision' | 'schedulingInputRevision'>;
 type SqlValue = string | number | null;
@@ -42,6 +42,10 @@ function property(column: string): string {
 
 function decodeJson(table: Table, column: string, value: unknown): unknown {
   const decoded: unknown = JSON.parse(typeof value === 'string' ? value : '[]');
+  // Legacy imports stored flat provenance intervals rather than participant records.
+  if (table.name === 'imports' && column === 'staged_availability' && Array.isArray(decoded)) {
+    return restoreLegacyParticipants(decoded);
+  }
   // Older scheduling runs persisted the missing staff count as "unfilled".
   if (table.name === 'scheduling_runs' && column === 'shortfalls' && Array.isArray(decoded)) {
     return decoded.map(item => {
@@ -53,6 +57,31 @@ function decodeJson(table: Table, column: string, value: unknown): unknown {
     });
   }
   return decoded;
+}
+
+function restoreLegacyParticipants(rows: unknown[]): unknown[] {
+  const participants = new Map<string, Omit<StagedParticipant, 'intervals'> & { intervals: unknown[] }>();
+  const restored: unknown[] = [];
+  for (const row of rows) {
+    if (typeof row !== 'object' || row === null || 'intervals' in row
+      || !('id' in row) || typeof row.id !== 'string'
+      || !('volunteerId' in row) || typeof row.volunteerId !== 'string'
+      || !('weekday' in row) || !('start' in row) || !('end' in row) || !('timeZone' in row)) {
+      restored.push(row); continue;
+    }
+    const id = 'sourceParticipantId' in row && typeof row.sourceParticipantId === 'string' && row.sourceParticipantId
+      ? row.sourceParticipantId : row.id;
+    const key = JSON.stringify([id, row.volunteerId]);
+    let participant = participants.get(key);
+    if (!participant) {
+      participant = { id, name: '', email: null, volunteerId: row.volunteerId, intervals: [] };
+      participants.set(key, participant); restored.push(participant);
+    }
+    // Preserve interval values for the normal response schema to validate.
+    const interval = { weekday: row.weekday, start: row.start, end: row.end, timeZone: row.timeZone };
+    participant.intervals.push(interval);
+  }
+  return restored;
 }
 
 export function decodeRow(table: Table, row: Record<string, unknown>): Record<string, unknown> {

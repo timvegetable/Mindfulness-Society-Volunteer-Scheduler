@@ -21,6 +21,28 @@ const sync = async (app: Application) => {
 };
 
 describe('automatic availability synchronization through local D1', () => {
+  it('keeps legacy interval-shaped import history readable before and after a scheduled check', async () => {
+    const app = await application(); app.setHtml(source());
+    const legacy = [
+      { id: 'old-slot-1', volunteerId: 'volunteer-1', sourceParticipantId: 'alex-source', source: 'whenIsGood', weekday: 1, start: '10:00', end: '11:00', timeZone: 'America/New_York', importedAt: '2026-10-01T12:00:00Z', importRunId: 'old-run' },
+      { id: 'old-slot-2', volunteerId: 'volunteer-1', sourceParticipantId: 'alex-source', source: 'whenIsGood', weekday: 1, start: '11:00', end: '12:00', timeZone: 'America/New_York', importedAt: '2026-10-01T12:00:00Z', importRunId: 'old-run' },
+      { id: 'old-slot-3', volunteerId: 'volunteer-1', sourceParticipantId: 'other-source', source: 'whenIsGood', weekday: 2, start: '13:00', end: '14:00', timeZone: 'America/New_York', importedAt: '2026-10-01T12:00:00Z', importRunId: 'old-run' },
+    ];
+    await app.db.prepare("INSERT INTO imports (id,source,content_hash,status,result_id,unmatched,staged_availability) VALUES ('old-run','whenIsGood','old-hash','completed','mx8t23j','[]',?)").bind(JSON.stringify(legacy)).run();
+    const before = success(await app.request('admin.sync.read'));
+    expect(before.imports[0]?.stagedAvailability).toEqual([
+      { id: 'alex-source', name: '', email: null, volunteerId: 'volunteer-1', intervals: [
+        { weekday: 1, start: '10:00', end: '11:00', timeZone: 'America/New_York' },
+        { weekday: 1, start: '11:00', end: '12:00', timeZone: 'America/New_York' },
+      ] },
+      { id: 'other-source', name: '', email: null, volunteerId: 'volunteer-1', intervals: [{ weekday: 2, start: '13:00', end: '14:00', timeZone: 'America/New_York' }] },
+    ]);
+    await Effect.runPromise(synchronize(testConfig, synchronizationSystemActor).pipe(Effect.provide(app.layer)));
+    const after = success(await app.request('admin.sync.read'));
+    expect(after.status.outcome).toBe('changed');
+    expect(after.imports.find(row => row.id === 'old-run')).toEqual(before.imports[0]);
+    expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).recurringAvailability).toMatchObject([{ weekday: 1, start: '10:00', end: '12:00' }]);
+  });
   it('treats normalized unchanged checks as successful without adding history, provenance or revisions', async () => {
     const app = await application(); app.setHtml(source());
     success(await sync(app)); const first = await app.read();
