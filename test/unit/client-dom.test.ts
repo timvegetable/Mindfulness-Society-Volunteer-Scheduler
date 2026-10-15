@@ -16,6 +16,7 @@ let confirmAnswer: boolean;
 let previewRevision: number;
 let configId: string;
 let initialized: number;
+let dashboardRead: Promise<void> | undefined;
 let insightsGrid: { weekday: number; start: string; end: string; count: number; volunteers: typeof volunteer[] }[];
 const click = (label: string) => {
   const node = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === label);
@@ -28,15 +29,13 @@ async function mount() {
     const body = JSON.parse(String(init?.body)) as { operation: string; expectedRevision?: number }; requests.push(body);
     let data: unknown;
     if (body.operation === 'session.me') data = { ...base, user: { id: 'u1', email: volunteer.email, roles, volunteerId: 'v1', centerIds: ['c1'], active: true }, centers: [center] };
-    else if (body.operation === 'volunteer.dashboard') data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session] };
+    else if (body.operation === 'volunteer.dashboard') { await dashboardRead; data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session] }; }
     else if (body.operation === 'admin.schedule.read' || body.operation === 'admin.schedule.rerun') data = { ...base, run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [session, { ...session, id: 's2', title: 'Center session: Another center', requiredStaffCount: 2 }], volunteers: [volunteer], stale: false };
     else if (body.operation === 'admin.schedule.preview') data = { ...base, dataRevision: previewRevision, output: { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } };
     else if (body.operation === 'center.candidate.read') data = { ...base, centers: [center], candidates: [] };
-    else if (body.operation === 'admin.import.whenIsGood.preview' || body.operation === 'admin.import.whenIsGood.promote') data = {
-      ...base, import: { id: 'import1', source: 'whenIsGood', contentHash: 'synthetic', status: body.operation.endsWith('promote') ? 'completed' : 'staged',
-        participantCount: 1, matchedCount: 1, unmatched: [], stagedAvailability: [{ id: 'p1', name: volunteer.name, email: null, volunteerId: volunteer.id, intervals: [] }],
-        ...(body.operation.endsWith('promote') ? { promotedAt: '2026-10-05T12:00:00Z' } : {}) },
-    };
+    else if (body.operation === 'admin.sync.read' || body.operation === 'admin.sync.now') data = { ...base,
+      status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
+      ...(body.operation === 'admin.sync.read' ? { pending: [], imports: [], volunteers: [volunteer], mappings: [] } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
     else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));
@@ -44,12 +43,23 @@ async function mount() {
 }
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
-  requests = []; roles = ['volunteer']; confirmAnswer = false; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0;
+  requests = []; roles = ['volunteer']; confirmAnswer = false; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined;
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
 });
 async function signIn() { await mount(); callback({ credential: 'fake-credential' }); await settle(); }
 describe('client DOM behaviors', () => {
+  it('keeps edits entered while Reload view is waiting for saved data', async () => {
+    await signIn();
+    let release!: () => void;
+    dashboardRead = new Promise<void>(resolve => { release = resolve; });
+    click('Reload view'); await settle();
+    const date = document.querySelector<HTMLInputElement>('input[type=date]')!;
+    date.value = '2099-10-20'; date.dispatchEvent(new Event('input', { bubbles: true }));
+    release(); await settle();
+    expect(document.querySelector<HTMLInputElement>('input[type=date]')?.value).toBe('2099-10-20');
+    expect(document.querySelector('[role=alert]')?.textContent).toContain('newer edits were kept');
+  });
   it('shows a rejected sign-in explanation and lets the user try again', async () => {
     await startClient({ fetch: async input => new Response(JSON.stringify(input === '/client-config'
       ? { oauthClientId: configId }
@@ -67,12 +77,12 @@ describe('client DOM behaviors', () => {
   });
   it.each<{ authorizedRoles: Role[]; views: [string, string][] }>([
     { authorizedRoles: ['volunteer'], views: [['My availability', 'Your assignments']] },
-    { authorizedRoles: ['administrator'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['administrator'], views: [['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
     { authorizedRoles: ['center-contact'], views: [['Center proposals', 'New proposal']] },
-    { authorizedRoles: ['volunteer', 'administrator'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['volunteer', 'administrator'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
     { authorizedRoles: ['volunteer', 'center-contact'], views: [['My availability', 'Your assignments'], ['Center proposals', 'New proposal']] },
-    { authorizedRoles: ['administrator', 'center-contact'], views: [['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
-    { authorizedRoles: ['center-contact', 'administrator', 'volunteer'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Import availability', 'Import availability'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['administrator', 'center-contact'], views: [['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['center-contact', 'administrator', 'volunteer'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
   ])('navigates and reloads exactly the authorized views for $authorizedRoles', async ({ authorizedRoles, views }) => {
     roles = authorizedRoles; await signIn();
     expect([...document.querySelectorAll('nav button')].map(node => node.textContent)).toEqual([...views.map(([label]) => label), 'Reload view']);
@@ -180,16 +190,15 @@ describe('client DOM behaviors', () => {
     click('9:00 AM–9:30 AM · 0'); await settle();
     expect(document.querySelector('.cell-details')?.textContent).toContain('No volunteers are available in this interval.');
   });
-  it('imports matched participants together without requiring mapping saves', async () => {
-    roles = ['administrator']; confirmAnswer = true; await signIn(); click('Import availability'); await settle();
-    expect(document.querySelector('input')).toBeNull();
-    click('Preview latest availability'); await settle();
-    expect(document.body.textContent).toContain('All participants are matched. No mapping changes are needed.');
-    expect(document.querySelector('details')?.open).toBe(false);
-    click('Import matched availability'); await settle();
-    expect(requests.some(item => item.operation === 'admin.import.whenIsGood.promote')).toBe(true);
-    expect(requests.some(item => item.operation === 'admin.import.mapping.upsert')).toBe(false);
+  it('synchronizes matched participants without requiring preview, mapping or promotion', async () => {
+    roles = ['administrator']; await signIn(); click('Availability sync'); await settle();
+    expect(document.body.textContent).toContain('All current participants are matched. No links are needed.');
+    click('Sync now'); await settle();
+    expect(document.body.textContent).toContain('Availability is up to date.');
+    expect(requests.some(item => item.operation === 'admin.sync.now')).toBe(true);
+    expect(requests.some(item => item.operation.includes('promote') || item.operation.includes('whenIsGood.preview'))).toBe(false);
   });
+
   it('signs out and removes role views', async () => {
     await signIn(); click('Sign out'); await settle(); expect(document.querySelector('nav')?.textContent).toBe(''); expect(document.body.textContent).toContain('Welcome back');
   });

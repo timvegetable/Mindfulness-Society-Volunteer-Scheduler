@@ -34,8 +34,20 @@ export interface SchedulingRun {
   id: string; inputRevision: number; outputRevision: number; status: 'staged' | 'completed' | 'failed';
   startedAt?: string | null; completedAt?: string | null; assignmentIds: string[]; backupIds: string[]; shortfalls: Shortfall[]; diagnostic?: string | null;
 }
-export interface ImportParticipant { id: string; name: string; email: string | null; intervals: WeeklyInterval[] }
-export interface StagedParticipant extends ImportParticipant { volunteerId: string | null }
+export interface ImportParticipant { id: string; name: string; email: string | null; intervals: WeeklyInterval[]; identityStable?: boolean }
+export type PendingReason = 'new' | 'ambiguous' | 'missing-identity' | 'unstable-identity';
+export interface StagedParticipant extends ImportParticipant { volunteerId: string | null; pendingReason?: PendingReason }
+export interface PendingParticipant extends ImportParticipant { reason: PendingReason; resolvable: boolean; present: boolean; firstSeenAt: string; lastSeenAt: string; conflictingSubmissions?: ImportParticipant[] }
+export interface SyncStatus {
+  lastAttemptAt: string | null; lastSuccessAt: string | null; effectiveChangeAt: string | null;
+  outcome: 'never' | 'changed' | 'unchanged' | 'failed'; diagnostic: string | null;
+  participantCount: number; matchedCount: number; pendingCount: number;
+}
+export interface Synchronization extends SyncStatus {
+  id: string; generation: number; checkId: string | null; participants: StagedParticipant[]; pending: PendingParticipant[];
+}
+export const emptySyncStatus = (): SyncStatus => ({ lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null,
+  outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 });
 export interface ImportRun {
   id: string; source: string; contentHash: string; status: 'staged' | 'completed' | 'failed';
   startedAt?: string | null; completedAt?: string | null; actorId?: string | null; resultId?: string | null;
@@ -54,7 +66,7 @@ export interface Snapshot {
   availabilityExceptions: AvailabilityException[]; candidateSchedules: Candidate[]; sessions: Session[];
   schedulingRuns: SchedulingRun[]; assignments: Assignment[]; backups: Backup[]; imports: ImportRun[];
   importMappings: ImportMapping[]; importedAvailability: ImportedAvailability[];
-  dataRevision: number; schedulingInputRevision: number;
+  synchronizations: Synchronization[]; dataRevision: number; schedulingInputRevision: number;
 }
 export interface ProposedAssignment { sessionId: string; volunteerId: string }
 export interface ProposedBackup extends ProposedAssignment { position: number }
@@ -64,5 +76,5 @@ export interface CandidateWithCoverage { candidate: Candidate; coverage: Coverag
 export interface GridCell extends Interval { weekday: Weekday; volunteers: Volunteer[]; count: number }
 export interface Insights { leftoverVolunteers: Volunteer[]; grid: GridCell[] }
 export function emptySnapshot(): Snapshot {
-  return { centers: [], volunteers: [], users: [], recurringAvailability: [], availabilityExceptions: [], candidateSchedules: [], sessions: [], schedulingRuns: [], assignments: [], backups: [], imports: [], importMappings: [], importedAvailability: [], dataRevision: 0, schedulingInputRevision: 0 };
+  return { centers: [], volunteers: [], users: [], recurringAvailability: [], availabilityExceptions: [], candidateSchedules: [], sessions: [], schedulingRuns: [], assignments: [], backups: [], imports: [], importMappings: [], importedAvailability: [], synchronizations: [], dataRevision: 0, schedulingInputRevision: 0 };
 }

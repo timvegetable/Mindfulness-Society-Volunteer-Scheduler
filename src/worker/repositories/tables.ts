@@ -30,6 +30,7 @@ export const tables: readonly Table[] = [
   table('backups', 'backups', 'id session_id volunteer_id schedule_revision position status'),
   table('imports', 'imports', 'id source content_hash status started_at completed_at actor_id result_id participant_count matched_count unmatched staged_availability diagnostic promoted_at promoted_by', { json: ['unmatched', 'staged_availability'] }),
   table('importMappings', 'import_mappings', 'id source source_participant_id source_email source_name volunteer_id created_at updated_at updated_by'),
+  table('synchronizations', 'synchronizations', 'id generation check_id last_attempt_at last_success_at effective_change_at outcome diagnostic participant_count matched_count pending_count participants pending', { json: ['participants', 'pending'] }),
   table('importedAvailability', 'imported_availability', 'id volunteer_id source_participant_id source weekday start_time end_time time_zone imported_at import_run_id'),
 ];
 

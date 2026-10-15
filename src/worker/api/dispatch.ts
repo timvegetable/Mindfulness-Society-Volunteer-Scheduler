@@ -1,3 +1,4 @@
+import { synchronize } from '../synchronization';
 import { Effect, Schema } from 'effect';
 import { AppError } from '../../shared/api/errors';
 import { RequestEnvelopeSchema, payloadSchemas, resultSchemas, type Operation } from '../../shared/api/schemas';
@@ -79,6 +80,7 @@ export function dispatch(raw: unknown, config: AppConfig) {
       }
       if (envelope.expectedRevision !== before.dataRevision) return yield* Effect.fail(new AppError('STALE_REVISION', 'Data changed. Reload before saving.'));
     }
+    if (operation === 'admin.sync.now') return yield* synchronize(config, { kind: 'administrator', id: user.id }, { key, fingerprint, before });
     const state = structuredClone(before);
     const result = yield* handleOperation(operation, payload, { state, user, config, now });
     const dataRevision = before.dataRevision + (write ? 1 : 0);

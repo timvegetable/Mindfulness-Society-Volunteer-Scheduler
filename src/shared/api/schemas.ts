@@ -37,10 +37,17 @@ export const AssignmentSchema = object({ id: text, sessionId: text, volunteerId:
 export const BackupSchema = object({ id: text, sessionId: text, volunteerId: text, scheduleRevision: revision, position: integer.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })), status: Schema.Literals(['available', 'promoted', 'skipped']) });
 export const ShortfallSchema = object({ sessionId: text, required: count, assigned: count, missing: count });
 export const SchedulingRunSchema = object({ id: text, inputRevision: revision, outputRevision: revision, status: Schema.Literals(['staged', 'completed', 'failed']), startedAt: maybeText, completedAt: maybeText, assignmentIds: Schema.Array(text), backupIds: Schema.Array(text), shortfalls: Schema.Array(ShortfallSchema), diagnostic: maybeText });
-export const ImportParticipantSchema = object({ id: text, name: Schema.String, email: Schema.NullOr(Schema.String), intervals: Schema.Array(WeeklyIntervalSchema) });
-export const StagedParticipantSchema = object({ ...ImportParticipantSchema.fields, volunteerId: Schema.NullOr(text) });
+export const ImportParticipantSchema = object({ id: text, name: Schema.String, email: Schema.NullOr(Schema.String), intervals: Schema.Array(WeeklyIntervalSchema), identityStable: Schema.optionalKey(Schema.Boolean) });
+export const StagedParticipantSchema = object({ ...ImportParticipantSchema.fields, volunteerId: Schema.NullOr(text), pendingReason: Schema.optionalKey(Schema.Literals(['new', 'ambiguous', 'missing-identity', 'unstable-identity'])) });
 export const ImportRunSchema = object({ id: text, source: text, contentHash: Schema.String, status: Schema.Literals(['staged', 'completed', 'failed']), startedAt: maybeText, completedAt: maybeText, actorId: maybeText, resultId: maybeText, participantCount: Schema.optionalKey(Schema.NullOr(revision)), matchedCount: Schema.optionalKey(Schema.NullOr(revision)), unmatched: Schema.Array(ImportParticipantSchema), stagedAvailability: Schema.Array(StagedParticipantSchema), diagnostic: maybeText, promotedAt: maybeText, promotedBy: maybeText });
 export const ImportMappingSchema = object({ id: text, source: text, sourceParticipantId: maybeText, sourceEmail: maybeText, sourceName: maybeText, volunteerId: text, ...timestamps, updatedBy: maybeText });
+export const SyncStatusSchema = object({ lastAttemptAt: Schema.NullOr(Schema.String), lastSuccessAt: Schema.NullOr(Schema.String),
+  effectiveChangeAt: Schema.NullOr(Schema.String), outcome: Schema.Literals(['never', 'changed', 'unchanged', 'failed']),
+  diagnostic: Schema.NullOr(Schema.String), participantCount: revision, matchedCount: revision, pendingCount: revision });
+export const FreshnessSchema = object({ lastSuccessAt: Schema.NullOr(Schema.String), problem: Schema.Boolean });
+export const PendingParticipantSchema = object({ ...ImportParticipantSchema.fields,
+  resolvable: Schema.Boolean, reason: Schema.Literals(['new', 'ambiguous', 'missing-identity', 'unstable-identity']), present: Schema.Boolean,
+  firstSeenAt: text, lastSeenAt: text, conflictingSubmissions: Schema.optionalKey(Schema.Array(ImportParticipantSchema)) });
 export const CoverageSchema = object({ volunteers: Schema.Array(VolunteerSchema), requestedCount: count, shortfall: count });
 export const CandidateWithCoverageSchema = object({ candidate: CandidateSchema, coverage: CoverageSchema });
 export const GridCellSchema = object({ weekday: workday, ...interval, volunteers: Schema.Array(VolunteerSchema), count: revision }).check(validInterval);
@@ -52,6 +59,7 @@ const candidateUpdate = object({ candidateId: Schema.optionalKey(text), centerId
   return !value.start || !value.end || value.start < value.end;
 }, { parseOptions: { onExcessProperty: 'error' } }));
 export const payloadSchemas = {
+  'admin.sync.read': empty, 'admin.sync.now': empty,
   'session.me': empty,
   'volunteer.dashboard': empty,
   'volunteer.availability.recurring.update': object({ intervals: Schema.Array(WeeklyIntervalSchema).check(Schema.isMaxLength(100)) }),
@@ -67,9 +75,12 @@ export const payloadSchemas = {
 } satisfies Record<Operation, Schema.Top>;
 const revisions = { dataRevision: revision, schedulingInputRevision: revision };
 const scheduleResult = object({ ...revisions, run: Schema.NullOr(SchedulingRunSchema), assignments: Schema.Array(AssignmentSchema), backups: Schema.Array(BackupSchema), shortfalls: Schema.Array(ShortfallSchema), sessions: Schema.Array(SessionSchema), volunteers: Schema.Array(VolunteerSchema), stale: Schema.Boolean });
+const syncResult = object({ ...revisions, status: SyncStatusSchema, pending: Schema.Array(PendingParticipantSchema),
+  imports: Schema.Array(ImportRunSchema), volunteers: Schema.Array(VolunteerSchema), mappings: Schema.Array(ImportMappingSchema) });
 export const resultSchemas = {
+  'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, status: SyncStatusSchema }),
   'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema) }),
-  'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema) }),
+  'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
   'volunteer.availability.recurring.update': object({ ...revisions, intervals: Schema.Array(RecurringIntervalSchema) }),
   'volunteer.availability.exception.create': object({ ...revisions, exception: AvailabilityExceptionSchema }),
   'volunteer.assignment.cancel': object({ ...revisions, assignment: AssignmentSchema, exception: AvailabilityExceptionSchema, promotedAssignment: Schema.NullOr(AssignmentSchema), shortfall: Schema.NullOr(ShortfallSchema) }),

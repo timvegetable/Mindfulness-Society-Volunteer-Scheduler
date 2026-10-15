@@ -1,6 +1,7 @@
 import type { Role } from '../domain/models';
 
 export const operations = [
+  'admin.sync.read', 'admin.sync.now',
   'session.me', 'volunteer.dashboard', 'volunteer.availability.recurring.update',
   'volunteer.availability.exception.create', 'volunteer.assignment.cancel',
   'admin.schedule.read', 'admin.schedule.preview', 'admin.schedule.rerun',
@@ -10,6 +11,7 @@ export const operations = [
 ] as const;
 export type Operation = typeof operations[number];
 export const mutatingOperations = new Set<Operation>([
+  'admin.sync.now',
   'volunteer.availability.recurring.update', 'volunteer.availability.exception.create',
   'volunteer.assignment.cancel', 'admin.schedule.rerun', 'admin.import.whenIsGood.preview',
   'admin.import.whenIsGood.promote', 'admin.import.mapping.upsert', 'center.candidate.update',
@@ -17,6 +19,7 @@ export const mutatingOperations = new Set<Operation>([
 ]);
 export function isMutation(operation: Operation): boolean { return mutatingOperations.has(operation); }
 export const operationRoles: Record<Operation, readonly Role[]> = {
+  'admin.sync.read': ['administrator'], 'admin.sync.now': ['administrator'],
   'session.me': ['volunteer', 'center-contact', 'administrator'],
   'volunteer.dashboard': ['volunteer'],
   'volunteer.availability.recurring.update': ['volunteer'],

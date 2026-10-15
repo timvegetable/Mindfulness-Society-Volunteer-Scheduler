@@ -1,7 +1,8 @@
+import { applyImportedAvailability } from '../../importAvailability';
+import { applySynchronizedParticipants } from '../../synchronization';
 import { Effect } from 'effect';
-import type { ImportMapping, ImportRun, WeeklyInterval } from '../../../shared/domain/models';
-import { normalizeWeeklyIntervals } from '../../../shared/domain/intervals';
-import { parseWhenIsGood, participantMatchesMappingIdentity, sameMappingIdentity, stageParticipants } from '../../../shared/imports/whenIsGood';
+import type { ImportMapping, ImportRun } from '../../../shared/domain/models';
+import { parseWhenIsGood, participantMatchesMappingIdentity, sameMappingIdentity, stageParticipants, weeklyAvailabilityByVolunteer } from '../../../shared/imports/whenIsGood';
 import { WhenIsGoodClient } from '../../services/WhenIsGoodClient';
 import { IdGenerator } from '../../services/IdGenerator';
 import { AppError } from '../../../shared/api/errors';
@@ -52,43 +53,44 @@ type MappingInput = Pick<ImportMapping, 'volunteerId'> & { sourceParticipantId?:
 export function upsertMapping(ctx: HandlerContext, input: MappingInput) {
   return Effect.gen(function* () {
     if (!ctx.state.volunteers.some((row) => row.id === input.volunteerId)) return yield* fail('NOT_FOUND', 'Volunteer not found.');
+    const synchronized = ctx.state.synchronizations[0];
+    let identity = input;
+    if (synchronized) {
+      const targets = synchronized.participants.filter(row => participantMatchesMappingIdentity(row, input));
+      if (targets.length !== 1 || targets[0]?.identityStable === false) return yield* fail('CONFLICT', 'Select one participant with a stable source identity from the latest results.');
+      identity = { ...input, sourceParticipantId: targets[0]!.id };
+    }
     const ids = yield* IdGenerator;
-    const existingMappings = ctx.state.importMappings.filter((row) => row.source === 'whenIsGood' && sameMappingIdentity(row, input));
+    const existingMappings = ctx.state.importMappings.filter((row) => row.source === 'whenIsGood' && sameMappingIdentity(row, identity));
     if (existingMappings.length > 1) return yield* fail('CONFLICT', 'More than one mapping uses this participant identity.');
     const existing = existingMappings[0];
-    const mapping: ImportMapping = { ...existing, ...input, id: existing?.id ?? (yield* ids.next), source: 'whenIsGood',
+    const mapping: ImportMapping = { ...existing, ...identity, id: existing?.id ?? (yield* ids.next), source: 'whenIsGood',
       createdAt: existing?.createdAt ?? ctx.now.toISOString(), updatedAt: ctx.now.toISOString(), updatedBy: ctx.user.id };
     ctx.state.importMappings = [...ctx.state.importMappings.filter((row) => row.id !== mapping.id), mapping];
     const latest = latestStaged(ctx, (run) => run.stagedAvailability.some((participant) =>
       participantMatchesMappingIdentity(participant, input)));
-    if (latest) {
-      const participants = latest.stagedAvailability.map(({ volunteerId: _id, ...participant }) => participant);
+    if (latest && !synchronized) {
+      const participants = latest.stagedAvailability.map(({ volunteerId: _id, pendingReason: _reason, ...participant }) => participant);
       Object.assign(latest, stageParticipants(participants, ctx.state.volunteers, ctx.state.importMappings));
     }
+    if (synchronized) yield* applySynchronizedParticipants(ctx.state, synchronized.participants.map(({ volunteerId: _id, pendingReason: _reason, ...row }) => row), ctx.config, ctx.now, { kind: 'administrator', id: ctx.user.id }, false);
     return { mapping };
   });
 }
 
 export function promoteImport(ctx: HandlerContext, resultsCode: string) {
   return Effect.gen(function* () {
+    if (ctx.state.synchronizations.length) return yield* fail('CONFLICT', 'Automatic synchronization has replaced import promotion. Use Sync now.');
     const run = latestStaged(ctx, (row) => row.resultId === resultsCode);
     if (!run) return yield* fail('NOT_FOUND', 'Preview the latest availability before importing.');
-    const ids = yield* IdGenerator;
-    const byVolunteer = new Map<string, WeeklyInterval[]>();
     for (const participant of run.stagedAvailability) {
       if (!participant.volunteerId) continue;
-      if (!ctx.state.volunteers.some((row) => row.id === participant.volunteerId)) return yield* fail('CONFLICT', 'A mapped volunteer no longer exists.');
-      if (participant.intervals.some((row) => row.timeZone !== ctx.config.timeZone)) return yield* fail('CONFLICT', 'Import contains availability in another time zone.');
-      byVolunteer.set(participant.volunteerId, [...(byVolunteer.get(participant.volunteerId) ?? []), ...participant.intervals]);
-      for (const interval of participant.intervals) ctx.state.importedAvailability.push({ ...interval,
-        id: yield* ids.next, volunteerId: participant.volunteerId, sourceParticipantId: participant.id,
-        source: 'whenIsGood', importedAt: ctx.now.toISOString(), importRunId: run.id });
+      if (!ctx.state.volunteers.some(row => row.id === participant.volunteerId)) return yield* fail('CONFLICT', 'A mapped volunteer no longer exists.');
+      if (participant.intervals.some(row => row.timeZone !== ctx.config.timeZone)) return yield* fail('CONFLICT', 'Import contains availability in another time zone.');
     }
-    ctx.state.recurringAvailability = ctx.state.recurringAvailability.filter((row) => !byVolunteer.has(row.volunteerId));
-    for (const [volunteerId, intervals] of byVolunteer) {
-      for (const interval of normalizeWeeklyIntervals(intervals)) ctx.state.recurringAvailability.push({ ...interval,
-        id: yield* ids.next, volunteerId, source: 'whenIsGood', updatedAt: ctx.now.toISOString() });
-    }
+    const represented = new Set(weeklyAvailabilityByVolunteer(run.stagedAvailability).keys());
+    yield* applyImportedAvailability(ctx.state, { participants: run.stagedAvailability, runId: run.id, now: ctx.now,
+      replaceVolunteers: represented, recordVolunteers: represented });
     run.status = 'completed';
     run.promotedAt = ctx.now.toISOString();
     run.promotedBy = ctx.user.id;

@@ -16,6 +16,7 @@ const coverage = { volunteers: [volunteer], requestedCount: 1, shortfall: 0 };
 const importRun = { id: 'i1', source: 'whenIsGood', contentHash: 'hash', status: 'staged', unmatched: [], stagedAvailability: [{ id: 'participant1', name: 'Volunteer', email: 'v@example.test', volunteerId: 'v1', intervals: [weekly] }] };
 const schedule = { run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [session], volunteers: [volunteer], stale: true };
 const payloads: Record<string, unknown> = {
+  'admin.sync.read': {}, 'admin.sync.now': {},
   'session.me': {}, 'volunteer.dashboard': {}, 'volunteer.availability.recurring.update': { intervals: [weekly] },
   'volunteer.availability.exception.create': { date: '2026-10-05', kind: 'available', start: '10:00', end: '11:00', timeZone: 'America/New_York' },
   'volunteer.assignment.cancel': { assignmentId: 'a1' }, 'admin.schedule.read': {}, 'admin.schedule.preview': {}, 'admin.schedule.rerun': {},
@@ -24,7 +25,9 @@ const payloads: Record<string, unknown> = {
   'admin.insights.read': {}, 'center.candidate.read': {}, 'center.candidate.update': { centerId: 'c1', ...weekly },
   'admin.center.candidate.confirm': { candidateId: 'c1' },
 };
+const syncView = { status: { lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null, outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 }, pending: [], imports: [], volunteers: [volunteer], mappings: [] };
 const results: Record<string, object> = {
+  'admin.sync.read': syncView, 'admin.sync.now': { status: syncView.status },
   'session.me': { user, centers: [center] },
   'volunteer.dashboard': { volunteer, assignments: [assignment], recurringAvailability: [recurring], availabilityExceptions: [exception], sessions: [session] },
   'volunteer.availability.recurring.update': { intervals: [recurring] }, 'volunteer.availability.exception.create': { exception },

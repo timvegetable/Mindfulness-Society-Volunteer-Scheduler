@@ -1,4 +1,6 @@
 import '../../src/client/style.css';
+import { Schema } from 'effect';
+import { payloadSchemas } from '../../src/shared/api/schemas';
 import { startClient } from '../../src/client/app';
 import type { ResultOf } from '../../src/shared/api/schemas';
 
@@ -31,11 +33,23 @@ const candidates: ResultOf<'center.candidate.read'> = {
     coverage: { volunteers: volunteers.slice(0, 2), requestedCount: 2, shortfall: 0 },
   })),
 };
-const staged: ResultOf<'admin.import.whenIsGood.preview'> = {
-  ...revisions, import: { id: 'synthetic-import', source: 'whenIsGood', contentHash: 'synthetic', status: 'staged', participantCount: 40, matchedCount: 40, unmatched: [],
-    stagedAvailability: volunteers.map(v => ({ id: `p-${v.id}`, name: v.name, email: v.email, volunteerId: v.id, intervals: [{ weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' }] })),
-  },
+let synchronization: ResultOf<'admin.sync.read'> = {
+  ...revisions, status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: '2026-10-13T12:00:00Z',
+    outcome: 'changed', diagnostic: null, participantCount: 40, matchedCount: 0, pendingCount: 40 },
+  pending: volunteers.map(v => ({ id: `p-${v.id}`, name: v.name, email: v.email, intervals: [{ weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' }],
+    reason: 'new', resolvable: true, present: true, firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z' })), imports: [], volunteers, mappings: [],
 };
+
+if (new URLSearchParams(location.search).has('collision')) {
+  const first = synchronization.pending[0]!; const second = synchronization.pending[1]!;
+  synchronization = { ...synchronization, status: { ...synchronization.status, pendingCount: 39 }, pending: [
+    { ...first, id: 'collision', name: '', email: null, intervals: [], reason: 'ambiguous', resolvable: false,
+      conflictingSubmissions: [
+        { id: 'collision', name: first.name, email: first.email, intervals: first.intervals },
+        { id: 'collision', name: second.name, email: second.email, intervals: [{ weekday: 3, start: '13:00', end: '14:00', timeZone: 'America/New_York' }] },
+      ] }, ...synchronization.pending.slice(2),
+  ] };
+}
 
 const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-admin', email: 'admin@example.test', active: true, roles: ['administrator'], volunteerId: null, centerIds: [center.id] }, centers: [center] };
 
@@ -44,15 +58,28 @@ const fixtureFetch: typeof fetch = async (input, init) => {
   const latency = Math.min(1000, Math.max(0, Number(new URLSearchParams(location.search).get('latency')) || 0));
   if (latency) await new Promise(resolve => setTimeout(resolve, latency));
   if (input !== '/api') throw new Error('Synthetic workspace blocks external requests');
-  const { operation } = JSON.parse(String(init?.body)) as { operation: string };
+  const request = JSON.parse(String(init?.body));
+  const operation = String(request.operation);
   let data: unknown;
   switch (operation) {
+    case 'admin.sync.read': data = { ...synchronization, ...revisions }; break;
+    case 'admin.sync.now': data = { ...revisions, status: { ...synchronization.status, outcome: 'unchanged' } }; break;
+    case 'admin.import.mapping.upsert': {
+      if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
+      const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
+      const mapping = { id: `mapping-${payload.sourceParticipantId}`, source: 'whenIsGood', ...payload };
+      const pending = synchronization.pending.filter(row => row.id !== payload.sourceParticipantId);
+      synchronization = { ...synchronization, pending, mappings: [...synchronization.mappings, mapping],
+        status: { ...synchronization.status, pendingCount: pending.length, matchedCount: 40 - pending.length } };
+      revisions.dataRevision++;
+      data = { ...revisions, mapping }; break;
+    }
     case 'session.me': data = identity; break;
     case 'admin.schedule.read': data = schedule; break;
     case 'admin.schedule.preview': data = { ...revisions, output: { assignments: [], backups: [], shortfalls: [] } }; break;
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;
-    case 'admin.import.whenIsGood.preview': data = staged; break;
+
     default: return Response.json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'This synthetic workspace supports reads and previews only.' } });
   }
   return Response.json({ ok: true, data });
@@ -61,7 +88,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
 const tools = document.querySelector<HTMLElement>('#browser-check')!;
 tools.style.cssText = 'padding:1rem;background:#fff;border-bottom:2px solid #245b47;overflow-wrap:anywhere';
 tools.innerHTML = `<strong>Synthetic browser workspace — no real data or services</strong>
-  <p>Set the expected viewport after resizing, then check each page. Preview import results with any code.</p>
+  <p>Set the expected viewport after resizing, then check each page. Review synchronization and pending participants.</p>
   <label>Expected width <input id="expected-width" type="number" min="1" style="width:7rem"></label>
   <label>Expected height <input id="expected-height" type="number" min="1" style="width:7rem"></label>
   <button id="check-layout" type="button">Check current view</button><pre id="layout-result" aria-live="polite" style="white-space:pre-wrap;max-height:12rem;overflow:auto"></pre>`;
@@ -80,7 +107,7 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
   check(document.querySelector('.content')?.getAttribute('aria-busy') === 'false', 'Page has not finished rendering');
   check(document.documentElement.scrollWidth <= document.documentElement.clientWidth, 'Page expands horizontally');
   const regions = [...document.querySelectorAll<HTMLElement>('#app .table-scroll')];
-  check(regions.length > 0, 'No table present; preview import results first');
+  check(regions.length > 0, 'No table present');
   const tables = regions.map(region => {
     const header = region.querySelector<HTMLElement>('th')!;
     const rows = region.querySelectorAll('tbody tr').length;
@@ -90,7 +117,8 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     region.scrollTop = region.scrollHeight;
     const sticky = Math.abs(header.getBoundingClientRect().top - before) < 2;
     const style = getComputedStyle(region);
-    check(rows === 40, 'Expected 40 synthetic rows');
+    const expectedRows = document.querySelector('[aria-current="page"]')?.textContent === 'Availability sync' ? synchronization.pending.length : 40;
+    check(rows === expectedRows, 'Synthetic row count does not match the current records');
     check(style.overflowY === 'auto' && style.maxHeight !== 'none', 'Bounded scroll CSS is missing or stale');
     check(region.clientHeight <= Math.min(28 * parseFloat(getComputedStyle(document.documentElement).fontSize), innerHeight * .55) + 1, 'Table exceeds height cap');
     check(region.scrollTop > 0 && sticky && getComputedStyle(header).position === 'sticky', 'Table does not scroll with a pinned header');

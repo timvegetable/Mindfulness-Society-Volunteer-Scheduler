@@ -1,13 +1,20 @@
 import { Effect } from 'effect';
 import { AppError } from '../shared/api/errors';
 import { dispatchResponse, publicFailure } from './api/dispatch';
-import { appConfig, liveLayer, type Bindings } from './runtime/live';
+import { appConfig, liveLayer, synchronizationLayer, type Bindings } from './runtime/live';
 import { readBoundedText } from './services/http';
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const failure = (code: ConstructorParameters<typeof AppError>[0], message: string, status: number) => new Response(publicFailure(new AppError(code, message)), { status, headers });
 
+import { synchronize, synchronizationSystemActor } from './synchronization';
+
 export default {
+  async scheduled(controller: ScheduledController, env: Bindings): Promise<void> {
+    await Effect.runPromise(synchronize(appConfig(env), synchronizationSystemActor, {
+      key: { actorId: synchronizationSystemActor.id, operation: 'system.sync', idempotencyKey: `scheduled-${controller.scheduledTime}` }, fingerprint: '{}',
+    }).pipe(Effect.provide(synchronizationLayer(env))));
+  },
   async fetch(request: Request, env: Bindings): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/client-config') {

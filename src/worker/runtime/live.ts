@@ -35,6 +35,12 @@ export function liveLayer(env: Bindings) {
   );
 }
 
+/** The scheduled runtime has no Google authentication or email capability. */
+export function synchronizationLayer(env: Bindings) {
+  return Layer.mergeAll(databaseLayer(env.DB), ClockLive, IdGeneratorLive,
+    whenIsGoodLayer({ endpoint: whenIsGoodSource.endpoint, fetch }));
+}
+
 export function appConfig(env: Bindings): AppConfig {
   return { timeZone: env.TIME_ZONE, displayIncrementMinutes: Number(env.DISPLAY_INCREMENT_MINUTES),
     operatingHoursStart: env.OPERATING_HOURS_START, operatingHoursEnd: env.OPERATING_HOURS_END,

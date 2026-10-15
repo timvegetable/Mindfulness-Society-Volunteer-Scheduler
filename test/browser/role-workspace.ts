@@ -8,6 +8,9 @@ const role = new URLSearchParams(location.search).get('role') === 'contact' ? 'c
 const zone = 'America/New_York';
 let revision = 1;
 let sequence = 0;
+let freshness = { lastSuccessAt: '2026-10-13T12:00:00Z', problem: false };
+let updated = false;
+let readCount = 0;
 const id = () => `synthetic-${++sequence}`;
 const center = { id: 'synthetic-center', name: 'North Example Center', active: true };
 const volunteer = { id: 'synthetic-volunteer', name: 'Alex Example', email: 'alex@example.test', lifecycleStatus: 'active' as const, interviewStatus: 'complete' as const, readinessRank: 1 };
@@ -20,7 +23,7 @@ const dashboard: Pick<Snapshot, 'dataRevision' | 'schedulingInputRevision' | 'se
 };
 const proposals: Candidate[] = [{ id: 'synthetic-proposal', centerId: center.id, weekday: 1, start: '09:00', end: '10:00', timeZone: zone, requestedStaffCount: 1, status: 'candidate' }];
 const revisions = () => ({ dataRevision: revision, schedulingInputRevision: revision });
-const coverage = (candidate: Candidate) => ({ volunteers: [volunteer], requestedCount: candidate.requestedStaffCount, shortfall: Math.max(0, candidate.requestedStaffCount - 1) });
+const coverage = (candidate: Candidate) => ({ volunteers: updated ? [volunteer, { ...volunteer, id: 'second', name: 'Second Example', email: 'second@example.test' }] : [volunteer], requestedCount: candidate.requestedStaffCount, shortfall: Math.max(0, candidate.requestedStaffCount - (updated ? 2 : 1)) });
 const failure = (code: string, message: string) => Response.json({ ok: false, error: { code, message } });
 
 // A UI simulator: no Worker, database, Google, email, or external fetch calls.
@@ -36,12 +39,13 @@ const fixtureFetch: typeof fetch = async (input, init) => {
     : ['center.candidate.read', 'center.candidate.update'];
   if (operation !== 'session.me' && !allowed.includes(operation)) return failure('FORBIDDEN', 'This operation is not available to this synthetic role.');
   const mutation = !['session.me', 'volunteer.dashboard', 'center.candidate.read'].includes(operation);
+  if (!mutation) document.querySelector('#read-count')!.textContent = String(++readCount);
   if (mutation && request.expectedRevision !== revision) return failure('STALE_REVISION', 'Reload before saving changes.');
   let data: object;
   switch (operation) {
     case 'session.me':
       data = { user: { id: 'synthetic-user', email: role === 'volunteer' ? volunteer.email : 'contact@example.test', roles: [role], volunteerId: role === 'volunteer' ? volunteer.id : null, centerIds: role === 'center-contact' ? [center.id] : [], active: true }, centers: [center] }; break;
-    case 'volunteer.dashboard': data = dashboard; break;
+    case 'volunteer.dashboard': data = { ...dashboard, freshness }; break;
     case 'volunteer.availability.recurring.update': {
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
       dashboard.recurringAvailability = payload.intervals.map(interval => ({ ...interval, id: id(), volunteerId: volunteer.id }));
@@ -88,11 +92,20 @@ toolbar.style.cssText = 'padding:1rem;background:#fff;border-bottom:2px solid #2
 toolbar.innerHTML = `<strong>UI testing — fictional data, no sign-in or real saves</strong>
   <p>Changes stay in memory. Switching roles or resetting clears them. Coverage here is simulated; use integration tests to check scheduling rules.</p>
   <label for="test-role">Test role</label> <select id="test-role"><option value="volunteer">Volunteer</option><option value="contact">Center contact</option></select>
-  <button id="reset-data" type="button">Reset test data</button>`;
+  <button id="reset-data" type="button">Reset test data</button>
+  <span>API reads: <output id="read-count">0</output></span>
+  <button id="source-update" type="button">Simulate source update</button>
+  <button id="sync-failure" type="button">Simulate sync failure</button>`;
 const rolePicker = document.querySelector<HTMLSelectElement>('#test-role')!;
 rolePicker.value = role === 'volunteer' ? 'volunteer' : 'contact';
 rolePicker.addEventListener('change', () => { location.search = `?role=${rolePicker.value}`; });
 document.querySelector('#reset-data')!.addEventListener('click', () => location.reload());
+document.querySelector('#source-update')!.addEventListener('click', () => {
+  updated = true; revision++;
+  dashboard.recurringAvailability[0]!.end = '18:00';
+  freshness = { lastSuccessAt: '2026-10-13T12:05:00Z', problem: false };
+});
+document.querySelector('#sync-failure')!.addEventListener('click', () => { freshness = { ...freshness, problem: true }; });
 window.google = { accounts: { id: {
   initialize({ callback }) { queueMicrotask(() => callback({ credential: 'synthetic-only' })); },
   renderButton() {}, disableAutoSelect() {},

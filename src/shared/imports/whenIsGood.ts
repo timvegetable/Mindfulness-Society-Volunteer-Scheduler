@@ -39,8 +39,9 @@ function clock(value: unknown): string | undefined {
   return hour < 24 && minute < 60 ? `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}` : undefined;
 }
 
-function intervals(value: unknown, timeZone: string, inheritedDay?: Weekday, depth = 0): WeeklyInterval[] {
-  if (depth > 40) return [];
+function intervals(value: unknown, timeZone: string, inheritedDay?: Weekday, depth = 0, strict = false): WeeklyInterval[] {
+  const invalid = (): WeeklyInterval[] => { if (strict) throw new Error('Invalid availability'); return []; };
+  if (depth > 40) return invalid();
   let day = inheritedDay;
   let start: unknown;
   let end: unknown;
@@ -50,18 +51,19 @@ function intervals(value: unknown, timeZone: string, inheritedDay?: Weekday, dep
       day = weekday(value[0]); start = value[1]; end = value[2]; zone = text(value[3]) || timeZone;
     } else if (inheritedDay && clock(value[0]) && clock(value[1])) {
       start = value[0]; end = value[1]; zone = text(value[2]) || timeZone;
-    } else return value.flatMap(item => intervals(item, timeZone, inheritedDay, depth + 1));
+    } else return value.flatMap(item => intervals(item, timeZone, inheritedDay, depth + 1, strict));
   } else if (record(value)) {
     day = weekday(first(value, ['weekday', 'day', 'date'])) ?? inheritedDay;
     start = first(value, ['start', 'startTime', 'start_time', 'from']);
     end = first(value, ['end', 'endTime', 'end_time', 'to']);
     zone = text(first(value, ['timeZone', 'timezone', 'time_zone'])) || timeZone;
-    if (start === undefined || end === undefined) return Object.entries(value).flatMap(([key, item]) => intervals(item, zone, weekday(key) ?? day, depth + 1));
-  } else return [];
+    if (start === undefined || end === undefined) return Object.entries(value).flatMap(([key, item]) => intervals(item, zone, weekday(key) ?? day, depth + 1, strict));
+  } else return invalid();
   const parsedStart = clock(start);
   const parsedEnd = clock(end);
-  if (!day || !parsedStart || !parsedEnd || parsedStart >= parsedEnd) return [];
-  try { new Intl.DateTimeFormat('en', { timeZone: zone }); } catch { return []; }
+  if (!day || !parsedStart || !parsedEnd || parsedStart >= parsedEnd) return invalid();
+  try { new Intl.DateTimeFormat('en', { timeZone: zone }); } catch { return invalid(); }
+  if (strict && zone !== timeZone) return invalid();
   return [{ weekday: day, start: parsedStart, end: parsedEnd, timeZone: zone }];
 }
 
@@ -165,7 +167,7 @@ function mappingForParticipant(
 }
 
 /** Read the site's data assignments as text; never execute third-party scripts. */
-function nativeResults(html: string, timeZone: string): ParsedResults | undefined {
+function nativeResults(html: string, timeZone: string, strict = false): ParsedResults | undefined {
   if (!/var\s+respondents\s*=\s*new Array\s*\(/.test(html)) return undefined;
   const slots = new Map<string, { weekday: Weekday; start: number }>();
   const cellPattern = /<td\b[^>]*\bid=["'](\d{13})["'][^>]*>[\s\S]*?<td\b[^>]*\bclass=["']?gridText\b[^>]*>([^<]+)<\/td>/gi;
@@ -189,25 +191,29 @@ function nativeResults(html: string, timeZone: string): ParsedResults | undefine
     try {
       for (const field of match[2]!.matchAll(assignments)) fields.set(field[1]!, decodeHTML(JSON.parse(field[2]!)));
     } catch { return { ok: false, error: 'A participant record could not be parsed.' }; }
-    const id = fields.get('id'); const name = fields.get('name');
+    const id = fields.get('id')?.trim(); const name = fields.get('name');
     const selected = fields.get('myCanDosAll') ?? fields.get('myCanDos');
-    if (!id || !name || selected === undefined) return { ok: false, error: 'A participant record could not be parsed.' };
+    if (!id || selected === undefined) return { ok: false, error: 'A participant record could not be parsed.' };
     const availability: WeeklyInterval[] = [];
     for (const timestamp of selected ? selected.split(',') : []) {
       const slot = slots.get(timestamp.trim());
       if (!slot || slot.start + step >= 1440) return { ok: false, error: 'A participant has nonempty availability that could not be parsed.' };
       availability.push({ weekday: slot.weekday, start: minuteTime(slot.start), end: minuteTime(slot.start + step), timeZone });
     }
-    participants.push({ id, name, email: fields.get('email')?.toLowerCase() ?? null, intervals: normalizeWeeklyIntervals(availability) });
+    participants.push({ id, name: name ?? '', email: fields.get('email')?.toLowerCase() ?? null, intervals: normalizeWeeklyIntervals(availability) });
+  }
+  if (strict && [...html.matchAll(/respondents\s*\[[^\]]+\]\s*=\s*\w+\s*;/g)].length !== participants.length) {
+    return { ok: false, error: 'A participant record could not be parsed.' };
   }
   return participants.length ? { ok: true, participants } : { ok: false, error: 'No recognizable participant availability was found in the results page.' };
 }
 
-export function parseWhenIsGood(html: string, timeZone: string): ParsedResults {
-  const native = nativeResults(html, timeZone);
+export function parseWhenIsGood(html: string, timeZone: string, options: { strict?: boolean } = {}): ParsedResults {
+  try { new Intl.DateTimeFormat('en', { timeZone }); } catch { return { ok: false, error: 'The configured source time zone is invalid.' }; }
+  const native = nativeResults(html, timeZone, options.strict);
   if (native) return native;
   const participants: ImportParticipant[] = [];
-  const seen = new Set<string>();
+  const seenCollections = new Set<string>();
   let malformedAvailability = false;
   // An explicit empty collection means no availability. Unparseable nonempty
   // source data must not become an empty replacement during promotion.
@@ -221,26 +227,30 @@ export function parseWhenIsGood(html: string, timeZone: string): ParsedResults {
     if (depth > 40) return;
     if (Array.isArray(value)) { value.forEach(item => collect(item, depth + 1)); return; }
     if (!record(value)) return;
+    if (options.strict && ['timeZone', 'timezone', 'time_zone'].some(key => value[key] !== undefined && value[key] !== timeZone)) malformedAvailability = true;
     for (const [key, child] of Object.entries(value)) {
       if (collections.has(key) && (Array.isArray(child) || record(child))) {
+        const signature = JSON.stringify(child);
+        if (seenCollections.has(signature)) continue;
+        seenCollections.add(signature);
         const entries = Array.isArray(child) ? child.map(item => [undefined, item] as const) : Object.entries(child);
         for (const [keyId, entry] of entries) {
-          if (!record(entry)) continue;
+          if (!record(entry)) { if (options.strict) malformedAvailability = true; continue; }
           const name = text(first(entry, ['name', 'displayName', 'fullName', 'participantName', 'label']));
           const rawEmail = text(first(entry, ['email', 'emailAddress', 'mail']));
           const availability = first(entry, availabilityKeys);
-          if ((!name && !rawEmail) || availability === undefined) continue;
+          if ((!name && !rawEmail) && !options.strict) continue;
+          if (availability === undefined) { if (options.strict) malformedAvailability = true; continue; }
           const id = text(first(entry, ['id', 'participantId', 'userId', 'key', 'uid'])) || keyId;
-          const parsed = normalizeWeeklyIntervals(intervals(availability, timeZone));
+          let parsed: WeeklyInterval[];
+          try { parsed = normalizeWeeklyIntervals(intervals(availability, timeZone, undefined, 0, options.strict)); }
+          catch { malformedAvailability = true; continue; }
           if (parsed.length === 0 && !explicitlyEmpty(availability)) {
             malformedAvailability = true;
             continue;
           }
           const email = rawEmail ? rawEmail.toLowerCase() : null;
-          const signature = JSON.stringify([id, name, email, parsed]);
-          if (seen.has(signature)) continue;
-          seen.add(signature);
-          participants.push({ id: id || `participant-${participants.length + 1}`, name: name || rawEmail, email, intervals: parsed });
+          participants.push({ id: id || (options.strict ? `unidentified:${encodeURIComponent(email || normalizeImportName(name))}` : `participant-${participants.length + 1}`), name: name || rawEmail, email, intervals: parsed, ...(!id && options.strict ? { identityStable: false } : {}) });
         }
       }
       collect(child, depth + 1);
@@ -251,12 +261,13 @@ export function parseWhenIsGood(html: string, timeZone: string): ParsedResults {
   return participants.length > 0 ? { ok: true, participants } : { ok: false, error: 'No recognizable participant availability was found in the results page.' };
 }
 
-export function stageParticipants(participants: ImportParticipant[], volunteers: Volunteer[], mappings: ImportMapping[]): { stagedAvailability: StagedParticipant[]; unmatched: ImportParticipant[]; matchedCount: number } {
+export function stageParticipants(participants: ImportParticipant[], volunteers: Volunteer[], mappings: ImportMapping[], previous: StagedParticipant[] = []): { stagedAvailability: StagedParticipant[]; unmatched: ImportParticipant[]; matchedCount: number } {
   const volunteerIds = new Set(volunteers.map(volunteer => volunteer.id));
   const sourceMappings = mappings.filter(mapping => mapping.source === 'whenIsGood');
+  const idCounts = frequencies(participants.map(participant => participant.id));
   const emailCounts = frequencies(participants.map(participant => normalizeImportEmail(participant.email)));
   const nameCounts = frequencies(participants.map(participant => normalizeImportName(participant.name)));
-  const stagedAvailability = participants.map(participant => {
+  const stagedAvailability = participants.map((participant): StagedParticipant => {
     const mappingResult = mappingForParticipant(participant, sourceMappings, emailCounts, nameCounts);
     const email = normalizeImportEmail(participant.email);
     const name = normalizeImportName(participant.name);
@@ -264,11 +275,31 @@ export function stageParticipants(participants: ImportParticipant[], volunteers:
       ? volunteers.filter(volunteer => normalizeImportEmail(volunteer.email) === email) : [];
     const nameMatches = name && nameCounts.get(name) === 1
       ? volunteers.filter(volunteer => normalizeImportName(volunteer.name) === name) : [];
-    const volunteerId = mappingResult.found ? (mappingResult.mapping && volunteerIds.has(mappingResult.mapping.volunteerId) ? mappingResult.mapping.volunteerId : null)
+    let volunteerId = mappingResult.found ? (mappingResult.mapping && volunteerIds.has(mappingResult.mapping.volunteerId) ? mappingResult.mapping.volunteerId : null)
       : emailMatches.length === 1 ? emailMatches[0]!.id
       : emailMatches.length === 0 && nameMatches.length === 1 ? nameMatches[0]!.id : null;
-    return { ...participant, volunteerId };
+    const previousMatch = previous.find(row => row.id === participant.id && row.volunteerId)?.volunteerId;
+    const mappedBySourceId = mappingResult.found && mappingResult.mapping?.sourceParticipantId === participant.id;
+    const conflictingMatch = !mappedBySourceId && !!previousMatch && !!volunteerId && previousMatch !== volunteerId;
+    const ambiguousEmail = !!email && ((emailCounts.get(email) ?? 0) > 1 || volunteers.filter(row => normalizeImportEmail(row.email) === email).length > 1);
+    const ambiguousName = !!name && ((nameCounts.get(name) ?? 0) > 1 || volunteers.filter(row => normalizeImportName(row.name) === name).length > 1);
+    const conflictingFields = !mappingResult.found && emailMatches.length === 1 && nameMatches.length === 1 && emailMatches[0]!.id !== nameMatches[0]!.id;
+    const unstable = participant.identityStable === false;
+    if ((idCounts.get(participant.id) ?? 0) > 1 || conflictingMatch || conflictingFields || unstable || (!mappingResult.found && ambiguousEmail)) volunteerId = null;
+    if (volunteerId) return { ...participant, volunteerId };
+    const pendingReason = (idCounts.get(participant.id) ?? 0) > 1 || conflictingMatch || conflictingFields || mappingResult.found || ambiguousEmail || ambiguousName ? 'ambiguous'
+      : unstable ? 'unstable-identity' : !email ? 'missing-identity' : 'new';
+    return { ...participant, volunteerId, pendingReason };
   });
   const unmatched = participants.filter((_, index) => stagedAvailability[index]!.volunteerId === null);
   return { stagedAvailability, unmatched, matchedCount: participants.length - unmatched.length };
+}
+
+
+export function weeklyAvailabilityByVolunteer(participants: StagedParticipant[]): Map<string, WeeklyInterval[]> {
+  const byVolunteer = new Map<string, WeeklyInterval[]>();
+  for (const participant of participants) if (participant.volunteerId) {
+    byVolunteer.set(participant.volunteerId, [...(byVolunteer.get(participant.volunteerId) ?? []), ...participant.intervals]);
+  }
+  return new Map([...byVolunteer].map(([id, intervals]) => [id, normalizeWeeklyIntervals(intervals)]));
 }

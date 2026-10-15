@@ -8,6 +8,7 @@ async function application(options: Parameters<typeof createApplication>[0] = {}
 }
 afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.dispose())); });
 const payloads: Record<Operation, unknown> = {
+  'admin.sync.read': {}, 'admin.sync.now': {},
   'session.me': {}, 'volunteer.dashboard': {},
   'volunteer.availability.recurring.update': { intervals: [interval] },
   'volunteer.availability.exception.create': { date: '2026-10-06', kind: 'unavailable', start: '10:00', end: '11:00', timeZone: interval.timeZone },
@@ -260,7 +261,7 @@ describe('candidate confirmation', () => {
 describe('WhenIsGood staging, mappings and atomic promotion', () => {
   it('uses the fixed society page and rejects caller-selected results pages without writes', async () => {
     const app = await application(); const before = await app.read();
-    for (const operation of ['admin.import.whenIsGood.preview', 'admin.import.whenIsGood.promote'] as const) {
+    for (const operation of ['admin.import.whenIsGood.preview', 'admin.import.whenIsGood.promote', 'admin.sync.now'] as const) {
       expect(await app.request(operation, { resultsCode: 'another-page' })).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
     }
     expect(await app.read()).toEqual(before); expect(app.fetches).toEqual([]);

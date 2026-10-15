@@ -15,10 +15,13 @@ let zone = 'America/New_York';
 let me: ResultOf<'session.me'> | undefined;
 let activeTab = '';
 let pageGeneration = 0;
+let viewEdits = 0;
 let status: HTMLElement;
 let content: HTMLElement;
 let nav: HTMLElement;
 let signingIn = false;
+const hasUnsavedWork = () => !!content.querySelector('form[data-dirty="true"]') || content.dataset.reviewing === 'true';
+const syncTime = (value: string | null) => value ? new Intl.DateTimeFormat('en-US', { timeZone: zone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : 'Not yet checked';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
@@ -50,8 +53,10 @@ function field(label: string, control: HTMLInputElement | HTMLSelectElement | HT
 }
 function input(type: string, value = '', required = true) { const node = el('input'); node.type = type; node.value = value; node.required = required; return node; }
 function select(options: [string, string][], value?: string) { const node = el('select'); options.forEach(([key, label]) => { const option = el('option', label); option.value = key; node.append(option); }); if (value !== undefined) node.value = value; return node; }
+function markDirty(node: HTMLFormElement) { node.dataset.dirty = 'true'; viewEdits++; }
 function form(parent: HTMLElement, label: string, action: () => Promise<void>) {
   const node = el('form', '', 'form'); const submit = el('button', label); submit.type = 'submit';
+  for (const event of ['input', 'change']) node.addEventListener(event, () => markDirty(node));
   node.addEventListener('submit', event => { event.preventDefault(); if (node.reportValidity()) void execute(action, submit); });
   parent.append(node); return { node, submit };
 }
@@ -118,44 +123,85 @@ function configureTabs() {
   const roles = me!.user.roles;
   const tabs: [string, string][] = [];
   if (roles.includes('volunteer')) tabs.push(['volunteer', 'My availability']);
-  if (roles.includes('administrator')) tabs.push(['schedule', 'Schedule'], ['imports', 'Import availability'], ['insights', 'Insights']);
+  if (roles.includes('administrator')) tabs.push(['schedule', 'Schedule'], ['imports', 'Availability sync'], ['insights', 'Insights']);
   if (roles.includes('administrator') || roles.includes('center-contact')) tabs.push(['candidates', 'Center proposals']);
   tabs.forEach(([key, title]) => {
-    const control = button(title, () => key === activeTab ? refreshView(key) : showTab(key), 'tab');
+    const control = button(title, async () => {
+      if (key === activeTab) return;
+      if (!hasUnsavedWork() || confirmAction('Leave this view and discard your unsaved changes or preview?')) await showTab(key);
+    }, 'tab');
     control.dataset.tab = key; nav.append(control);
   });
-  nav.append(button('Reload view', () => refreshView(activeTab), 'quiet reload'));
-  void execute(() => showTab(tabs[0]?.[0] ?? ''));
+  nav.append(button('Reload view', () => { if (!hasUnsavedWork() || confirmAction('Reload this view and discard your unsaved changes or preview?')) return refreshView(activeTab); }, 'quiet reload'));
+  void execute(async () => { await showTab(tabs[0]?.[0] ?? ''); });
+}
+// Capture at replacement time: a user can move focus or scroll while a read is in flight.
+function replaceView(render: () => void, keepPosition: boolean) {
+  const scrollY = window.scrollY; const scrollX = window.scrollX;
+  const regions = new Map([...content.querySelectorAll<HTMLElement>('.table-scroll')].map(node => [node.getAttribute('aria-label'), { top: node.scrollTop, left: node.scrollLeft }]));
+  const focused = document.activeElement instanceof HTMLElement && content.contains(document.activeElement) ? document.activeElement : undefined;
+  const focusKey = focused?.dataset.focusKey;
+  const controls = [...content.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex]')];
+  const focusIndex = focused ? controls.indexOf(focused) : -1;
+  const focusLabel = focused?.getAttribute('aria-label');
+  content.replaceChildren(); delete content.dataset.reviewing; render();
+  if (!keepPosition) return;
+  for (const region of content.querySelectorAll<HTMLElement>('.table-scroll')) {
+    const saved = regions.get(region.getAttribute('aria-label'));
+    if (saved) { region.scrollTop = saved.top; region.scrollLeft = saved.left; }
+  }
+  const candidates = [...content.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex]')];
+  const target = focusKey ? candidates.find(node => node.dataset.focusKey === focusKey)
+    : focusLabel ? candidates.find(node => node.getAttribute('aria-label') === focusLabel)
+    : candidates[focusIndex];
+  if (target && target.tagName === focused?.tagName) target.focus({ preventScroll: true });
+  window.scrollTo({ top: scrollY, left: scrollX, behavior: 'instant' });
 }
 async function showTab(tab: string, keepContent = false) {
-  content.className = 'content';
   activeTab = tab; const generation = ++pageGeneration;
-  nav.querySelectorAll<HTMLButtonElement>('.tab').forEach(control => {
-    control.setAttribute('aria-current', control.dataset.tab === tab ? 'page' : 'false');
-  });
-  if (!keepContent) content.replaceChildren(el('p', 'Loading…', 'empty'));
+  const editsAtStart = viewEdits;
+  const reviewingAtStart = content.dataset.reviewing;
+  let painted = false;
+  nav.querySelectorAll<HTMLButtonElement>('.tab').forEach(control => control.setAttribute('aria-current', control.dataset.tab === tab ? 'page' : 'false'));
+  if (!keepContent) { content.replaceChildren(el('p', 'Loading…', 'empty')); }
   content.setAttribute('aria-busy', 'true');
+  const paint = (render: () => void) => {
+    if (generation !== pageGeneration) return;
+    if (keepContent && (viewEdits !== editsAtStart || content.dataset.reviewing !== reviewingAtStart)) {
+      notify('Your newer edits were kept. Reload view when you are ready to review saved data.');
+      return;
+    }
+    replaceView(() => { content.className = 'content'; render(); }, keepContent);
+    painted = true;
+  };
   try {
-    if (tab === 'volunteer') { const data = await api.call('volunteer.dashboard', {}); if (generation === pageGeneration) { content.replaceChildren(); volunteerView(data); } }
-    else if (tab === 'schedule') { const data = await api.call('admin.schedule.read', {}); if (generation === pageGeneration) { content.replaceChildren(); scheduleView(data); } }
-    else if (tab === 'candidates') { const data = await api.call('center.candidate.read', {}); if (generation === pageGeneration) { content.replaceChildren(); candidatesView(data); } }
-    else if (tab === 'insights') { const data = await api.call('admin.insights.read', {}); if (generation === pageGeneration) { content.replaceChildren(); insightsView(data); } }
-    else if (tab === 'imports') { const [identity, schedule] = await Promise.all([api.call('session.me', {}), api.call('admin.schedule.read', {})]); if (generation === pageGeneration) { me = identity; content.replaceChildren(); importsView(identity.dataRevision, schedule.volunteers); } }
+    if (tab === 'volunteer') { const data = await api.call('volunteer.dashboard', {}); paint(() => volunteerView(data)); }
+    else if (tab === 'schedule') { const data = await api.call('admin.schedule.read', {}); paint(() => scheduleView(data)); }
+    else if (tab === 'candidates') { const data = await api.call('center.candidate.read', {}); paint(() => candidatesView(data)); }
+    else if (tab === 'insights') { const data = await api.call('admin.insights.read', {}); paint(() => insightsView(data)); }
+    else if (tab === 'imports') { const data = await api.call('admin.sync.read', {}); paint(() => importsView(data)); }
   } finally { if (generation === pageGeneration) content.setAttribute('aria-busy', 'false'); }
+  return painted;
 }
-
-// Refresh saved data without collapsing the workspace or losing table position.
-async function refreshView(tab: string, message = '', focusSelector?: string) {
+async function refreshView(tab: string, message = '', focusSelector?: string, preserveRosterLinks?: { consumedParticipantId?: string }) {
+  const drafts = tab === 'imports' && preserveRosterLinks ? [...content.querySelectorAll<HTMLSelectElement>('form[data-dirty="true"] select[data-participant-id]')]
+    .filter(control => control.dataset.participantId !== preserveRosterLinks!.consumedParticipantId)
+    .map(control => ({ participantId: control.dataset.participantId!, volunteerId: control.value })) : [];
   const top = content.getBoundingClientRect().top;
-  const tablePositions = [...content.querySelectorAll<HTMLElement>('.table-scroll')].map(region => ({ label: region.getAttribute('aria-label'), top: region.scrollTop, left: region.scrollLeft }));
   const generation = pageGeneration + 1;
-  await showTab(tab, true);
+  const painted = await showTab(tab, true);
   if (activeTab !== tab || pageGeneration !== generation) return;
-  if (message) notify(message);
-  for (const [index, region] of [...content.querySelectorAll<HTMLElement>('.table-scroll')].entries()) {
-    const saved = tablePositions[index];
-    if (saved?.label === region.getAttribute('aria-label')) { region.scrollTop = saved.top; region.scrollLeft = saved.left; }
+  if (!painted) { window.scrollBy({ top: content.getBoundingClientRect().top - top, behavior: 'instant' }); return; }
+  let restored = 0;
+  for (const draft of drafts) {
+    const control = [...content.querySelectorAll<HTMLSelectElement>('select[data-participant-id]')].find(node => node.dataset.participantId === draft.participantId);
+    if (control && [...control.options].some(option => option.value === draft.volunteerId)) {
+      control.value = draft.volunteerId; control.closest('form')!.dataset.dirty = 'true'; restored++;
+    }
   }
+  const preservation = restored ? ` ${restored} unsaved roster link${restored === 1 ? '' : 's'} preserved. Review the latest source details before linking.` : '';
+  const invalid = drafts.length > restored ? ' Some link drafts need review because a participant is no longer linkable or a roster record changed.' : '';
+  if (message || preservation || invalid) notify(message + preservation + invalid);
   if (focusSelector) {
     const target = content.querySelector<HTMLElement>(focusSelector);
     if (target) { if (!target.matches('button, input, select, textarea')) target.tabIndex = -1; target.focus({ preventScroll: true }); }
@@ -176,7 +222,7 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
     return [session ? scheduleSession(session) : 'Session', cancel];
   });
   if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No assignments.');
-  const recurring = card('Weekly availability', 'Update in WhenIsGood.'); content.append(recurring);
+  const recurring = card('Weekly availability', 'Update in WhenIsGood. Availability is checked automatically every 30 minutes.'); recurring.append(el('p', `Last successful sync: ${syncTime(data.freshness?.lastSuccessAt ?? null)}.${data.freshness?.problem ? ' The latest check failed; your saved availability is preserved.' : ''}`, 'muted sync-freshness')); content.append(recurring);
   if (data.recurringAvailability.length) {
     const saved = table(['Day', 'Time'], data.recurringAvailability.map(interval => [days[interval.weekday - 1]!, timeRange(interval.start, interval.end)]));
     saved.querySelector('table')?.classList.add('weekly-availability-table'); recurring.append(saved);
@@ -221,6 +267,7 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
   const previewButton = button('Preview schedule', async () => {
     const preview = await api.call('admin.schedule.preview', {});
     if (preview.dataRevision !== data.dataRevision) throw new ApiError('STALE_REVISION', 'Reload the schedule and review a new preview.');
+    content.dataset.reviewing = 'true';
     previewRevision = preview.dataRevision;
     schedule.querySelector('h2')!.textContent = 'Schedule preview';
     description.textContent = 'Preview · Unpublished changes';
@@ -232,6 +279,7 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
   });
   toolbar.append(append(el('div', '', 'actions'), previewButton, publish, back)); schedule.append(scheduleArea);
   function renderPublished() {
+    delete content.dataset.reviewing;
     previewRevision = undefined; publish.disabled = true; publish.hidden = true; back.hidden = true;
     previewButton.textContent = 'Preview schedule'; previewButton.classList.remove('quiet'); schedule.querySelector('h2')!.textContent = 'Session schedule';
     description.textContent = publishedDescription; staleNotice.hidden = false; scheduleArea.replaceChildren();
@@ -254,7 +302,7 @@ function candidatesView(data: ResultOf<'center.candidate.read'>) {
     await refreshView('candidates', 'Proposal saved.', '.proposal-form button[type=submit]');
   });
   editor.node.classList.add('proposal-form');
-  const cancelEdit = button('Cancel editing', () => { editing = undefined; heading.textContent = 'New proposal'; editor.submit.textContent = 'Save proposal'; center.value = data.centers.find(item => item.active)?.id ?? ''; day.value = '1'; start.value = '09:00'; end.value = '10:00'; staff.value = '1'; end.setCustomValidity(''); cancelEdit.hidden = true; center.focus(); }, 'quiet'); cancelEdit.hidden = true;
+  const cancelEdit = button('Cancel editing', () => { editing = undefined; delete editor.node.dataset.dirty; heading.textContent = 'New proposal'; editor.submit.textContent = 'Save proposal'; center.value = data.centers.find(item => item.active)?.id ?? ''; day.value = '1'; start.value = '09:00'; end.value = '10:00'; staff.value = '1'; end.setCustomValidity(''); cancelEdit.hidden = true; center.focus(); }, 'quiet'); cancelEdit.hidden = true;
   const proposalActions = el('div', '', 'form-actions'); append(proposalActions, editor.submit, cancelEdit);
   append(editor.node, heading, field('Center', center), field('Weekday', day), field('From', start), field('Until', end), field('Requested staffing', staff), proposalActions);
   [start, end].forEach(control => control.addEventListener('input', () => end.setCustomValidity('')));
@@ -262,7 +310,7 @@ function candidatesView(data: ResultOf<'center.candidate.read'>) {
   const rows = data.candidates.map(({ candidate, coverage }) => {
     const actions = el('div', '', 'actions');
     if (candidate.status === 'candidate') {
-      actions.append(button('Edit', () => { editing = candidate; heading.textContent = 'Edit proposal'; editor.submit.textContent = 'Save changes'; cancelEdit.hidden = false; end.setCustomValidity(''); center.value = candidate.centerId; day.value = String(candidate.weekday); start.value = candidate.start; end.value = candidate.end; staff.value = String(candidate.requestedStaffCount); start.focus(); editor.node.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'center' }); }, 'quiet'));
+      actions.append(button('Edit', () => { editing = candidate; markDirty(editor.node); heading.textContent = 'Edit proposal'; editor.submit.textContent = 'Save changes'; cancelEdit.hidden = false; end.setCustomValidity(''); center.value = candidate.centerId; day.value = String(candidate.weekday); start.value = candidate.start; end.value = candidate.end; staff.value = String(candidate.requestedStaffCount); start.focus(); editor.node.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'center' }); }, 'quiet'));
       actions.append(button('Withdraw', async () => { if (!confirmAction('Withdraw this unconfirmed proposal?')) return; await api.call('center.candidate.update', { candidateId: candidate.id, status: 'cancelled' }, data.dataRevision); await refreshView('candidates', 'Proposal withdrawn.', '.proposal-list-heading'); }, 'quiet danger'));
       if (administrator) actions.append(button('Confirm', async () => { if (!confirmAction(`Confirm ${data.centers.find(item => item.id === candidate.centerId)?.name ?? 'this center'} on the next ${days[candidate.weekday - 1]} at ${timeRange(candidate.start, candidate.end)}? This creates the next dated session.`)) return; await api.call('admin.center.candidate.confirm', { candidateId: candidate.id }, data.dataRevision); await refreshView('candidates', 'Proposal confirmed and its next dated session created.', '.proposal-list-heading'); }));
     }
@@ -272,47 +320,48 @@ function candidatesView(data: ResultOf<'center.candidate.read'>) {
   if (rows.length) panel.append(table(['Center', 'Time', 'Staff requested', 'Advisory coverage', 'Volunteers', 'Status', 'Actions'], rows)); else empty(panel, 'No proposals.');
 }
 
-function importsView(initialRevision: number, volunteers: readonly Volunteer[]) {
-  const panel = card('Import availability', 'Import availability from WhenIsGood. Matching participants are linked automatically.'); content.append(panel);
-  let revision = initialRevision;
-  let reviewed: ResultOf<'admin.import.whenIsGood.preview'>['import'] | undefined;
-  const resultArea = el('div');
-  const previewForm = form(panel, 'Preview latest availability', async () => {
-    const result = await api.call('admin.import.whenIsGood.preview', {}, revision);
-    revision = result.dataRevision; reviewed = result.import; renderImport();
-  });
-  previewForm.node.append(previewForm.submit); panel.append(resultArea);
-  function renderImport() {
-    if (!reviewed) return;
-    const run = reviewed;
-    resultArea.replaceChildren(el('h3', 'Import preview'), el('p', `${run.status === 'failed' ? 'Preview failed' : run.promotedAt ? 'Promoted' : 'Ready to import'} · ${run.participantCount ?? run.stagedAvailability.length} participants · ${run.matchedCount ?? 0} matched · ${run.unmatched.length} unmatched`, 'notice'));
-    if (run.status === 'failed') { empty(resultArea, `${run.diagnostic || 'This results page could not be parsed.'} Current availability has not changed.`); return; }
-    resultArea.append(table(['Participant', 'Email', 'Volunteer', 'Weekly availability'], run.stagedAvailability.map(participant => [participant.name, participant.email ?? '—', volunteers.find(item => item.id === participant.volunteerId)?.name ?? 'Unmatched', participant.intervals.map(interval => `${days[interval.weekday - 1]} ${timeRange(interval.start, interval.end)}`).join('; ') || 'No intervals'])));
-    if (run.promotedAt) return;
-    const unmatched = run.stagedAvailability.filter(participant => !participant.volunteerId);
-    const mappingPanel = card('Unmatched participants', 'Choose a volunteer only for participants who could not be matched automatically.');
-    if (unmatched.length) resultArea.append(mappingPanel);
-    else resultArea.append(el('p', 'All participants are matched. No mapping changes are needed.', 'muted'));
-    const overrides = el('details'); overrides.append(el('summary', 'Change matched volunteers'));
-    if (run.stagedAvailability.some(participant => participant.volunteerId)) resultArea.append(overrides);
-    for (const participant of run.stagedAvailability) {
-      const mappingTarget = participant.volunteerId ? overrides : mappingPanel;
-      const picker = select([['', 'Choose a volunteer'], ...volunteers.map(item => [item.id, `${item.name} (${item.email})`] as [string, string])], participant.volunteerId ?? ''); picker.required = true;
-      const mappingForm = form(mappingTarget, 'Save mapping', async () => {
-        const result = await api.call('admin.import.mapping.upsert', { sourceParticipantId: participant.id, ...(participant.email ? { sourceEmail: participant.email } : {}), ...(participant.name ? { sourceName: participant.name } : {}), volunteerId: picker.value }, revision);
-        revision = result.dataRevision;
-        const refreshed = await api.call('admin.import.whenIsGood.preview', {}, revision); revision = refreshed.dataRevision; reviewed = refreshed.import; renderImport(); notify('Mapping saved and the import preview refreshed.');
-      });
-      append(mappingForm.node, field(`${participant.name} → volunteer`, picker), mappingForm.submit);
-    }
-    const promote = button('Import matched availability', async () => {
-      if (!reviewed) return;
-      if (!confirmAction(`Replace weekly availability for the ${reviewed.matchedCount ?? 0} matched participants? Unmatched participants will not be promoted.`)) return;
-      const result = await api.call('admin.import.whenIsGood.promote', {}, revision); revision = result.dataRevision; reviewed = result.import; renderImport(); notify('Matched availability has been promoted.');
+function importsView(data: ResultOf<'admin.sync.read'>) {
+  const panel = card('Availability sync', 'WhenIsGood availability is checked automatically every 30 minutes. Matched volunteers update automatically.'); content.append(panel);
+  const last = el('p', `Last successful sync: ${syncTime(data.status.lastSuccessAt)}.`, 'muted sync-freshness'); panel.append(last);
+  panel.append(el('p', `Last attempt: ${syncTime(data.status.lastAttemptAt)} · Last availability or participant change: ${syncTime(data.status.effectiveChangeAt)}`, 'muted'));
+  const outcome = data.status.outcome === 'never' ? 'Waiting for the first check.' : data.status.outcome === 'failed' ? 'The latest check failed. Saved availability is preserved.' : `${data.status.participantCount} participants · ${data.status.matchedCount} matched · ${data.status.pendingCount} needing attention`;
+  panel.append(el('p', outcome, 'notice'));
+  if (data.status.diagnostic) panel.append(el('p', data.status.diagnostic, 'status error'));
+  panel.append(button('Sync now', async () => {
+    const checked = await api.call('admin.sync.now', {}, data.dataRevision);
+    await refreshView('imports', checked.status.outcome === 'failed' ? 'Sync failed. Saved availability is preserved; see the status for details.' : checked.status.outcome === 'unchanged' ? 'Availability is up to date.' : 'Availability synchronized.', '.content button', {});
+  }));
+  const pending = card('Participants needing attention', 'Link to an existing roster record. New volunteers must complete the usual enrollment process first; a submission does not grant account access.'); content.append(pending);
+  const reasons = { new: 'New submission', ambiguous: 'Conflicting or duplicate identity', 'missing-identity': 'Missing email or identity information', 'unstable-identity': 'Stable source identity needed' };
+  if (!data.pending.length) empty(pending, 'All current participants are matched. No links are needed.');
+  else {
+    const rows = data.pending.map(participant => {
+      const participantCell = el('div');
+      append(participantCell, el('p', participant.conflictingSubmissions ? 'Conflicting source entries' : participant.name || 'Unnamed participant'), el('p', `WhenIsGood ID: ${participant.id}`, 'muted'));
+      if (participant.conflictingSubmissions) {
+        const entries = el('details'); entries.append(el('summary', `Show all ${participant.conflictingSubmissions.length} submissions`));
+        for (const submission of participant.conflictingSubmissions) entries.append(el('p', `${submission.name || 'Unnamed participant'} · ${submission.email || 'No email'} · ${submission.intervals.map(interval => `${days[interval.weekday - 1]} ${timeRange(interval.start, interval.end)}`).join('; ') || 'No weekly availability submitted'}`));
+        participantCell.append(entries);
+      }
+      const availability = participant.intervals.map(interval => `${days[interval.weekday - 1]} ${timeRange(interval.start, interval.end)}`).join('; ') || 'No weekly availability submitted';
+      const action = el('div');
+      if (!participant.present) action.append(el('p', 'No longer in the latest results. Saved roster availability is preserved.', 'muted'));
+      else if (participant.identityStable === false || !participant.resolvable) action.append(el('p', 'Correct the source identity before linking this submission.', 'muted'));
+      else {
+        const picker = select([['', 'Choose a volunteer'], ...data.volunteers.map(v => [v.id, `${v.name} (${v.email})`] as [string, string])]); picker.required = true; picker.setAttribute('aria-label', `Roster link for ${participant.name || 'unnamed participant'} (WhenIsGood ID: ${participant.id})`); picker.dataset.focusKey = `mapping-${participant.id}`; picker.dataset.participantId = participant.id;
+        const mappingForm = form(action, 'Link participant', async () => {
+          await api.call('admin.import.mapping.upsert', { sourceParticipantId: participant.id, volunteerId: picker.value }, data.dataRevision);
+          await refreshView('imports', 'Participant linked and the latest saved source availability applied.', '.content button', { consumedParticipantId: participant.id });
+        });
+        append(mappingForm.node, field(`Roster link for ${participant.name || 'unnamed participant'}`, picker), mappingForm.submit);
+      }
+      return [participantCell, participant.conflictingSubmissions ? 'See source entries' : participant.email || 'No email', participant.conflictingSubmissions ? 'No availability applied. Inspect each source entry.' : availability, `${reasons[participant.reason]}${participant.present ? '' : ' · absent from latest results'}`, action];
     });
-    promote.disabled = !!run.promotedAt || !run.matchedCount;
-    append(resultArea, el('p', 'Importing replaces weekly availability for all matched volunteers. Unmatched participants are skipped.', 'muted'), promote);
+    const region = table(['Participant', 'Email', 'Submitted availability', 'Needs attention', 'Roster link'], rows); region.classList.add('pending-participants'); pending.append(region);
   }
+  const history = el('details', '', 'card'); history.append(el('summary', `Import history (${data.imports.length})`)); content.append(history);
+  if (data.imports.length) history.append(table(['Checked', 'Status', 'Participants', 'Matched'], [...data.imports].reverse().map(run => [syncTime(run.startedAt ?? null), run.status, String(run.participantCount ?? run.stagedAvailability.length), String(run.matchedCount ?? 0)])));
+  else empty(history, 'No import history yet.');
 }
 
 function insightsView(data: ResultOf<'admin.insights.read'>) {

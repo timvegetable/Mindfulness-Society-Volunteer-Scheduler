@@ -8,7 +8,7 @@ Run `npm run dev:browser`, wait for **Preview ready**, then open `http://localho
 
 Before navigating after a turn boundary, run `npm run dev:browser:status` with loopback access. It exits successfully only when the synthetic harness responds. If navigation previously failed, navigate to the intended localhost URL; reloading the browser's generated error page may reload a blocked data URL.
 
-This separate Vite configuration serves the harness only during development; the production build uses the normal entry point. The harness replaces fetch with synthetic responses, permits reads and previews, and rejects other operations. No database or private configuration is required.
+This separate Vite configuration serves the harness only during development; the production build uses the normal entry point. The harness replaces fetch with synthetic responses, simulates reads, previews, synchronization and participant links entirely in browser memory. Other operations are rejected. No database or private configuration is required.
 
 Resize the harness tab to the intended dimensions. Enter those dimensions in its expected width and height fields, or use `?width=390&height=844` in the URL. Click **Check current view**. The report verifies the target path, actual viewport, completed rendering, page containment, bounded table styles, sticky headers, row count, and keyboard focus attributes. A mismatch is a failed check; record the actual dimensions. This catches a resize applied to another tab and stale stylesheet state.
 
@@ -19,7 +19,7 @@ For interactive volunteer and center-contact UI testing without Google sign-in, 
 At desktop and mobile sizes:
 
 1. Check Schedule, then use **Preview schedule** and **Back to published schedule**.
-2. Open Import availability, select **Preview latest availability**. Check its participant table. This is synthetic staging, not an external fetch.
+2. Open Availability sync. Check the status and pending-participant table, then use **Sync now** and link a synthetic participant to a roster record. These are browser-memory simulations, with no external fetch or database write.
 3. Open Insights and check both tables. Change overlap sorting between weekday/time and descending count. Inspect count ties and select a heatmap interval to compare its names and count with the table.
 4. Open Center proposals and check its table.
 5. Focus each scroll region with Tab, press End, and confirm rows scroll while the header stays pinned. Scroll horizontally to reveal trailing columns. These native keyboard checks supplement the report's programmatic scroll measurement.
@@ -28,7 +28,7 @@ Capture screenshots only after the report passes. Include its URL, dimensions, p
 
 ## Automated checks
 
-Install Chromium once with `npx playwright install chromium`, then run `npm run test:browser` with loopback access. The suite owns its preview process; stop any manually launched preview on port 5174 first. It checks the same layout report at desktop, tablet, and mobile sizes, logo loading, schedule preview and return, keyboard scrolling, and tables in imports, insights, and center proposals. It uses the system font fallback to avoid third-party network dependencies.
+Install Chromium once with `npx playwright install chromium`, then run `npm run test:browser` with loopback access. The suite owns its preview process; stop any manually launched preview on port 5174 first. It checks the same layout report at desktop, tablet, and mobile sizes, logo loading, schedule preview and return, keyboard scrolling, and tables in synchronization, insights, and center proposals. Role checks simulate source updates and verify no periodic requests, explicit reload, draft preservation, stale-save recovery, focus, and scroll. It uses the system font fallback to avoid third-party network dependencies.
 
 Failures retain screenshots and traces under ignored `test-results/`; CI uploads that directory. These tests exercise native Chromium rendering against synthetic responses, not authentication or Worker integration. They supplement visual inspection rather than judge visual quality.
 

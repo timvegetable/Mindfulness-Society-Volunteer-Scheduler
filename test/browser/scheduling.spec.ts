@@ -44,9 +44,9 @@ test('workspace tables stay contained and schedule preview returns to published 
     await expect.poll(() => region.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
   }
 
-  await page.getByRole('button', { name: 'Import availability', exact: true }).click();
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
   await expect(page.getByLabel('WhenIsGood results code')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Preview latest availability', exact: true }).click();
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
   await expect(page.locator('.table-scroll')).toHaveCount(1);
   await checkLayout(page);
   await page.getByRole('button', { name: 'Insights', exact: true }).click();
@@ -72,4 +72,73 @@ test('admin reload keeps the current reading position', async ({ page }) => {
     await expect(page.locator('.content')).toHaveAttribute('aria-busy', 'false');
     expect(Math.abs(await page.evaluate(() => window.scrollY) - before)).toBeLessThanOrEqual(2);
   }
+});
+
+
+test('administrator sees automatic synchronization status and pending submissions without a preview step', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  await page.goto('/__browser-check');
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Availability sync', exact: true })).toBeVisible();
+  await expect(page.getByText(/Last successful sync:/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Participants needing attention', exact: true })).toBeVisible();
+  await expect(page.locator('.pending-participants tbody tr')).toHaveCount(40);
+  await expect(page.getByRole('button', { name: 'Promote matched availability' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Availability is up to date');
+});
+
+
+test('an administrator links a pending submission and immediately sees the resolved queue', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  await page.goto('/__browser-check');
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  const row = page.locator('.pending-participants tbody tr').first();
+  await row.getByRole('combobox').selectOption('synthetic-v0');
+  await row.getByRole('button', { name: 'Link participant', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Participant linked');
+  await expect(page.locator('.pending-participants tbody tr')).toHaveCount(39);
+});
+
+
+test('Sync now and linking preserve other unsaved roster links', async ({ page }) => {
+  await page.goto('/__browser-check');
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  const first = page.getByRole('combobox', { name: 'Roster link for Synthetic Volunteer 01 (WhenIsGood ID: p-synthetic-v0)', exact: true });
+  const second = page.getByRole('combobox', { name: 'Roster link for Synthetic Volunteer 02 (WhenIsGood ID: p-synthetic-v1)', exact: true });
+  await first.selectOption('synthetic-v0'); await second.selectOption('synthetic-v1');
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect(first).toHaveValue('synthetic-v0'); await expect(second).toHaveValue('synthetic-v1');
+  await page.locator('.pending-participants tbody tr').first().getByRole('button', { name: 'Link participant', exact: true }).click();
+  await expect(page.locator('.pending-participants tbody tr')).toHaveCount(39);
+  await expect(second).toHaveValue('synthetic-v1');
+  await expect(page.getByRole('alert')).toContainText('unsaved roster link');
+});
+
+
+test('conflicting source identities expose every submission and block ambiguous links', async ({ page }) => {
+  await page.goto('/__browser-check?collision=1');
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  const collision = page.locator('.pending-participants tbody tr').first();
+  await expect(collision).toContainText('Conflicting source entries');
+  await collision.getByText('Show all 2 submissions', { exact: true }).click();
+  await expect(collision).toContainText('Synthetic Volunteer 01');
+  await expect(collision).toContainText('Monday 9:00 AM–10:00 AM');
+  await expect(collision).toContainText('Synthetic Volunteer 02');
+  await expect(collision).toContainText('Wednesday 1:00 PM–2:00 PM');
+  await expect(collision.getByRole('combobox')).toHaveCount(0);
+  await expect(collision).toContainText('Correct the source identity');
+});
+
+test('a roster link changed during a refresh stays available for review', async ({ page }) => {
+  await page.goto('/__browser-check?latency=300');
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  await expect(page.locator('.content')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect(page.locator('.content')).toHaveAttribute('aria-busy', 'true');
+  const picker = page.getByRole('combobox', { name: 'Roster link for Synthetic Volunteer 01 (WhenIsGood ID: p-synthetic-v0)', exact: true });
+  await picker.selectOption('synthetic-v0');
+  await expect(page.locator('.content')).toHaveAttribute('aria-busy', 'false');
+  await expect(picker).toHaveValue('synthetic-v0');
+  await expect(page.getByRole('alert')).toContainText('newer edits were kept');
 });

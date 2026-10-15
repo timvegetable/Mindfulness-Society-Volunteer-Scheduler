@@ -14,7 +14,13 @@ The repository uses the current Effect 4 beta, pinned by `package-lock.json`. Wr
 
 Initialize the **local** database. `schema.sql` drops and recreates its tables, so use it only for disposable local data:
 
-If your local database is already initialized and contains the private roster, skip initialization and seed loading. The commands below are for a new local database.
+If your local database is already initialized and contains the private roster, skip initialization and seed loading. Apply the additive synchronization migration before starting this version; it preserves the roster and import history:
+
+```sh
+WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false npx wrangler d1 execute DB --local --file=migrations/0002_synchronization.sql
+```
+
+The initialization commands below are for a new local database.
 
 ```sh
 npm run db:init
@@ -100,7 +106,13 @@ npx wrangler secret bulk gmail-secrets.production.local.json --config wrangler.p
 
 For Gmail, skip the Resend key and domain setup in the production procedure below. Live email delivery remains a separate verification step. A `workers.dev` website address is sufficient; Gmail sends from the authorized account rather than that website domain.
 
-The WhenIsGood import uses the single society results page configured in `src/worker/config.ts`. Administrators preview the latest availability and confirm the import without entering a results code.
+Availability synchronization uses the single society results page configured in `src/worker/config.ts`. Cloudflare invokes the Worker every **30 minutes**, even with all browsers closed. The interval is operator-configurable through `triggers.crons` in `wrangler.jsonc`; the default is `*/30 * * * *`. No separately managed server or Google session is required for scheduled execution.
+
+Administrators open **Availability sync** to see durable status, pending participants, and import history, or use **Sync now**. Resolved participants update weekly availability automatically; explicit empty availability clears only those represented volunteers. Missing participants, dated exceptions, assignments, cancellations, backups, and proposals are preserved. New or ambiguous submissions stay in the administrator queue until linked to an existing roster record. Enrollment and account approval remain separate. Source failures retain the last valid state and show sanitized diagnostics.
+
+Browsers read saved data on page load/sign-in, view navigation, and **Reload view**. There is no periodic or visibility-triggered browser polling. An open page can therefore remain older than the latest scheduled check until reloaded. Unsaved forms and reviewed previews stay in place; reload asks before discarding them, and saves racing an effective synchronization change receive the existing stale-revision message.
+
+Legacy import previews and history remain readable. Once synchronization has attempted a check, legacy promotion is rejected so an old staged snapshot cannot overwrite synchronized availability.
 
 ## Validation
 
@@ -126,11 +138,15 @@ GitHub Actions runs these checks on pushes and pull requests, with a manual run 
 - `src/shared/` contains Effect Schemas and pure intervals, availability, scheduling, coverage, and insights.
 - `src/worker/` contains typed Effect workflows, capability services, D1 repositories, and the HTTP boundary.
 - `src/client/` contains the SPA and response validation. Google credentials remain in memory only.
-- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql` is the additive production migration.
+- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql` and `migrations/0002_synchronization.sql` are additive migrations.
 
 Every mutation requires a reviewed `expectedRevision` and an `idempotencyKey`. Replays are scoped by actor and operation and compare a canonical serialization of validated, normalized payloads. Identical retries return the stored response bytes even after other writes advance the revision; changed input with the same key is rejected.
 
 Repository snapshots are read in one D1 batch. A mutation batch begins with a revision assertion that causes a database constraint failure when the expected revision is stale. Domain changes, exactly one global revision increment, any scheduling-input increment, 24-hour replay cleanup, and the successful response record commit together. Any failure rolls the batch back. Application handlers never issue raw SQL. This relies on [D1's transactional batch contract](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) and is tested with concurrent local D1 requests.
+
+Synchronization shares the fetch/parser/matching rules and transactional commits across scheduled execution, Sync now, and participant linking. Status generations fence overlapping source checks. One retry re-reads state after a conflicting human write; an older in-flight check cannot overwrite a newer completed check. Unchanged normalized source content adds no import/provenance rows and advances neither domain nor scheduling revisions. Check timestamps and failure status commit independently. Idempotency responses retain the existing 24-hour window; scheduled redeliveries use the event time as their durable key.
+
+The 30-minute interval means 48 scheduled executions per day. Repository writes use one JSON-bound statement per changed table, avoiding a query for every interval and the bound-parameter limit. Scheduled synchronization reads only its required tables, leaving unrelated records and existing interval provenance untouched; mutation replay records contain status and revisions rather than a copy of the growing history. A disposable D1 test enforces the free-plan 50-query invocation limit with 100 participants and 500 intervals. These checks do not measure deployed CPU time or daily row quotas. See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
 Publication retains old outputs and chooses the greatest completed output revision. Schedule preview writes nothing. Candidate confirmation consumes one proposal into its next dated occurrence. Advisory candidate coverage does not reserve volunteers. Insights are computed from current data, without a persisted cache.
 
@@ -147,11 +163,13 @@ After reviewing and exporting a current database backup, apply only the additive
 npx wrangler d1 export mindfulness-scheduler-prod --remote --config wrangler.production.local.json --output=backup.local.sql
 # PRODUCTION WRITE: explicit approval required.
 npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0001_idempotency.sql
+# PRODUCTION WRITE: explicit approval required before releasing synchronization.
+npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0002_synchronization.sql
 # PRODUCTION SECRET WRITE: explicit approval required; enter the key interactively.
 npx wrangler secret put EMAIL_API_KEY --config wrangler.production.local.json
 ```
 
-Run the full validation suite and a dry run using the reviewed production config before deploying. Then, only after separate explicit deployment approval:
+Verify the reviewed production config includes the 30-minute Cron Trigger, then run the full validation suite and a dry run before deploying. Then, only after separate explicit deployment approval:
 
 ```sh
 # PRODUCTION DEPLOYMENT: explicit approval required.

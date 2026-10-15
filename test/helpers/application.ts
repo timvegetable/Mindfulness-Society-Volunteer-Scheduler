@@ -7,7 +7,7 @@ import { isMutation, type Operation } from '../../src/shared/api/operations';
 import type { ResultOf } from '../../src/shared/api/schemas';
 import { Database } from '../../src/worker/services/Database';
 import { AuthService } from '../../src/worker/services/AuthService';
-import { fixedClock } from '../../src/worker/services/Clock';
+import { Clock } from '../../src/worker/services/Clock';
 import { sequentialIds } from '../../src/worker/services/IdGenerator';
 import { EmailService, type EmailMessage } from '../../src/worker/services/EmailService';
 import { WhenIsGoodClient } from '../../src/worker/services/WhenIsGoodClient';
@@ -22,26 +22,28 @@ export function success<O extends Operation>(result: ApiResult<O>): ResultOf<O> 
   if (!result.ok) throw new Error(`Expected success, received ${result.error.code}: ${result.error.message}`);
   return result.data;
 }
-export async function createApplication(options: { emailFails?: boolean; fetchFails?: boolean; fixture?: string; instant?: string } = {}) {
+export async function createApplication(options: { emailFails?: boolean; fetchFails?: boolean; fixture?: string; instant?: string; fetchResults?: () => Promise<string> } = {}) {
   const local = await createTestDatabase();
   const notifications: EmailMessage[] = [];
   const fetches: string[] = [];
   let html = await readFile(new URL(`../fixtures/${options.fixture ?? 'import-normal.html'}`, import.meta.url), 'utf8');
   let sequence = 0;
+  let now = new Date(options.instant ?? '2026-10-04T12:00:00.000Z');
+  let fetchFails = options.fetchFails ?? false;
   const layer = Layer.mergeAll(
     Layer.succeed(Database, local.service),
     Layer.succeed(AuthService, { verify: credential => Object.hasOwn(emails, credential)
       ? Effect.succeed({ email: emails[credential as Actor] })
       : Effect.fail(new AppError('UNAUTHORIZED', 'Invalid test credential.')) }),
-    fixedClock(options.instant ?? '2026-10-04T12:00:00.000Z'), sequentialIds('workflow'),
+    Layer.succeed(Clock, { now: Effect.sync(() => new Date(now)) }), sequentialIds('workflow'),
     Layer.succeed(EmailService, { send: message => Effect.gen(function* () {
       notifications.push(message);
       if (options.emailFails) yield* Effect.fail(new AppError('INTERNAL_ERROR', 'Synthetic email failure.'));
     }) }),
     Layer.succeed(WhenIsGoodClient, { fetchResults: resultsCode => Effect.gen(function* () {
       fetches.push(resultsCode);
-      if (options.fetchFails) return yield* Effect.fail(new AppError('INVALID_REQUEST', 'Synthetic fetch failure.'));
-      return html;
+      if (fetchFails) return yield* Effect.fail(new AppError('INVALID_REQUEST', 'Synthetic fetch failure.'));
+      return options.fetchResults ? yield* Effect.tryPromise({ try: options.fetchResults, catch: () => new AppError('INVALID_REQUEST', 'Synthetic fetch failure.') }) : html;
     }) }),
   );
   async function rawRequest(raw: unknown): Promise<string> {
@@ -52,7 +54,7 @@ export async function createApplication(options: { emailFails?: boolean; fetchFa
     const raw = { operation, payload, credential: actor, ...(isMutation(operation) ? { expectedRevision: revision, idempotencyKey: `request-${++sequence}` } : {}), ...metadata };
     return JSON.parse(await rawRequest(raw)) as ApiResult<O>;
   }
-  return { ...local, notifications, fetches, rawRequest, request, setHtml: (value: string) => { html = value; }, read: () => Effect.runPromise(local.service.read) };
+  return { ...local, layer, setNow: (value: string) => { now = new Date(value); }, setFetchFails: (value: boolean) => { fetchFails = value; }, notifications, fetches, rawRequest, request, setHtml: (value: string) => { html = value; }, read: () => Effect.runPromise(local.service.read) };
 }
 export type Application = Awaited<ReturnType<typeof createApplication>>;
 
