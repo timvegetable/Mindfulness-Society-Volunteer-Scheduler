@@ -1,6 +1,6 @@
 # Synchronization release evidence — issue #6
 
-Prepared October 14, 2026 (America/New_York). The initial release is deployed; a legacy-history compatibility fix and further deployed verification remain pending. This record contains sanitized evidence only.
+Prepared October 14, 2026 (America/New_York). The corrected release and first actual scheduled update are verified; the unchanged follow-up, quota suitability and remaining role verification are pending. This record contains sanitized evidence only.
 
 ## Version and review
 
@@ -49,9 +49,25 @@ The original migration command, retained for audit only, was:
 WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false npx wrangler d1 execute DB --remote --config wrangler.production.local.json --file=migrations/0002_synchronization.sql
 ```
 
-Deployment of the corrected application version requires explicit approval of that new version. The 30-minute trigger is already enabled by the approved initial deployment. Manual Sync now, participant linking, source-submission changes, and email tests remain outside the authorization.
+The operator separately approved corrected application commit `7bb6851f6491ea82a99ed078e5aa299579bc4d52`. It is deployed as Worker version `783e158f-2e27-4571-8746-49f614cb4bed` with the existing `*/30 * * * *` trigger. Availability sync and Reload view now work, with both legacy imports readable and no error alert. Browser reload required a fresh Google sign-in because credentials remain in memory. A private Worker tail observed no additional API invocations during 64 seconds with that view open; the administrator then signed out before the first cron boundary. Manual Sync now, participant linking, source-submission changes, and email tests remain outside the authorization.
+
+The operator identified three accessible email accounts. A read-only lookup found only the terpmail address enrolled, with administrator and center-contact roles; the other two addresses have no app user records. Thus a deployed volunteer-only check, and a center-contact-only isolation check, remain unverified. No roles or accounts were changed to manufacture evidence.
 
 Read-only Cloudflare analytics access works. Initial D1 daily metrics for October 15 UTC showed 47 read queries, 1,699 rows read, one write query and three rows written (the migration). These preliminary totals include release checks, precede the first scheduled invocation, and do not establish representative synchronization quota usage. Worker metrics were accessible with zero reported invocation errors in the initial window; an application error envelope can still occur inside an otherwise successful invocation.
+
+### First actual scheduled invocation
+
+With the administrator signed out, Cloudflare invoked the scheduled handler at `2026-10-15T02:00:33.844Z` (10:00 p.m. Eastern, October 14). The tail reported `cron: */30 * * * *`, outcome `ok`, zero exceptions, 29 ms CPU and 2,027 ms wall time. Durable status recorded attempt and success at `2026-10-15T02:00:34.126Z`, outcome `changed`, eight source participants, seven matched and one pending.
+
+Domain and scheduling-input revisions advanced from 0/0 to 1/1. Import count advanced from two to three; provenance count advanced from 138 to 180. A read-only post-run export was restored privately and compared with the pre-release backup: centers, volunteers, users, dated exceptions, proposals, sessions, scheduling runs, assignments, backups and import mappings were identical. Both prior import records and every prior provenance record were also identical. No interactive administrator session, manual sync, participant linking or source edits were used to obtain this evidence.
+
+The unchanged follow-up is due at the 02:30 UTC / 10:30 p.m. Eastern boundary. Verify a later actual success advances attempt/success timestamps while retaining revisions 1/1, three imports and 180 provenance rows if normalized source content remains unchanged. Do not manufacture unchanged content or invoke synchronization manually.
+
+The first invocation's 29 ms CPU exceeds Cloudflare's documented [10 ms free-plan CPU limit](https://developers.cloudflare.com/workers/platform/limits/) for Cron Triggers. Cloudflare documents some flexibility for infrequent overruns, but this successful sample does not establish reliable free-plan suitability. Observed authenticated read requests also used 14–23 ms. CPU optimization or an explicitly approved appropriate plan may be needed; increasing the interval reduces daily work but does not fix per-invocation CPU. No plan or billing changes were made. The account subscription endpoint returned HTTP 403, so the actual billing plan was not independently confirmed.
+
+At 02:02 UTC, the aggregate analytics API had not yet included the successful scheduled invocation or its writes; its release-window totals were 176 read queries, 6,305 rows read, one write query and three rows written. These lagging totals include diagnostic reads and are not the scheduled invocation's query/row costs. Re-query scheduled-event CPU and D1 minute/day aggregates after ingestion before claiming quota fit. See [D1 metrics](https://developers.cloudflare.com/d1/observability/metrics-analytics/) and [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/).
+
+A proposed recurring background observer was rejected by automatic approval review as an unrequested recurring action involving private production reads and documentation publishing. No automation was created. A scheduled follow-up requires explicit operator authorization; all presently gathered evidence is recorded here.
 
 Before closing #6, record the deployed version, same-origin client and Google sign-in checks, role-specific reads and participant privacy, existing schedule, load/navigation/Reload behavior, an actual scheduled run and unchanged follow-up, and measured invocation errors, CPU and D1 query/row usage. Forty-eight scheduled executions per day is the configured rate, not measured free-plan compliance.
 
