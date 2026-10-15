@@ -36,7 +36,7 @@ const content = (participants: StagedParticipant[]) => JSON.stringify(participan
 const weeklyContent = (intervals: WeeklyInterval[]) => JSON.stringify(normalizeWeeklyIntervals(intervals.map(({ weekday, start, end, timeZone }) => ({ weekday, start, end, timeZone }))));
 
 /** Shared source application for polls and mapping resolution; no database or authentication tricks. */
-export function applySynchronizedParticipants(state: Snapshot, participants: ImportParticipant[], config: AppConfig, now: Date, actor: SyncActor, checkedSource = true, checkId: string | null = null) {
+export function applySynchronizedParticipants(state: Snapshot, participants: ImportParticipant[], now: Date, actor: SyncActor, checkedSource = true, checkId: string | null = null) {
   return Effect.gen(function* () {
     const ids = yield* IdGenerator;
     const previous = state.synchronizations[0];
@@ -119,7 +119,7 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
       const superseded = (before.synchronizations[0]?.checkId ?? null) !== (started.synchronizations[0]?.checkId ?? null);
       let changed = false;
       if (!superseded) {
-        if (fetched.ok) changed = yield* applySynchronizedParticipants(after, fetched.participants, config, now, actor, true, checkId);
+        if (fetched.ok) changed = yield* applySynchronizedParticipants(after, fetched.participants, now, actor, true, checkId);
         else {
           const previous = before.synchronizations[0];
           after.synchronizations = [{ ...emptySyncStatus(), ...previous, id: 'whenIsGood', generation: (previous?.generation ?? 0) + 1, checkId,

@@ -8,7 +8,7 @@ Run `npm run dev:browser`, wait for **Preview ready**, then open `http://localho
 
 Before navigating after a turn boundary, run `npm run dev:browser:status` with loopback access. It exits successfully only when the synthetic harness responds. If navigation previously failed, navigate to the intended localhost URL; reloading the browser's generated error page may reload a blocked data URL.
 
-This separate Vite configuration serves the harness only during development; the production build uses the normal entry point. The harness replaces fetch with synthetic responses, simulates reads, previews, synchronization and participant links entirely in browser memory. Other operations are rejected. No database or private configuration is required.
+This opt-in Vite configuration serves the harness interactively or builds it for browser tests; the production build uses the normal entry point. Both modes use the same HTML entries and synthetic responses. The harness replaces fetch with synthetic responses, simulates reads, previews, synchronization and participant links entirely in browser memory. Other operations are rejected. No database or private configuration is required.
 
 Resize the harness tab to the intended dimensions. Enter those dimensions in its expected width and height fields, or use `?width=390&height=844` in the URL. Click **Check current view**. The report verifies the target path, actual viewport, completed rendering, page containment, bounded table styles, sticky headers, row count, and keyboard focus attributes. A mismatch is a failed check; record the actual dimensions. This catches a resize applied to another tab and stale stylesheet state.
 
@@ -28,9 +28,15 @@ Capture screenshots only after the report passes. Include its URL, dimensions, p
 
 ## Automated checks
 
-Install Chromium once with `npx playwright install chromium`, then run `npm run test:browser` with loopback access. The suite owns its preview process; stop any manually launched preview on port 5174 first. It checks the same layout report at desktop, tablet, and mobile sizes, logo loading, schedule preview and return, keyboard scrolling, and tables in synchronization, insights, and center proposals. Role checks simulate source updates and verify no periodic requests, explicit reload, draft preservation, stale-save recovery, focus, and scroll. It uses the system font fallback to avoid third-party network dependencies.
+Install Chromium once with `npx playwright install chromium`, then run `npm run test:browser` with loopback access. The suite builds the synthetic entries once into a unique temporary directory and serves those fixed assets, without hot reload. Later source edits do not change the running suite; start a new run to validate them. The temporary build is removed when the owned server stops.
+
+Automated checks use port 5175, independently of the interactive preview on 5174. Override the test port with `BROWSER_TEST_PORT=5180 npm run test:browser` when needed. An occupied test port fails startup; the runner does not reuse or stop someone else's server.
+
+The suite checks the same layout report at desktop, tablet, and mobile sizes, logo loading, schedule preview and return, keyboard scrolling, and tables in synchronization, insights, and center proposals. Role checks simulate source updates and verify no periodic requests, explicit reload, draft preservation, stale-save recovery, focus, and scroll. It uses the system font fallback to avoid third-party network dependencies.
 
 Failures retain screenshots and traces under ignored `test-results/`; CI uploads that directory. These tests exercise native Chromium rendering against synthetic responses, not authentication or Worker integration. They supplement visual inspection rather than judge visual quality.
+
+The functional suite also checks both friendly interactive routes against a disposable Vite server, including successful JavaScript responses for their module entries. A successful HTML response alone does not establish that the harness can load.
 
 ## Design and asset inspection
 

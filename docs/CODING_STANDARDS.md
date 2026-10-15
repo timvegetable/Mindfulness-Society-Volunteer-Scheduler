@@ -16,6 +16,8 @@ Trace each requested surface to its data and user action. A sortable volunteer t
 
 Review complete user workflows, not just isolated controls. Distinguish current state from a proposed preview, automatic results from unresolved choices, and optional overrides from required actions. A successful automatic match should not look like unfinished administrative work.
 
+For asynchronous reads that replace a view, review what users can change between request start and response. Include typing, selections, programmatic Edit actions, and reviewed previews. Check that newer edits survive and that their save actions retain the revision the user reviewed; a dirty check made only before the request does not cover the whole workflow.
+
 Display counts must describe the records shown. Compare empty, partial, and complete staffing states, and clarify how cancelled sessions are represented. Review terminology, local time formatting, and responsive layout together with the user's stated audience.
 
 ## Calibrate the report

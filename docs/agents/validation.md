@@ -4,6 +4,10 @@
 
 Before a change, inspect `package.json`, the CI workflow, and the validation section of [README.md](../../README.md). Those files own the commands and configuration; use their current definitions.
 
+## Finish review before broad validation
+
+During implementation, run focused checks at the affected boundaries and typecheck changes. Review the resulting diff and resolve findings with focused regression checks before the final full-suite run. Run broad validation against the corrected version, then commit. If that validation exposes a defect, fix it and repeat the checks warranted by the change; report which version the evidence covers.
+
 ## Run local checks with the required permissions
 
 Local D1 tests use Miniflare, which binds a loopback Worker socket. An `EPERM` error while listening on `127.0.0.1` means the runtime could not start under the current permissions; it provides no evidence about the application assertions. Use the execution tool's approved loopback access and rerun the same check. Report runtime setup failures separately from assertion failures, including when establishing a regression against the original code.

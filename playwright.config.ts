@@ -1,5 +1,9 @@
 import { defineConfig } from '@playwright/test';
 
+const port = Number(process.env.BROWSER_TEST_PORT ?? '5175');
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('BROWSER_TEST_PORT must be an integer from 1 to 65535.');
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: './test/browser',
   testMatch: '**/*.spec.ts',
@@ -7,7 +11,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:5174',
+    baseURL,
     browserName: 'chromium',
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
@@ -18,8 +22,9 @@ export default defineConfig({
     { name: 'mobile', use: { viewport: { width: 390, height: 844 } } },
   ],
   webServer: {
-    command: 'npm run dev:browser',
-    url: 'http://localhost:5174/__browser-check',
+    command: 'node scripts/browser-test-server.mjs',
+    env: { BROWSER_TEST_PORT: String(port) },
+    url: `${baseURL}/__browser-check`,
     reuseExistingServer: false,
     gracefulShutdown: { signal: 'SIGTERM', timeout: 5_000 },
     timeout: 60_000,

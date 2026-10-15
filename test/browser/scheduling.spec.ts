@@ -9,6 +9,17 @@ async function checkLayout(page: Page) {
   expect(report.viewport).toEqual(page.viewportSize());
 }
 
+test('automated browser checks serve built assets without a source or hot-reload endpoint', async ({ request }) => {
+  for (const path of ['/__browser-check', '/__role-check']) {
+    const response = await request.get(path);
+    expect(response.ok()).toBe(true);
+    const html = await response.text();
+    expect(html).toContain('/assets/');
+    expect(html).not.toContain('/@vite/client');
+  }
+  expect((await request.get('/src/client/app.ts')).status()).toBe(404);
+});
+
 test('workspace tables stay contained and schedule preview returns to published state', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

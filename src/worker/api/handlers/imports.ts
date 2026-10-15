@@ -73,7 +73,7 @@ export function upsertMapping(ctx: HandlerContext, input: MappingInput) {
       const participants = latest.stagedAvailability.map(({ volunteerId: _id, pendingReason: _reason, ...participant }) => participant);
       Object.assign(latest, stageParticipants(participants, ctx.state.volunteers, ctx.state.importMappings));
     }
-    if (synchronized) yield* applySynchronizedParticipants(ctx.state, synchronized.participants.map(({ volunteerId: _id, pendingReason: _reason, ...row }) => row), ctx.config, ctx.now, { kind: 'administrator', id: ctx.user.id }, false);
+    if (synchronized) yield* applySynchronizedParticipants(ctx.state, synchronized.participants.map(({ volunteerId: _id, pendingReason: _reason, ...row }) => row), ctx.now, { kind: 'administrator', id: ctx.user.id }, false);
     return { mapping };
   });
 }

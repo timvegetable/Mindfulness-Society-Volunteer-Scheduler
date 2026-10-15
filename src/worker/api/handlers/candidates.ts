@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import type { Candidate, Weekday } from '../../../shared/domain/models';
+import type { Weekday } from '../../../shared/domain/models';
 import { candidateCoverage, candidateSession, confirmedDateCoverage } from '../../../shared/domain/candidates';
 import { sessionsOverlap } from '../../../shared/domain/availability';
 import { validateInterval } from '../../../shared/domain/intervals';

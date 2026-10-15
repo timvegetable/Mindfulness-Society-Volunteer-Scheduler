@@ -6,6 +6,8 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["@cloudflare/workers-types", "node", "vitest/globals"],
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
@@ -13,6 +15,6 @@
     "esModuleInterop": true,
     "resolveJsonModule": true
   },
-  "include": ["src/worker", "src/shared", "test", "vite.config.ts", "vite.browser.config.ts", "vitest.config.ts"],
+  "include": ["src/worker", "src/shared", "test", "vite.config.ts", "vite.browser.config.ts", "vitest.config.ts", "playwright.config.ts"],
   "exclude": ["test/unit/client*.test.ts", "test/browser"]
 }

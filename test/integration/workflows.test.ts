@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { operations, isMutation, type Operation } from '../../src/shared/api/operations';
-import { createApplication, addPublishedFixture, success, interval, candidateInput, type Application, type Actor } from '../helpers/application';
+import { createApplication, addPublishedFixture, success, interval, candidateInput, type Application } from '../helpers/application';
 
 const apps: Application[] = [];
 async function application(options: Parameters<typeof createApplication>[0] = {}) {
