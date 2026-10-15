@@ -7,13 +7,15 @@ interface Table {
   key: TableKey;
   name: string;
   columns: readonly string[];
+  properties: readonly string[];
   json?: readonly string[];
   booleans?: readonly string[];
   schedulingInput?: boolean;
 }
 
-function table(key: TableKey, name: string, columns: string, extra: Omit<Table, 'key' | 'name' | 'columns'> = {}): Table {
-  return { key, name, columns: columns.split(' '), ...extra };
+function table(key: TableKey, name: string, columns: string, extra: Omit<Table, 'key' | 'name' | 'columns' | 'properties'> = {}): Table {
+  const names = columns.split(' ');
+  return { key, name, columns: names, properties: names.map(property), ...extra };
 }
 
 /** Parent tables precede their children, so inserts preserve foreign keys. */
@@ -85,19 +87,19 @@ function restoreLegacyParticipants(rows: unknown[]): unknown[] {
 }
 
 export function decodeRow(table: Table, row: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(table.columns.map(column => {
+  return Object.fromEntries(table.columns.map((column, index) => {
     const value = row[column];
     const decoded: unknown = table.json?.includes(column)
       ? decodeJson(table, column, value)
       : table.booleans?.includes(column) ? value === 1 : value;
-    return [property(column), decoded];
+    return [table.properties[index]!, decoded];
   }));
 }
 
 export function encodeRow(table: Table, row: object): SqlValue[] {
   const fields = row as Record<string, unknown>;
-  return table.columns.map(column => {
-    const value = fields[property(column)];
+  return table.columns.map((column, index) => {
+    const value = fields[table.properties[index]!];
     if (table.json?.includes(column)) return JSON.stringify(value ?? []);
     if (table.booleans?.includes(column)) return value ? 1 : 0;
     if (value == null) return null;
