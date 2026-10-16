@@ -1,5 +1,6 @@
+import { SynchronizationJobs } from '../synchronizationJobs';
 import { synchronize } from '../synchronization';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { AppError } from '../../shared/api/errors';
 import { RequestEnvelopeSchema, payloadSchemas, resultSchemas, type Operation } from '../../shared/api/schemas';
 import { normalizeWeeklyIntervals } from '../../shared/domain/intervals';
@@ -80,7 +81,11 @@ export function dispatch(raw: unknown, config: AppConfig) {
       }
       if (envelope.expectedRevision !== before.dataRevision) return yield* Effect.fail(new AppError('STALE_REVISION', 'Data changed. Reload before saving.'));
     }
-    if (operation === 'admin.sync.now') return yield* synchronize(config, { kind: 'administrator', id: user.id }, { key, fingerprint, before });
+    if (operation === 'admin.sync.now') {
+      const jobs = yield* Effect.serviceOption(SynchronizationJobs);
+      if (Option.isSome(jobs)) return yield* Effect.tryPromise({ try: () => jobs.value.start({ actor: { kind: 'administrator', id: user.id }, key, fingerprint, before, now }), catch: error => error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'Could not start the availability check.') });
+      return yield* synchronize(config, { kind: 'administrator', id: user.id }, { key, fingerprint, before });
+    }
     const state = write ? structuredClone(before) : before;
     const result = yield* handleOperation(operation, payload, { state, user, config, now });
     const dataRevision = before.dataRevision + (write ? 1 : 0);

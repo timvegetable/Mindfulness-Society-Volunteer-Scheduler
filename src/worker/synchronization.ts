@@ -7,7 +7,7 @@ import { normalizeImportEmail, normalizeImportName, parseWhenIsGood, stagePartic
 import { whenIsGoodSource, type AppConfig } from './config';
 import { canUseOperation } from './api/policies';
 import { applyImportedAvailability } from './importAvailability';
-import { Database, schedulingInputsChanged, type IdempotencyKey } from './services/Database';
+import { Database, schedulingInputsChanged, type IdempotencyKey, type CommitInput } from './services/Database';
 import { Clock } from './services/Clock';
 import { IdGenerator } from './services/IdGenerator';
 import { WhenIsGoodClient } from './services/WhenIsGoodClient';
@@ -41,7 +41,7 @@ const sourceContent = (participants: ImportParticipant[]) => JSON.stringify(part
   id, name, email, intervals, identityStable: identityStable !== false,
 })));
 
-async function digest(value: string): Promise<string> {
+export async function digest(value: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -90,7 +90,7 @@ export function applySynchronizedParticipants(state: Snapshot, participants: Imp
   });
 }
 
-function authorizeSyncActor(actor: SyncActor, state: Snapshot) {
+export function authorizeSyncActor(actor: SyncActor, state: Snapshot) {
   if (actor.kind === 'system') return Effect.void;
   const user = state.users.find(row => row.id === actor.id && row.active);
   if (!user) return Effect.fail(new AppError('UNAUTHORIZED', 'This account is no longer active.'));
@@ -116,7 +116,6 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
     // HTTP dispatch already checked the same durable key before handing off its snapshot.
     const replay = intent?.before ? null : checked ? checked.replay : yield* database.findIdempotency(key, now.toISOString());
     if (replay) return replay.response;
-    const checkId = JSON.stringify([key.actorId, key.operation, key.idempotencyKey]);
     const client = yield* WhenIsGoodClient;
     const downloaded = yield* client.fetchResults(whenIsGoodSource.resultId).pipe(Effect.match({
       onSuccess: html => ({ ok: true as const, html }),
@@ -136,49 +135,63 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
     let before = started;
     let complete = !database.readSynchronizationHead;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const unchanged = fetched.ok && before.synchronizedDataRevision === before.dataRevision
-        && !!before.synchronizations[0]
-        && (fetched.sourceHash === before.synchronizedSourceHash
-          || sourceContent(fetched.participants) === sourceContent(before.synchronizations[0].participants));
+      const unchanged = unchangedSource(before, fetched);
       if (fetched.ok && !unchanged && !complete) {
         before = yield* read;
         complete = true;
       }
-      yield* authorizeSyncActor(actor, before);
-      // Synchronization replaces availability/status arrays and appends history.
-      // Keep unrelated rows shared so diffing does not serialize them on every poll.
-      const after = { ...before, imports: [...before.imports], importedAvailability: [...before.importedAvailability] };
-      // Another poll completed while this response was in flight. Keep the newer snapshot.
-      const superseded = (before.synchronizations[0]?.checkId ?? null) !== (started.synchronizations[0]?.checkId ?? null);
-      let changed = false;
-      if (!superseded) {
-        if (unchanged) {
-          const previous = before.synchronizations[0]!;
-          after.synchronizations = [{ ...previous, generation: previous.generation + 1, checkId,
-            lastAttemptAt: now.toISOString(), lastSuccessAt: now.toISOString(), outcome: 'unchanged', diagnostic: null,
-            pending: previous.pending.map(row => row.present ? { ...row, lastSeenAt: now.toISOString() } : row) }];
-        } else if (fetched.ok) changed = yield* applySynchronizedParticipants(after, fetched.participants, now, actor, true, checkId);
-        else {
-          const previous = before.synchronizations[0];
-          after.synchronizations = [{ ...emptySyncStatus(), ...previous, id: 'whenIsGood', generation: (previous?.generation ?? 0) + 1, checkId,
-            lastAttemptAt: now.toISOString(), outcome: 'failed', diagnostic: fetched.error,
-            participants: previous?.participants ?? [], pending: previous?.pending ?? [] }];
-        }
-      }
-      const dataRevision = before.dataRevision + Number(changed);
-      const schedulingInputRevision = before.schedulingInputRevision + Number(schedulingInputsChanged(before, after));
-      const data = yield* Effect.try({ try: () => Schema.decodeUnknownSync(resultSchemas['admin.sync.now'])({ status: syncStatus(after), dataRevision, schedulingInputRevision }),
-        catch: () => new AppError('INTERNAL_ERROR', 'Invalid synchronization response.') });
-      const response = JSON.stringify({ ok: true, data });
-      const committed = yield* database.commit({ before, after, key, fingerprint, response, createdAt: now.toISOString(), advanceDataRevision: changed, recordSynchronization: fetched.ok && !superseded,
-        ...(fetched.ok ? { synchronizedSourceHash: fetched.sourceHash } : {}) })
+      const prepared = yield* prepareSynchronization(actor, fetched, before, started.synchronizations[0]?.checkId ?? null, now, key, fingerprint);
+      const committed = yield* database.commit(prepared)
         .pipe(Effect.match({ onSuccess: () => null, onFailure: error => error }));
-      if (!committed) return response;
+      if (!committed) return prepared.response;
       const replay = yield* database.findIdempotency(key, now.toISOString());
       if (replay) return replay.response;
       if (committed.code !== 'STALE_REVISION') return yield* Effect.fail(committed);
       if (attempt === 0) { before = yield* readHead; complete = !database.readSynchronizationHead; }
     }
     return yield* Effect.fail(new AppError('CONFLICT', 'Synchronization could not finish because data kept changing. Try Sync now again.'));
+  });
+}
+
+export type ParsedSource = { ok: true; participants: ImportParticipant[]; sourceHash: string } | { ok: false; error: string };
+export function unchangedSource(before: Snapshot, fetched: ParsedSource): boolean {
+  return fetched.ok && before.synchronizedDataRevision === before.dataRevision && !!before.synchronizations[0]
+    && (fetched.sourceHash === before.synchronizedSourceHash || sourceContent(fetched.participants) === sourceContent(before.synchronizations[0].participants));
+}
+
+export function prepareSynchronization(actor: SyncActor, fetched: ParsedSource, before: Snapshot, startedCheckId: string | null, now: Date, key: IdempotencyKey, fingerprint: string) {
+  return Effect.gen(function* () {
+    yield* authorizeSyncActor(actor, before);
+    const checkId = JSON.stringify([key.actorId, key.operation, key.idempotencyKey]);
+    const unchanged = unchangedSource(before, fetched);
+    // Synchronization replaces availability/status arrays and appends history.
+    // Keep unrelated rows shared so diffing does not serialize them on every poll.
+    const after = { ...before, imports: [...before.imports], importedAvailability: [...before.importedAvailability] };
+    // Another poll completed while this response was in flight. Keep the newer snapshot.
+    const superseded = (before.synchronizations[0]?.checkId ?? null) !== startedCheckId;
+    let changed = false;
+    if (!superseded) {
+      if (unchanged) {
+        const previous = before.synchronizations[0]!;
+        after.synchronizations = [{ ...previous, generation: previous.generation + 1, checkId,
+          lastAttemptAt: now.toISOString(), lastSuccessAt: now.toISOString(), outcome: 'unchanged', diagnostic: null,
+          pending: previous.pending.map(row => row.present ? { ...row, lastSeenAt: now.toISOString() } : row) }];
+      } else if (fetched.ok) changed = yield* applySynchronizedParticipants(after, fetched.participants, now, actor, true, checkId);
+      else {
+        const previous = before.synchronizations[0];
+        after.synchronizations = [{ ...emptySyncStatus(), ...previous, id: 'whenIsGood', generation: (previous?.generation ?? 0) + 1, checkId,
+          lastAttemptAt: now.toISOString(), outcome: 'failed', diagnostic: fetched.error,
+          participants: previous?.participants ?? [], pending: previous?.pending ?? [] }];
+      }
+    }
+    const dataRevision = before.dataRevision + Number(changed);
+    const schedulingInputRevision = before.schedulingInputRevision + Number(schedulingInputsChanged(before, after));
+    const data = yield* Effect.try({ try: () => Schema.decodeUnknownSync(resultSchemas['admin.sync.now'])({ status: syncStatus(after), dataRevision, schedulingInputRevision }),
+      catch: () => new AppError('INTERNAL_ERROR', 'Invalid synchronization response.') });
+    const response = JSON.stringify({ ok: true, data });
+
+    const input: CommitInput = { before, after, key, fingerprint, response, createdAt: now.toISOString(), advanceDataRevision: changed,
+      recordSynchronization: fetched.ok && !superseded, ...(fetched.ok ? { synchronizedSourceHash: fetched.sourceHash } : {}) };
+    return input;
   });
 }

@@ -42,6 +42,8 @@ export const ImportMappingSchema = object({ id: text, source: text, sourcePartic
 export const SyncStatusSchema = object({ lastAttemptAt: Schema.NullOr(Schema.String), lastSuccessAt: Schema.NullOr(Schema.String),
   effectiveChangeAt: Schema.NullOr(Schema.String), outcome: Schema.Literals(['never', 'changed', 'unchanged', 'failed']),
   diagnostic: Schema.NullOr(Schema.String), participantCount: revision, matchedCount: revision, pendingCount: revision });
+export const SyncJobSchema = object({ id: text, state: Schema.Literals(['queued','running','succeeded','failed']), createdAt: text, updatedAt: text, diagnostic: Schema.NullOr(Schema.String) });
+const jobResult = { job: Schema.optionalKey(Schema.NullOr(SyncJobSchema)) };
 export const FreshnessSchema = object({ lastSuccessAt: Schema.NullOr(Schema.String), problem: Schema.Boolean });
 export const PendingParticipantSchema = object({ ...ImportParticipantSchema.fields,
   resolvable: Schema.Boolean, reason: Schema.Literals(['new', 'ambiguous', 'missing-identity', 'unstable-identity']), present: Schema.Boolean,
@@ -73,10 +75,10 @@ export const payloadSchemas = {
 } satisfies Record<Operation, Schema.Top>;
 const revisions = { dataRevision: revision, schedulingInputRevision: revision };
 const scheduleResult = object({ ...revisions, run: Schema.NullOr(SchedulingRunSchema), assignments: Schema.Array(AssignmentSchema), backups: Schema.Array(BackupSchema), shortfalls: Schema.Array(ShortfallSchema), sessions: Schema.Array(SessionSchema), volunteers: Schema.Array(VolunteerSchema), stale: Schema.Boolean });
-const syncResult = object({ ...revisions, status: SyncStatusSchema, pending: Schema.Array(PendingParticipantSchema),
+const syncResult = object({ ...revisions, ...jobResult, status: SyncStatusSchema, pending: Schema.Array(PendingParticipantSchema),
   imports: Schema.Array(ImportRunSchema), volunteers: Schema.Array(VolunteerSchema), mappings: Schema.Array(ImportMappingSchema) });
 export const resultSchemas = {
-  'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, status: SyncStatusSchema }),
+  'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, ...jobResult, status: SyncStatusSchema }),
   'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema) }),
   'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
   'volunteer.availability.recurring.update': object({ ...revisions, intervals: Schema.Array(RecurringIntervalSchema) }),

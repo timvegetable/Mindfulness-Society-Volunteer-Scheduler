@@ -1,5 +1,6 @@
+import { SynchronizationJobs } from '../../synchronizationJobs';
 import { freshness, synchronizationView } from '../../synchronization';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { whenIsGoodSource } from '../../config';
 import { payloadSchemas, type Operation } from '../../../shared/api/schemas';
 import { computeInsights } from '../../../shared/domain/insights';
@@ -14,7 +15,11 @@ export function handleOperation(operation: Operation, payload: unknown, ctx: Han
   // The dispatcher already validated this payload. Decode here to narrow each branch's type.
   const input = <O extends Operation>(name: O) => Schema.decodeUnknownSync(payloadSchemas[name])(payload);
   switch (operation) {
-    case 'admin.sync.read': return Effect.succeed(synchronizationView(ctx.state));
+    case 'admin.sync.read': return Effect.gen(function* () {
+      const jobs = yield* Effect.serviceOption(SynchronizationJobs);
+      const job = Option.isSome(jobs) ? yield* Effect.promise(() => jobs.value.latest()) : undefined;
+      return { ...synchronizationView(ctx.state), ...(job !== undefined ? { job } : {}) };
+    });
     case 'admin.sync.now': throw new Error('Synchronization is dispatched through its shared workflow.');
     case 'session.me': return Effect.succeed({ user: ctx.user, centers: ctx.state.centers.filter((center) => canUseCenter(ctx.user, center.id)) });
     case 'volunteer.dashboard': return dashboard(ctx).pipe(Effect.map(data => ({ ...data, freshness: freshness(ctx.state) })));

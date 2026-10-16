@@ -45,6 +45,9 @@ export interface SyncStatus {
   outcome: 'never' | 'changed' | 'unchanged' | 'failed'; diagnostic: string | null;
   participantCount: number; matchedCount: number; pendingCount: number;
 }
+export interface SyncJobSummary {
+  id: string; state: 'queued' | 'running' | 'succeeded' | 'failed'; createdAt: string; updatedAt: string; diagnostic: string | null;
+}
 export interface Synchronization extends SyncStatus {
   id: string; generation: number; checkId: string | null; participants: StagedParticipant[]; pending: PendingParticipant[];
 }

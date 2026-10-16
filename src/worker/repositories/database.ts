@@ -115,33 +115,35 @@ export async function findIdempotency(db: D1Database, key: IdempotencyKey, now: 
  * back the entire batch on any statement failure, including the final unique
  * idempotency insert. The revision check is therefore inside the write transaction.
  */
-export async function commit(db: D1Database, input: CommitInput): Promise<void> {
+export interface CommitStatement { sql: string; values: (string | number | null)[] }
+const statement = (sql: string, ...values: (string | number | null)[]): CommitStatement => ({ sql, values });
+
+export function prepareCommit(input: CommitInput): CommitStatement[] {
   const { before, after, key, fingerprint, response, createdAt } = input;
   const diffs = tables.map(table => ({ table, ...tableDiff(table, before, after) }));
   if (input.advanceDataRevision === false && diffs.some(diff => diff.table.key !== 'synchronizations' && (diff.removed.length || diff.changed.length))) throw storageError();
   const schedulingInputsChanged = diffs.some(diff => diff.table.schedulingInput && (diff.removed.length > 0 || diff.changed.length > 0));
   const increment = input.advanceDataRevision === false ? 0 : 1;
-  const statements: D1PreparedStatement[] = [db.prepare(`
+  const statements: CommitStatement[] = [statement(`
     INSERT INTO meta (key, value) VALUES ('dataRevision',
       CASE WHEN COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'dataRevision'), 0) = ?
         THEN CAST(? + ? AS TEXT) ELSE NULL END)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).bind(before.dataRevision, before.dataRevision, increment)];
+  `, before.dataRevision, before.dataRevision, increment)];
 
   // Status-only checks do not advance the domain revision. Fence their generation
   // inside the same transaction so overlapping polls cannot overwrite newer results.
   const previousSync = before.synchronizations[0];
   const nextSync = after.synchronizations[0];
   if (nextSync && nextSync.generation !== previousSync?.generation) {
-    statements.push(db.prepare(`INSERT INTO meta (key, value) VALUES ('syncFence',
+    statements.push(statement(`INSERT INTO meta (key, value) VALUES ('syncFence',
       CASE WHEN COALESCE((SELECT generation FROM synchronizations WHERE id = 'whenIsGood'), 0) = ?
-        THEN 'ok' ELSE NULL END) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-      .bind(previousSync?.generation ?? 0));
+        THEN 'ok' ELSE NULL END) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, previousSync?.generation ?? 0));
   }
 
   // Delete children before parents, then insert/update parents before children.
   for (const { table, removed } of [...diffs].reverse()) {
-    if (removed.length) statements.push(db.prepare(`DELETE FROM ${table.name} WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(removed)));
+    if (removed.length) statements.push(statement(`DELETE FROM ${table.name} WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(removed)));
   }
   for (const { table, changed } of diffs) {
     if (!changed.length) continue;
@@ -149,27 +151,37 @@ export async function commit(db: D1Database, input: CommitInput): Promise<void> 
     // One JSON binding avoids both per-row query costs and D1's bound-parameter limit.
     const values = table.columns.map((_, index) => `json_extract(value, '$[${index}]')`).join(', ');
     const sql = `INSERT INTO ${table.name} (${table.columns.join(', ')}) SELECT ${values} FROM json_each(?) WHERE true ON CONFLICT(id) DO UPDATE SET ${update}`;
-    statements.push(db.prepare(sql).bind(JSON.stringify(changed)));
+    statements.push(statement(sql, JSON.stringify(changed)));
   }
   if (schedulingInputsChanged) {
-    statements.push(db.prepare(`INSERT INTO meta (key, value) VALUES ('schedulingInputRevision', '1')
+    statements.push(statement(`INSERT INTO meta (key, value) VALUES ('schedulingInputRevision', '1')
       ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`));
   }
   if (input.recordSynchronization && before.synchronizedDataRevision !== before.dataRevision + increment) {
-    statements.push(db.prepare(`INSERT INTO meta (key, value) VALUES ('synchronizedDataRevision', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(String(before.dataRevision + increment)));
+    statements.push(statement(`INSERT INTO meta (key, value) VALUES ('synchronizedDataRevision', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`, String(before.dataRevision + increment)));
   }
   if (input.recordSynchronization && input.synchronizedSourceHash && input.synchronizedSourceHash !== before.synchronizedSourceHash) {
-    statements.push(db.prepare(`INSERT INTO meta (key, value) VALUES ('synchronizedSourceHash', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(input.synchronizedSourceHash));
+    statements.push(statement(`INSERT INTO meta (key, value) VALUES ('synchronizedSourceHash', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`, input.synchronizedSourceHash));
   }
-  statements.push(db.prepare('DELETE FROM idempotency WHERE created_at < ?').bind(retentionCutoff(createdAt)));
-  statements.push(db.prepare(`INSERT INTO idempotency (actor_id, operation, idempotency_key, fingerprint, response, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)`).bind(key.actorId, key.operation, key.idempotencyKey, fingerprint, response, createdAt));
+  statements.push(statement('DELETE FROM idempotency WHERE created_at < ?', retentionCutoff(createdAt)));
+  statements.push(statement(`INSERT INTO idempotency (actor_id, operation, idempotency_key, fingerprint, response, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)`, key.actorId, key.operation, key.idempotencyKey, fingerprint, response, createdAt));
+  return statements;
+}
+
+export async function commit(db: D1Database, input: CommitInput): Promise<void> {
+  await executeCommit(db, prepareCommit(input));
+}
+
+export async function executeCommit(db: D1Database, statements: CommitStatement[]): Promise<void> {
   try {
-    await db.batch(statements);
+    await db.batch(statements.map(({ sql, values }) => db.prepare(sql).bind(...values)));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (/NOT NULL constraint failed: synchronization_jobs\.phase/.test(message)) throw new AppError('FORBIDDEN', 'This account can no longer synchronize availability.');
+    if (/NOT NULL constraint failed: synchronization_jobs\.version/.test(message)) throw new AppError('STALE_REVISION', 'The synchronization stage already advanced.');
     if (/NOT NULL constraint failed: meta\.value/.test(message)) {
       throw new AppError('STALE_REVISION', 'The data changed. Refresh and try again.');
     }
