@@ -99,6 +99,14 @@ A read-only aggregate audit found zero non-New-York values in recurring availabi
 
 Standards and Spec reviews found no outstanding issues in the corrected version. Final validation passed: 262 functional tests, 45 synthetic native-browser checks across desktop/tablet/mobile, strict typechecks, CSS formatting, client build and tracked/private production-config Worker dry runs. This New York-only candidate has not been deployed or measured in production; it does not yet establish free-plan CPU compliance.
 
+### October 16 approved New York-only deployment and measurement
+
+The operator explicitly approved deployment of `2a0d359` and one manual Sync now timing check. Worker version `3554f098-e77e-437f-bbec-25ba6443119d` now runs that candidate with the existing `*/30 * * * *` trigger; no migration was performed. The public client configuration returned HTTP 200 and `America/New_York`. The existing authenticated administrator session successfully reloaded Availability sync against the new Worker.
+
+The manual check succeeded at `2026-10-16T04:23:15.992Z` (October 16, 12:23 a.m. New York), with the visible confirmation “Availability is up to date.” Private tail telemetry identified the deployed version and recorded 53 ms CPU / 743 ms wall time, outcome `ok`, zero exceptions. The surrounding reads used 66 ms and 24 ms CPU. A read-only aggregate comparison confirmed unchanged revisions 1/1, three imports, 180 provenance rows, counts 8/7/1, and the original effective-change timestamp. Attempt and success timestamps advanced together; no duplicate history was created. Tail observation was stopped after the check.
+
+This successful invocation still exceeds the documented Workers Free 10 ms CPU allowance and does not establish free-plan suitability or a representative performance improvement. CPU fit and live volunteer-only/contact-only verification remain unresolved, so #6 remains open. No source submissions, user roles or billing settings were changed.
+
 ## Rollback
 
 Following explicit rollback approval, use Wrangler's rollback command with the private production config to restore Worker version `65b315ee-294e-45d3-9801-76473bed47d2`. Verify deployed handlers and Cron Trigger state; stop scheduled updates explicitly if necessary and authorized. Leave the additive table intact unless separately reviewed. Code rollback does not restore availability or any other database records: data restoration requires separate authorization and the reviewed private backup. No rollback was performed.
