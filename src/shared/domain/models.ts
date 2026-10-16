@@ -69,6 +69,8 @@ export interface Snapshot {
   schedulingRuns: SchedulingRun[]; assignments: Assignment[]; backups: Backup[]; imports: ImportRun[];
   importMappings: ImportMapping[]; importedAvailability: ImportedAvailability[];
   synchronizations: Synchronization[]; dataRevision: number; schedulingInputRevision: number;
+  /** Last domain revision fully reconciled with the saved source participants. */
+  synchronizedDataRevision: number | null;
 }
 export interface ProposedAssignment { sessionId: string; volunteerId: string }
 export interface ProposedBackup extends ProposedAssignment { position: number }
@@ -78,5 +80,5 @@ export interface CandidateWithCoverage { candidate: Candidate; coverage: Coverag
 export interface GridCell extends Interval { weekday: Weekday; volunteers: Volunteer[]; count: number }
 export interface Insights { leftoverVolunteers: Volunteer[]; grid: GridCell[] }
 export function emptySnapshot(): Snapshot {
-  return { centers: [], volunteers: [], users: [], recurringAvailability: [], availabilityExceptions: [], candidateSchedules: [], sessions: [], schedulingRuns: [], assignments: [], backups: [], imports: [], importMappings: [], importedAvailability: [], synchronizations: [], dataRevision: 0, schedulingInputRevision: 0 };
+  return { centers: [], volunteers: [], users: [], recurringAvailability: [], availabilityExceptions: [], candidateSchedules: [], sessions: [], schedulingRuns: [], assignments: [], backups: [], imports: [], importMappings: [], importedAvailability: [], synchronizations: [], dataRevision: 0, schedulingInputRevision: 0, synchronizedDataRevision: null };
 }

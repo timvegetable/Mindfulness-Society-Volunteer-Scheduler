@@ -36,8 +36,13 @@ export function normalizeWeeklyIntervals(intervals: readonly WeeklyInterval[]): 
 }
 export function coversInterval(intervals: readonly Interval[], target: Interval): boolean {
   validateInterval(target);
-  return normalizeIntervals(intervals).some((interval) => interval.start <= target.start && interval.end >= target.end);
+  return coversNormalizedInterval(normalizeIntervals(intervals), target);
 }
+/** Inputs must already be normalized and the target validated by their owner. */
+export function coversNormalizedInterval(intervals: readonly Interval[], target: Interval): boolean {
+  return intervals.some(interval => interval.start <= target.start && interval.end >= target.end);
+}
+
 export function intervalsOverlap(a: Interval, b: Interval): boolean { return a.start < b.end && b.start < a.end; }
 export function subtractIntervals(base: readonly Interval[], exclusions: readonly Interval[]): Interval[] {
   let remaining = normalizeIntervals(base);

@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import { applicationTimeZone } from '../shared/domain/models';
 import { AppError } from '../shared/api/errors';
 import { dispatchResponse, publicFailure } from './api/dispatch';
-import { appConfig, liveLayer, synchronizationLayer, type Bindings } from './runtime/live';
+import { appConfig, liveServices, synchronizationServices, type Bindings } from './runtime/live';
 import { readBoundedText } from './services/http';
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -14,7 +14,7 @@ export default {
   async scheduled(controller: ScheduledController, env: Bindings): Promise<void> {
     await Effect.runPromise(synchronize(appConfig(env), synchronizationSystemActor, {
       key: { actorId: synchronizationSystemActor.id, operation: 'system.sync', idempotencyKey: `scheduled-${controller.scheduledTime}` }, fingerprint: '{}',
-    }).pipe(Effect.provide(synchronizationLayer(env))));
+    }).pipe(Effect.provide(synchronizationServices(env))));
   },
   async fetch(request: Request, env: Bindings): Promise<Response> {
     const url = new URL(request.url);
@@ -30,7 +30,7 @@ export default {
       body = JSON.parse(await readBoundedText(new Response(request.body, { headers: request.headers }), 64 * 1024));
     } catch { return failure('INVALID_REQUEST', 'Expected a JSON request no larger than 64 KiB.', 400); }
     try {
-      const response = await Effect.runPromise(dispatchResponse(body, appConfig(env)).pipe(Effect.provide(liveLayer(env))));
+      const response = await Effect.runPromise(dispatchResponse(body, appConfig(env)).pipe(Effect.provide(liveServices(env))));
       return new Response(response, { headers });
     } catch {
       return failure('INTERNAL_ERROR', 'An unexpected error occurred.', 500);

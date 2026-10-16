@@ -1,6 +1,6 @@
 import type { Snapshot, StagedParticipant } from '../../shared/domain/models';
 
-type TableKey = Exclude<keyof Snapshot, 'dataRevision' | 'schedulingInputRevision'>;
+type TableKey = Exclude<keyof Snapshot, 'dataRevision' | 'schedulingInputRevision' | 'synchronizedDataRevision'>;
 type SqlValue = string | number | null;
 
 interface Table {
@@ -109,10 +109,19 @@ export function encodeRow(table: Table, row: object): SqlValue[] {
 }
 
 export function tableDiff(table: Table, before: Snapshot, after: Snapshot): { removed: string[]; changed: SqlValue[][] } {
-  const previous = new Map(before[table.key].map(row => [row.id, encodeRow(table, row)]));
-  const next = new Map(after[table.key].map(row => [row.id, encodeRow(table, row)]));
+  // Shared rows belong to immutable portions of the snapshot. Only changed rows
+  // need SQL encoding; nested changes in cloned mutation snapshots still compare by value.
+  if (before[table.key] === after[table.key]) return { removed: [], changed: [] };
+  const previous = new Map(before[table.key].map(row => [row.id, row]));
+  const next = new Map(after[table.key].map(row => [row.id, row]));
   if (next.size !== after[table.key].length) throw new Error(`Duplicate IDs in ${table.name}`);
   const removed = [...previous.keys()].filter(id => !next.has(id));
-  const changed = [...next].filter(([id, values]) => JSON.stringify(previous.get(id)) !== JSON.stringify(values)).map(([, values]) => values);
+  const changed: SqlValue[][] = [];
+  for (const [id, row] of next) {
+    const old = previous.get(id);
+    if (old === row) continue;
+    const values = encodeRow(table, row);
+    if (!old || JSON.stringify(encodeRow(table, old)) !== JSON.stringify(values)) changed.push(values);
+  }
   return { removed, changed };
 }

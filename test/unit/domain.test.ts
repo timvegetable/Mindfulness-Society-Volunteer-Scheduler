@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeIntervals, normalizeWeeklyIntervals, subtractIntervals, timeMinutes, coversInterval } from '../../src/shared/domain/intervals';
-import { availableForSession, eligibleVolunteer, overlayExceptions, sessionsOverlap } from '../../src/shared/domain/availability';
-import { currentAssignments, currentRun, generateSchedule, selectBackup } from '../../src/shared/domain/scheduler';
+import { availableForSession, eligibleVolunteer, overlayExceptions, sessionsOverlap, instantMilliseconds } from '../../src/shared/domain/availability';
+import { currentAssignments, currentRun, generateSchedule, schedulableSessions, selectBackup } from '../../src/shared/domain/scheduler';
 import { candidateCoverage, candidateSession, confirmedDateCoverage, nextOccurrence } from '../../src/shared/domain/candidates';
 import { computeInsights } from '../../src/shared/domain/insights';
 import { emptySnapshot, type Candidate, type Session, type Snapshot, type Volunteer } from '../../src/shared/domain/models';
@@ -102,6 +102,18 @@ describe('deterministic scheduler', () => {
     expect(generateSchedule(input, now).assignments.map((a) => a.sessionId)).toEqual(['class']);
     expect(generateSchedule(snapshot(), '2026-10-05T14:00:00Z').assignments).toEqual([]);
   });
+  it('keeps dated exceptions separate across recurring session weeks and recalculates after edits', () => {
+    const sessions = [session('first'), { ...session('second'), date: '2026-10-12' }, { ...session('third'), date: '2026-10-19' }];
+    const input = snapshot([volunteer('a'), volunteer('b')], sessions);
+    input.availabilityExceptions = [{ id: 'one-date', volunteerId: 'a', date: '2026-10-05', kind: 'unavailable', start: '09:00', end: '13:00', timeZone: zone }];
+    expect(generateSchedule(input, now).assignments).toEqual([
+      { sessionId: 'first', volunteerId: 'b' }, { sessionId: 'second', volunteerId: 'a' }, { sessionId: 'third', volunteerId: 'a' },
+    ]);
+    input.availabilityExceptions[0]!.date = '2026-10-12';
+    expect(generateSchedule(input, now).assignments).toEqual([
+      { sessionId: 'first', volunteerId: 'a' }, { sessionId: 'second', volunteerId: 'b' }, { sessionId: 'third', volunteerId: 'a' },
+    ]);
+  });
   it('chooses only the greatest completed run and its assignment revision', () => {
     const input = publish(snapshot());
     input.schedulingRuns.push({ ...input.schedulingRuns[0]!, id: 'new', outputRevision: 3, status: 'staged' }, { ...input.schedulingRuns[0]!, id: 'completed', outputRevision: 2 });
@@ -177,5 +189,16 @@ describe('current insights', () => {
     expect(computeInsights(input, { timeZone: zone, displayIncrementMinutes: 30, operatingHoursStart: '09:00', operatingHoursEnd: '10:00' }).leftoverVolunteers.map((v) => v.id)).toEqual(['b', 'c']);
     input.assignments[0]!.status = 'cancelled';
     expect(computeInsights(input, { timeZone: zone, displayIncrementMinutes: 30, operatingHoursStart: '09:00', operatingHoursEnd: '10:00' }).leftoverVolunteers).toHaveLength(3);
+  });
+});
+
+describe('New York daylight-saving conversion across repeated calculations', () => {
+  it('keeps spring gaps and autumn repeated hours consistent in future-session selection', () => {
+    expect(instantMilliseconds('2026-03-08', '02:30', zone)).toBe(Date.parse('2026-03-08T07:30:00Z'));
+    const autumn = { ...session('fall-session', 1, '01:30', '02:30'), date: '2026-11-01' };
+    for (let repeat = 0; repeat < 2; repeat++) {
+      expect(schedulableSessions({ sessions: [autumn] }, '2026-11-01T05:15:00Z')).toEqual([autumn]);
+      expect(schedulableSessions({ sessions: [autumn] }, '2026-11-01T06:15:00Z')).toEqual([]);
+    }
   });
 });

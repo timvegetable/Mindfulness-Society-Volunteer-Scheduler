@@ -35,6 +35,12 @@ const content = (participants: StagedParticipant[]) => JSON.stringify(participan
 })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
 const weeklyContent = (intervals: WeeklyInterval[]) => JSON.stringify(normalizeWeeklyIntervals(intervals.map(({ weekday, start, end, timeZone }) => ({ weekday, start, end, timeZone }))));
 
+// Exact parsed-source equality is deliberately narrower than semantic equality.
+// Cosmetic/order changes take the normal path, which still avoids extra history.
+const sourceContent = (participants: ImportParticipant[]) => JSON.stringify(participants.map(({ id, name, email, intervals, identityStable }) => ({
+  id, name, email, intervals, identityStable: identityStable !== false,
+})));
+
 /** Shared source application for polls and mapping resolution; no database or authentication tricks. */
 export function applySynchronizedParticipants(state: Snapshot, participants: ImportParticipant[], now: Date, actor: SyncActor, checkedSource = true, checkId: string | null = null) {
   return Effect.gen(function* () {
@@ -95,12 +101,16 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
     const clock = yield* Clock;
     const ids = yield* IdGenerator;
     const read = database.readSynchronization ?? database.read;
-    const started = intent?.before ?? (yield* read);
-    yield* authorizeSyncActor(actor, started);
+    const readHead = database.readSynchronizationHead ?? read;
     const now = yield* clock.now;
     const key = intent?.key ?? { actorId: actor.id, operation: 'system.sync', idempotencyKey: yield* ids.next };
     const fingerprint = intent?.fingerprint ?? '{}';
-    const replay = yield* database.findIdempotency(key, now.toISOString());
+    const checked = !intent?.before && database.readSynchronizationCheck
+      ? yield* database.readSynchronizationCheck(key, now.toISOString()) : null;
+    const started = intent?.before ?? checked?.snapshot ?? (yield* readHead);
+    yield* authorizeSyncActor(actor, started);
+    // HTTP dispatch already checked the same durable key before handing off its snapshot.
+    const replay = intent?.before ? null : checked ? checked.replay : yield* database.findIdempotency(key, now.toISOString());
     if (replay) return replay.response;
     const checkId = JSON.stringify([key.actorId, key.operation, key.idempotencyKey]);
     const client = yield* WhenIsGoodClient;
@@ -112,14 +122,29 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
       onFailure: () => ({ ok: false as const, error: 'Could not fetch the results page. It may be unavailable or exceed the size limit.' }),
     }));
     let before = started;
+    let complete = !database.readSynchronizationHead;
     for (let attempt = 0; attempt < 2; attempt++) {
+      const unchanged = fetched.ok && before.synchronizedDataRevision === before.dataRevision
+        && !!before.synchronizations[0]
+        && sourceContent(fetched.participants) === sourceContent(before.synchronizations[0].participants);
+      if (fetched.ok && !unchanged && !complete) {
+        before = yield* read;
+        complete = true;
+      }
       yield* authorizeSyncActor(actor, before);
-      const after = structuredClone(before);
+      // Synchronization replaces availability/status arrays and appends history.
+      // Keep unrelated rows shared so diffing does not serialize them on every poll.
+      const after = { ...before, imports: [...before.imports], importedAvailability: [...before.importedAvailability] };
       // Another poll completed while this response was in flight. Keep the newer snapshot.
       const superseded = (before.synchronizations[0]?.checkId ?? null) !== (started.synchronizations[0]?.checkId ?? null);
       let changed = false;
       if (!superseded) {
-        if (fetched.ok) changed = yield* applySynchronizedParticipants(after, fetched.participants, now, actor, true, checkId);
+        if (unchanged) {
+          const previous = before.synchronizations[0]!;
+          after.synchronizations = [{ ...previous, generation: previous.generation + 1, checkId,
+            lastAttemptAt: now.toISOString(), lastSuccessAt: now.toISOString(), outcome: 'unchanged', diagnostic: null,
+            pending: previous.pending.map(row => row.present ? { ...row, lastSeenAt: now.toISOString() } : row) }];
+        } else if (fetched.ok) changed = yield* applySynchronizedParticipants(after, fetched.participants, now, actor, true, checkId);
         else {
           const previous = before.synchronizations[0];
           after.synchronizations = [{ ...emptySyncStatus(), ...previous, id: 'whenIsGood', generation: (previous?.generation ?? 0) + 1, checkId,
@@ -132,13 +157,13 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
       const data = yield* Effect.try({ try: () => Schema.decodeUnknownSync(resultSchemas['admin.sync.now'])({ status: syncStatus(after), dataRevision, schedulingInputRevision }),
         catch: () => new AppError('INTERNAL_ERROR', 'Invalid synchronization response.') });
       const response = JSON.stringify({ ok: true, data });
-      const committed = yield* database.commit({ before, after, key, fingerprint, response, createdAt: now.toISOString(), advanceDataRevision: changed })
+      const committed = yield* database.commit({ before, after, key, fingerprint, response, createdAt: now.toISOString(), advanceDataRevision: changed, recordSynchronization: fetched.ok && !superseded })
         .pipe(Effect.match({ onSuccess: () => null, onFailure: error => error }));
       if (!committed) return response;
       const replay = yield* database.findIdempotency(key, now.toISOString());
       if (replay) return replay.response;
       if (committed.code !== 'STALE_REVISION') return yield* Effect.fail(committed);
-      if (attempt === 0) before = yield* read;
+      if (attempt === 0) { before = yield* readHead; complete = !database.readSynchronizationHead; }
     }
     return yield* Effect.fail(new AppError('CONFLICT', 'Synchronization could not finish because data kept changing. Try Sync now again.'));
   });

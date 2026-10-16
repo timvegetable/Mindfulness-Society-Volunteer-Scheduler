@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { AvailabilityException, WeeklyInterval, Assignment, Shortfall } from '../../../shared/domain/models';
 import { normalizeWeeklyIntervals } from '../../../shared/domain/intervals';
-import { instantFor } from '../../../shared/domain/availability';
+import { instantFor, instantMilliseconds } from '../../../shared/domain/availability';
 import { selectBackup } from '../../../shared/domain/scheduler';
 import { IdGenerator } from '../../services/IdGenerator';
 import { attempt, currentAssignments, currentRun, fail, type HandlerContext } from './context';
@@ -19,7 +19,7 @@ export function dashboard(ctx: HandlerContext) {
       assignments: currentAssignments(ctx.state).filter((row) => row.volunteerId === volunteer.id),
       recurringAvailability: ctx.state.recurringAvailability.filter((row) => row.volunteerId === volunteer.id),
       availabilityExceptions: ctx.state.availabilityExceptions.filter((row) => row.volunteerId === volunteer.id),
-      sessions: ctx.state.sessions.filter((session) => session.status !== 'cancelled' && instantFor(session.date, session.start, session.timeZone).epochMilliseconds > ctx.now.getTime()),
+      sessions: ctx.state.sessions.filter((session) => session.status !== 'cancelled' && instantMilliseconds(session.date, session.start, session.timeZone) > ctx.now.getTime()),
     };
   });
 }

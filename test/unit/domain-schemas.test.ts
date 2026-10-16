@@ -67,6 +67,16 @@ describe('shared API schemas', () => {
     for (const change of [{ date: '2026-02-30' }, { date: '2026-1-01' }, { start: '24:00' }, { start: '12:00', end: '11:00' }, { start: '11:00', end: '11:00' }, { timeZone: 'Invalid/Zone' }]) expect(() => decode({ ...valid, ...change })).toThrow();
     expect(() => Schema.decodeUnknownSync(payloadSchemas['center.candidate.update'])({ centerId: 'c1', ...weekly, weekday: 6 })).toThrow();
   });
+  it.each([
+    ['2000-02-29', true], ['1900-02-29', false], ['2024-02-29', true], ['2026-02-29', false],
+    ['0000-02-29', true], ['0099-01-01', true], ['2026-04-31', false], ['9999-12-31', true],
+  ])('validates the Gregorian date %s across leap years and year boundaries', (date, valid) => {
+    const decode = () => Schema.decodeUnknownSync(payloadSchemas['volunteer.availability.exception.create'])({
+      date, kind: 'available', start: '10:00', end: '11:00', timeZone: 'America/New_York',
+    });
+    if (valid) expect(decode().date).toBe(date);
+    else expect(decode).toThrow();
+  });
   it('requires all candidate creation fields, allows partial edits, and only permits cancellation status', () => {
     const decode = Schema.decodeUnknownSync(payloadSchemas['center.candidate.update']);
     expect(() => decode({ centerId: 'c1' })).toThrow();

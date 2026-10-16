@@ -59,7 +59,7 @@ export function dispatch(raw: unknown, config: AppConfig) {
     const auth = yield* AuthService;
     const identity = yield* auth.verify(envelope.credential);
     const database = yield* Database;
-    const before = yield* database.read;
+    const before = yield* (database.readForOperation?.(envelope.operation) ?? database.read);
     const user = before.users.find((row) => row.active && row.email.trim().toLowerCase() === identity.email.toLowerCase());
     if (!user) return yield* Effect.fail(new AppError('UNAUTHORIZED', 'This account is not active.'));
     const operation = envelope.operation;
@@ -81,7 +81,7 @@ export function dispatch(raw: unknown, config: AppConfig) {
       if (envelope.expectedRevision !== before.dataRevision) return yield* Effect.fail(new AppError('STALE_REVISION', 'Data changed. Reload before saving.'));
     }
     if (operation === 'admin.sync.now') return yield* synchronize(config, { kind: 'administrator', id: user.id }, { key, fingerprint, before });
-    const state = structuredClone(before);
+    const state = write ? structuredClone(before) : before;
     const result = yield* handleOperation(operation, payload, { state, user, config, now });
     const dataRevision = before.dataRevision + (write ? 1 : 0);
     const schedulingInputRevision = before.schedulingInputRevision + (write && schedulingInputsChanged(before, state) ? 1 : 0);

@@ -1,5 +1,5 @@
 import { Temporal } from '@js-temporal/polyfill';
-import { availableForSession, eligibleVolunteer, instantFor, sessionsOverlap } from './availability';
+import { availabilityForSessions, availableForSession, eligibleVolunteer, instantMilliseconds, sessionsOverlap } from './availability';
 import type { Assignment, Backup, ScheduleOutput, SchedulingRun, Session, Snapshot, Volunteer } from './models';
 
 export function currentRun(snapshot: Pick<Snapshot, 'schedulingRuns'>): SchedulingRun | null {
@@ -19,32 +19,35 @@ export function assignmentConflicts(snapshot: Pick<Snapshot, 'sessions'>, assign
 }
 export function rankVolunteers(volunteers: readonly Volunteer[], session: Session, snapshot: Snapshot): Volunteer[] {
   const assignments = currentAssignments(snapshot);
-  const hasContinuity = (volunteer: Volunteer) => assignments.some((assignment) => assignment.status === 'assigned' && assignment.volunteerId === volunteer.id && assignment.sessionId === session.id)
-    && !assignmentConflicts(snapshot, assignments, volunteer.id, session);
-  return [...volunteers].sort((a, b) => (a.readinessRank ?? 99) - (b.readinessRank ?? 99) || Number(hasContinuity(b)) - Number(hasContinuity(a)) || a.id.localeCompare(b.id));
+  const continuity = new Set(volunteers.filter(volunteer => assignments.some((assignment) => assignment.status === 'assigned' && assignment.volunteerId === volunteer.id && assignment.sessionId === session.id)
+    && !assignmentConflicts(snapshot, assignments, volunteer.id, session)).map(volunteer => volunteer.id));
+  return [...volunteers].sort((a, b) => (a.readinessRank ?? 99) - (b.readinessRank ?? 99) || Number(continuity.has(b.id)) - Number(continuity.has(a.id)) || a.id.localeCompare(b.id));
 }
 export function schedulableSessions(snapshot: Pick<Snapshot, 'sessions'>, now: string): Session[] {
-  const instant = Temporal.Instant.from(now);
+  const instant = Temporal.Instant.from(now).epochMilliseconds;
   return snapshot.sessions.filter((session) => ((session.kind === 'center' && session.status === 'locked') || (session.kind === 'univ100' && session.status === 'confirmed'))
-    && Temporal.Instant.compare(instantFor(session.date, session.start, session.timeZone), instant) > 0)
-    .sort((a, b) => Temporal.Instant.compare(instantFor(a.date, a.start, a.timeZone), instantFor(b.date, b.start, b.timeZone)) || a.id.localeCompare(b.id));
+    && instantMilliseconds(session.date, session.start, session.timeZone) > instant)
+    .sort((a, b) => instantMilliseconds(a.date, a.start, a.timeZone) - instantMilliseconds(b.date, b.start, b.timeZone) || a.id.localeCompare(b.id));
 }
 export function generateSchedule(snapshot: Snapshot, now: string): ScheduleOutput {
   const output: ScheduleOutput = { assignments: [], backups: [], shortfalls: [] };
   const sessions = schedulableSessions(snapshot, now);
+  const canAttend = availabilityForSessions(snapshot);
   const ranked = new Map<string, Volunteer[]>();
+  const proposed: Pick<Assignment, 'sessionId' | 'volunteerId' | 'status'>[] = [];
   for (const session of sessions) {
-    const available = rankVolunteers(snapshot.volunteers.filter((volunteer) => eligibleVolunteer(volunteer) && availableForSession(snapshot, volunteer.id, session)), session, snapshot);
+    const available = rankVolunteers(snapshot.volunteers.filter((volunteer) => eligibleVolunteer(volunteer) && canAttend(volunteer.id, session)), session, snapshot);
     ranked.set(session.id, available);
-    const compatible = available.filter((volunteer) => !assignmentConflicts(snapshot, output.assignments.map((assignment) => ({ ...assignment, status: 'assigned' as const })), volunteer.id, session));
+    const compatible = available.filter((volunteer) => !assignmentConflicts(snapshot, proposed, volunteer.id, session));
     const chosen = compatible.slice(0, session.requiredStaffCount);
+    proposed.push(...chosen.map(volunteer => ({ sessionId: session.id, volunteerId: volunteer.id, status: 'assigned' as const })));
     output.assignments.push(...chosen.map((volunteer) => ({ sessionId: session.id, volunteerId: volunteer.id })));
     if (chosen.length < session.requiredStaffCount) output.shortfalls.push({ sessionId: session.id, required: session.requiredStaffCount, assigned: chosen.length, missing: session.requiredStaffCount - chosen.length });
   }
   for (const session of sessions) {
     const assigned = output.assignments.filter((assignment) => assignment.sessionId === session.id).map((assignment) => assignment.volunteerId);
     const backups = (ranked.get(session.id) ?? []).filter((volunteer) => !assigned.includes(volunteer.id)
-      && !assignmentConflicts(snapshot, output.assignments.map((assignment) => ({ ...assignment, status: 'assigned' as const })), volunteer.id, session));
+      && !assignmentConflicts(snapshot, proposed, volunteer.id, session));
     output.backups.push(...backups.map((volunteer, index) => ({ sessionId: session.id, volunteerId: volunteer.id, position: index + 1 })));
   }
   return output;

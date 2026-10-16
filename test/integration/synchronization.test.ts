@@ -55,6 +55,42 @@ describe('automatic availability synchronization through local D1', () => {
     expect(after.imports).toEqual(first.imports); expect(after.importedAvailability).toEqual(first.importedAvailability);
     expect(after.recurringAvailability).toEqual(first.recurringAvailability);
   });
+  it('rechecks identical source content after a human edit and repairs only recurring availability', async () => {
+    const app = await application(); app.setHtml(source());
+    success(await sync(app));
+    // Exercise the small unchanged check before invalidating its synchronized revision.
+    app.setNow('2026-10-04T12:05:00.000Z'); success(await sync(app));
+    success(await app.request('volunteer.availability.recurring.update', { intervals: [
+      { weekday: 2, start: '13:00', end: '14:00', timeZone: 'America/New_York' },
+    ] }, 'volunteer'));
+    success(await app.request('volunteer.availability.exception.create', { date: '2026-10-06', kind: 'unavailable', start: '10:00', end: '11:00', timeZone: 'America/New_York', reason: 'Keep this dated exception' }, 'volunteer'));
+    const before = await app.read();
+    const checked = success(await sync(app)); const after = await app.read();
+    expect(checked.status.outcome).toBe('changed');
+    expect(after.recurringAvailability.filter(row => row.volunteerId === 'volunteer-1')).toMatchObject([{ weekday: 1, start: '10:00', end: '12:00' }]);
+    expect(after.availabilityExceptions).toEqual(before.availabilityExceptions);
+    expect(after.dataRevision).toBe(before.dataRevision + 1);
+    expect(after.schedulingInputRevision).toBe(before.schedulingInputRevision + 1);
+    expect(after.imports).toHaveLength(before.imports.length + 1);
+    const unchanged = success(await sync(app));
+    expect(unchanged.status.outcome).toBe('unchanged');
+    expect((await app.read()).imports).toEqual(after.imports);
+  });
+  it('refreshes present pending timestamps on identical checks while retaining disappeared submissions', async () => {
+    const app = await application();
+    const person = (id: string) => ({ id, name: id, email: `${id}@example.test`, availability: [] });
+    app.setHtml(JSON.stringify({ participants: [person('first-new'), person('second-new')] }));
+    success(await sync(app));
+    app.setNow('2026-10-04T12:05:00.000Z');
+    app.setHtml(JSON.stringify({ participants: [person('first-new')] }));
+    const before = success(await sync(app));
+    app.setNow('2026-10-04T12:10:00.000Z');
+    const after = success(await sync(app));
+    expect(after.status.outcome).toBe('unchanged');
+    expect(after.pending.find(row => row.id === 'first-new')).toMatchObject({ present: true, firstSeenAt: '2026-10-04T12:00:00.000Z', lastSeenAt: '2026-10-04T12:10:00.000Z' });
+    expect(after.pending.find(row => row.id === 'second-new')).toEqual(before.pending.find(row => row.id === 'second-new'));
+    expect(after.dataRevision).toBe(before.dataRevision);
+  });
   it('clears only explicitly empty participant availability and preserves missing volunteers', async () => {
     const app = await application(); const before = await app.read();
     app.setHtml(source([])); success(await sync(app));
@@ -217,18 +253,22 @@ describe('automatic availability synchronization through local D1', () => {
     expect(disappeared).toMatchObject({ id: 'new', present: false, firstSeenAt: first.firstSeenAt, lastSeenAt: first.lastSeenAt });
     expect(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'new', volunteerId: 'volunteer-2' })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
   });
-  it('retries against a concurrent human update without losing dated exceptions', async () => {
+  it.each([false, true])('retries against a concurrent human update without losing dated exceptions (previous sync: %s)', async previouslySynced => {
     let arrived!: () => void; let release!: (html: string) => void;
     const fetching = new Promise<void>(resolve => { arrived = resolve; });
     const response = new Promise<string>(resolve => { release = resolve; });
-    const app = await application({ fetchResults: async () => { arrived(); return response; } });
+    let delay = false;
+    const app = await application({ fetchResults: async () => { if (!delay) return source(); arrived(); return response; } });
+    if (previouslySynced) success(await sync(app));
+    const revision = (await app.read()).dataRevision;
+    delay = true;
     const syncing = sync(app); await fetching;
     success(await app.request('volunteer.availability.exception.create', { date: '2026-10-06', kind: 'unavailable', start: '10:00', end: '11:00', timeZone: 'America/New_York', reason: 'Human change' }, 'volunteer'));
     release(source()); success(await syncing);
     const dashboard = success(await app.request('volunteer.dashboard', {}, 'volunteer'));
     expect(dashboard.availabilityExceptions).toMatchObject([{ reason: 'Human change' }]);
     expect(dashboard.recurringAvailability).toMatchObject([{ start: '10:00', end: '12:00' }]);
-    expect(dashboard.dataRevision).toBe(2);
+    expect(dashboard.dataRevision).toBe(revision + 1 + Number(!previouslySynced));
   });
   it('does not overwrite a newer source check when an older fetch finishes last', async () => {
     let arrived!: () => void; let release!: (html: string) => void; let delayed = true;
@@ -365,16 +405,19 @@ describe('automatic availability synchronization through local D1', () => {
     expect((await app.read()).recurringAvailability.filter(row => row.volunteerId === 'volunteer-2')).toMatchObject([{ weekday: 4, start: '16:00', end: '17:00' }]);
   });
 
-  it('rechecks administrator authority after conflicting account changes while scheduled authority remains independent', async () => {
+  it.each([false, true])('rechecks administrator authority after conflicting account changes while scheduled authority remains independent (previous sync: %s)', async previouslySynced => {
     let arrived!: () => void; let release!: (html: string) => void;
     const fetching = new Promise<void>(resolve => { arrived = resolve; });
     const response = new Promise<string>(resolve => { release = resolve; });
-    const app = await application({ fetchResults: async () => { arrived(); return response; } });
+    let delay = false;
+    const app = await application({ fetchResults: async () => { if (!delay) return source(); arrived(); return response; } });
+    if (previouslySynced) success(await sync(app));
+    delay = true;
     const before = await app.read(); const manual = sync(app); await fetching;
     // Operator account administration is an external boundary, simulated only in this disposable D1.
     await app.db.batch([
       app.db.prepare("UPDATE users SET roles='[]' WHERE id='user-admin'"),
-      app.db.prepare("UPDATE meta SET value='1' WHERE key='dataRevision'"),
+      app.db.prepare("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='dataRevision'"),
     ]);
     release(source());
     expect(await manual).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
