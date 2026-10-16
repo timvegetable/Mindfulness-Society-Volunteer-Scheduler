@@ -10,6 +10,10 @@ const availabilityKeys = ['availability', 'availabilities', 'slots', 'times', 'r
 const first = (value: RecordValue, keys: string[]) => keys.map(key => value[key]).find(item => item !== undefined && item !== null);
 const text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
 
+// Bump when parsing semantics change so durable source fingerprints cannot reuse
+// a result produced by an older interpretation of identical source bytes.
+export const whenIsGoodParserVersion = 'whenIsGood-1';
+
 function weekday(value: unknown): Weekday | undefined {
   if (typeof value === 'number' || /^\d$/.test(text(value))) {
     const day = Number(value);
@@ -169,7 +173,7 @@ function mappingForParticipant(
 /** Read the site's data assignments as text; never execute third-party scripts. */
 function nativeResults(html: string, timeZone: string, strict = false): ParsedResults | undefined {
   if (!/var\s+respondents\s*=\s*new Array\s*\(/.test(html)) return undefined;
-  const slots = new Map<string, { weekday: Weekday; start: number }>();
+  const slots = new Map<string, { weekday: Weekday; start: number; interval?: WeeklyInterval }>();
   const cellPattern = /<td\b[^>]*\bid=["'](\d{13})["'][^>]*>[\s\S]*?<td\b[^>]*\bclass=["']?gridText\b[^>]*>([^<]+)<\/td>/gi;
   for (const match of html.matchAll(cellPattern)) {
     // WhenIsGood encodes grid wall dates in UTC-shaped timestamps, not instants.
@@ -183,6 +187,11 @@ function nativeResults(html: string, timeZone: string, strict = false): ParsedRe
   const starts = [...new Set([...slots.values()].map(slot => slot.start))].sort((a, b) => a - b);
   const step = Math.min(...starts.slice(1).map((value, index) => value - starts[index]!));
   if (!Number.isFinite(step) || step <= 0 || step > 240) return { ok: false, error: 'The results page does not provide a recognizable slot duration.' };
+  // Every respondent refers to the same grid. Format each valid slot once;
+  // normalization below copies intervals before merging them.
+  for (const slot of slots.values()) if (slot.start + step < 1440) {
+    slot.interval = { weekday: slot.weekday, start: minuteTime(slot.start), end: minuteTime(slot.start + step), timeZone };
+  }
   const participants: ImportParticipant[] = [];
   const respondentPattern = /var\s+(\w+)\s*=\s*new Object\s*\(\s*\)\s*;([\s\S]*?)respondents\s*\[[^\]]+\]\s*=\s*\1\s*;/g;
   for (const match of html.matchAll(respondentPattern)) {
@@ -197,8 +206,8 @@ function nativeResults(html: string, timeZone: string, strict = false): ParsedRe
     const availability: WeeklyInterval[] = [];
     for (const timestamp of selected ? selected.split(',') : []) {
       const slot = slots.get(timestamp.trim());
-      if (!slot || slot.start + step >= 1440) return { ok: false, error: 'A participant has nonempty availability that could not be parsed.' };
-      availability.push({ weekday: slot.weekday, start: minuteTime(slot.start), end: minuteTime(slot.start + step), timeZone });
+      if (!slot?.interval) return { ok: false, error: 'A participant has nonempty availability that could not be parsed.' };
+      availability.push(slot.interval);
     }
     participants.push({ id, name: name ?? '', email: fields.get('email')?.toLowerCase() ?? null, intervals: normalizeWeeklyIntervals(availability) });
   }

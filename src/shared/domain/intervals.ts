@@ -2,8 +2,7 @@ import type { Interval, WeeklyInterval } from './models';
 
 export function timeMinutes(value: string): number {
   if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new RangeError(`Invalid local time: ${value}`);
-  const [hours, minutes] = value.split(':').map(Number);
-  return hours! * 60 + minutes!;
+  return Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
 }
 export function minuteTime(value: number): string {
   if (!Number.isInteger(value) || value < 0 || value >= 1440) throw new RangeError('Minutes must be within a local day');
@@ -14,7 +13,11 @@ export function validateInterval<T extends Interval>(interval: T): T {
   return interval;
 }
 export function normalizeIntervals(intervals: readonly Interval[]): Interval[] {
-  const sorted = intervals.map((interval) => ({ ...validateInterval(interval) })).sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
+  for (const interval of intervals) validateInterval(interval);
+  return mergeValidatedIntervals(intervals);
+}
+function mergeValidatedIntervals(intervals: readonly Interval[]): Interval[] {
+  const sorted = [...intervals].sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
   const merged: Interval[] = [];
   for (const interval of sorted) {
     const previous = merged.at(-1);
@@ -29,9 +32,11 @@ export function normalizeWeeklyIntervals(intervals: readonly WeeklyInterval[]): 
     validateInterval(interval);
     if (!Number.isInteger(interval.weekday) || interval.weekday < 1 || interval.weekday > 7 || !interval.timeZone) throw new RangeError('Invalid recurring interval');
     const key = `${interval.weekday}:${interval.timeZone}`;
-    groups.set(key, [...(groups.get(key) ?? []), interval]);
+    const group = groups.get(key);
+    if (group) group.push(interval);
+    else groups.set(key, [interval]);
   }
-  return [...groups.values()].flatMap((group) => normalizeIntervals(group).map((interval) => ({ ...interval, weekday: group[0]!.weekday, timeZone: group[0]!.timeZone })))
+  return [...groups.values()].flatMap((group) => mergeValidatedIntervals(group).map((interval) => ({ ...interval, weekday: group[0]!.weekday, timeZone: group[0]!.timeZone })))
     .sort((a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start) || a.timeZone.localeCompare(b.timeZone));
 }
 export function coversInterval(intervals: readonly Interval[], target: Interval): boolean {

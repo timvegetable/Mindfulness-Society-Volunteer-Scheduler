@@ -33,6 +33,14 @@ describe('WhenIsGood parser', () => {
   it('does not execute script and reports unrecognizable results', () => {
     expect(parseWhenIsGood(fixture('invalid'), zone)).toEqual({ ok: false, error: expect.any(String) });
   });
+  it('keeps overlapping native submissions separate when merging their selected grid slots', () => {
+    const html = fixture('native').replace('r2.myCanDosAll = ""', 'r2.myCanDosAll = "1791194400000,1791198000000"');
+    const result = parseWhenIsGood(html, zone, { strict: true });
+    expect(result.ok && result.participants.map(({ id, intervals }) => ({ id, intervals }))).toEqual([
+      { id: 'a', intervals: [{ weekday: 1, start: '09:00', end: '11:00', timeZone: zone }] },
+      { id: 'participant-2', intervals: [{ weekday: 1, start: '10:00', end: '12:00', timeZone: zone }] },
+    ]);
+  });
   it('ignores malformed dates, clocks and reversed intervals', () => {
     const result = parseWhenIsGood(JSON.stringify({ users: [{ name: 'A', times: [
       ['2026-02-30', '09:00', '10:00'], [1, '25:00', '26:00'], [1, '11:00', '10:00'], [2, '09:00', '10:00'],

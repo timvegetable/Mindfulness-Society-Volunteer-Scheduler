@@ -14,6 +14,7 @@ export interface CommitInput {
   createdAt: string;
   advanceDataRevision?: boolean;
   recordSynchronization?: boolean;
+  synchronizedSourceHash?: string;
 }
 
 export function storageError(): AppError {
@@ -86,6 +87,7 @@ async function readTables(db: D1Database, selectedTables: typeof tables, check?:
       if (!Number.isSafeInteger(revision) || revision < 0) throw storageError();
       snapshot[row.key] = revision;
     }
+    if (row.key === 'synchronizedSourceHash' && typeof row.value === 'string') snapshot.synchronizedSourceHash = row.value;
   }
   const row = check ? results[selectedTables.length + 1]?.results[0] as StoredIdempotency | undefined : undefined;
   return { snapshot, replay: check ? idempotencyRecord(check.key, row) : null };
@@ -156,6 +158,10 @@ export async function commit(db: D1Database, input: CommitInput): Promise<void> 
   if (input.recordSynchronization && before.synchronizedDataRevision !== before.dataRevision + increment) {
     statements.push(db.prepare(`INSERT INTO meta (key, value) VALUES ('synchronizedDataRevision', ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(String(before.dataRevision + increment)));
+  }
+  if (input.recordSynchronization && input.synchronizedSourceHash && input.synchronizedSourceHash !== before.synchronizedSourceHash) {
+    statements.push(db.prepare(`INSERT INTO meta (key, value) VALUES ('synchronizedSourceHash', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(input.synchronizedSourceHash));
   }
   statements.push(db.prepare('DELETE FROM idempotency WHERE created_at < ?').bind(retentionCutoff(createdAt)));
   statements.push(db.prepare(`INSERT INTO idempotency (actor_id, operation, idempotency_key, fingerprint, response, created_at)

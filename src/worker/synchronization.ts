@@ -3,7 +3,7 @@ import { AppError } from '../shared/api/errors';
 import { resultSchemas } from '../shared/api/schemas';
 import { emptySyncStatus, type ImportParticipant, type PendingParticipant, type Snapshot, type StagedParticipant, type WeeklyInterval } from '../shared/domain/models';
 import { normalizeWeeklyIntervals } from '../shared/domain/intervals';
-import { normalizeImportEmail, normalizeImportName, parseWhenIsGood, stageParticipants, weeklyAvailabilityByVolunteer } from '../shared/imports/whenIsGood';
+import { normalizeImportEmail, normalizeImportName, parseWhenIsGood, stageParticipants, weeklyAvailabilityByVolunteer, whenIsGoodParserVersion } from '../shared/imports/whenIsGood';
 import { whenIsGoodSource, type AppConfig } from './config';
 import { canUseOperation } from './api/policies';
 import { applyImportedAvailability } from './importAvailability';
@@ -41,6 +41,11 @@ const sourceContent = (participants: ImportParticipant[]) => JSON.stringify(part
   id, name, email, intervals, identityStable: identityStable !== false,
 })));
 
+async function digest(value: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /** Shared source application for polls and mapping resolution; no database or authentication tricks. */
 export function applySynchronizedParticipants(state: Snapshot, participants: ImportParticipant[], now: Date, actor: SyncActor, checkedSource = true, checkId: string | null = null) {
   return Effect.gen(function* () {
@@ -67,8 +72,7 @@ export function applySynchronizedParticipants(state: Snapshot, participants: Imp
     if (changed) {
       const runId = yield* ids.next;
       const contentHash = yield* Effect.tryPromise({
-        try: async () => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content(staged.stagedAvailability)))))
-          .map(byte => byte.toString(16).padStart(2, '0')).join(''),
+        try: () => digest(content(staged.stagedAvailability)),
         catch: () => new AppError('INTERNAL_ERROR', 'Could not record synchronization content.'),
       });
       state.imports.push({ id: runId, source: 'whenIsGood', resultId: whenIsGoodSource.resultId, contentHash,
@@ -114,19 +118,28 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
     if (replay) return replay.response;
     const checkId = JSON.stringify([key.actorId, key.operation, key.idempotencyKey]);
     const client = yield* WhenIsGoodClient;
-    const fetched = yield* client.fetchResults(whenIsGoodSource.resultId).pipe(Effect.match({
-      onSuccess: html => {
-        try { return parseWhenIsGood(html, config.timeZone, { strict: true }); }
-        catch { return { ok: false as const, error: 'The source snapshot could not be validated.' }; }
-      },
+    const downloaded = yield* client.fetchResults(whenIsGoodSource.resultId).pipe(Effect.match({
+      onSuccess: html => ({ ok: true as const, html }),
       onFailure: () => ({ ok: false as const, error: 'Could not fetch the results page. It may be unavailable or exceed the size limit.' }),
     }));
+    const fetched = downloaded.ok ? yield* Effect.tryPromise({
+      try: async () => {
+        const sourceHash = `${whenIsGoodParserVersion}:${config.timeZone}:${await digest(downloaded.html)}`;
+        const previous = started.synchronizations[0];
+        const parsed = previous && started.synchronizedDataRevision === started.dataRevision && started.synchronizedSourceHash === sourceHash
+          ? { ok: true as const, participants: previous.participants.map(({ id, name, email, intervals, identityStable }) => ({ id, name, email, intervals, identityStable })) }
+          : parseWhenIsGood(downloaded.html, config.timeZone, { strict: true });
+        return parsed.ok ? { ...parsed, sourceHash } : parsed;
+      },
+      catch: () => new AppError('INVALID_REQUEST', 'The source snapshot could not be validated.'),
+    }).pipe(Effect.catch(error => Effect.succeed({ ok: false as const, error: error.message }))) : downloaded;
     let before = started;
     let complete = !database.readSynchronizationHead;
     for (let attempt = 0; attempt < 2; attempt++) {
       const unchanged = fetched.ok && before.synchronizedDataRevision === before.dataRevision
         && !!before.synchronizations[0]
-        && sourceContent(fetched.participants) === sourceContent(before.synchronizations[0].participants);
+        && (fetched.sourceHash === before.synchronizedSourceHash
+          || sourceContent(fetched.participants) === sourceContent(before.synchronizations[0].participants));
       if (fetched.ok && !unchanged && !complete) {
         before = yield* read;
         complete = true;
@@ -157,7 +170,8 @@ export function synchronize(config: AppConfig, actor: SyncActor, intent?: { key:
       const data = yield* Effect.try({ try: () => Schema.decodeUnknownSync(resultSchemas['admin.sync.now'])({ status: syncStatus(after), dataRevision, schedulingInputRevision }),
         catch: () => new AppError('INTERNAL_ERROR', 'Invalid synchronization response.') });
       const response = JSON.stringify({ ok: true, data });
-      const committed = yield* database.commit({ before, after, key, fingerprint, response, createdAt: now.toISOString(), advanceDataRevision: changed, recordSynchronization: fetched.ok && !superseded })
+      const committed = yield* database.commit({ before, after, key, fingerprint, response, createdAt: now.toISOString(), advanceDataRevision: changed, recordSynchronization: fetched.ok && !superseded,
+        ...(fetched.ok ? { synchronizedSourceHash: fetched.sourceHash } : {}) })
         .pipe(Effect.match({ onSuccess: () => null, onFailure: error => error }));
       if (!committed) return response;
       const replay = yield* database.findIdempotency(key, now.toISOString());

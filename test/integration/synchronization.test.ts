@@ -46,6 +46,7 @@ describe('automatic availability synchronization through local D1', () => {
   it('treats normalized unchanged checks as successful without adding history, provenance or revisions', async () => {
     const app = await application(); app.setHtml(source());
     success(await sync(app)); const first = await app.read();
+    expect(success(await sync(app)).status.outcome).toBe('unchanged');
     app.setNow('2026-10-04T12:05:00.000Z');
     app.setHtml(source([[1, '11:00', '12:00'], [1, '10:00', '11:00']]));
     const checked = success(await sync(app)); const after = await app.read();
@@ -54,6 +55,7 @@ describe('automatic availability synchronization through local D1', () => {
     expect(after.schedulingInputRevision).toBe(first.schedulingInputRevision);
     expect(after.imports).toEqual(first.imports); expect(after.importedAvailability).toEqual(first.importedAvailability);
     expect(after.recurringAvailability).toEqual(first.recurringAvailability);
+    expect(app.fetches).toHaveLength(3);
   });
   it('rechecks identical source content after a human edit and repairs only recurring availability', async () => {
     const app = await application(); app.setHtml(source());
@@ -75,6 +77,25 @@ describe('automatic availability synchronization through local D1', () => {
     const unchanged = success(await sync(app));
     expect(unchanged.status.outcome).toBe('unchanged');
     expect((await app.read()).imports).toEqual(after.imports);
+  });
+  it('reinterprets identical source bytes after a stored parser-version change', async () => {
+    const app = await application(); app.setHtml(source()); success(await sync(app));
+    const first = await app.read();
+    // Simulate persisted output from an older parser that interpreted the day differently.
+    const participants = first.synchronizations[0]!.participants.map(row => ({ ...row,
+      intervals: row.intervals.map(interval => ({ ...interval, weekday: 2 })),
+    }));
+    await app.db.batch([
+      app.db.prepare("UPDATE meta SET value='legacy-parser:' || value WHERE key='synchronizedSourceHash'"),
+      app.db.prepare("UPDATE synchronizations SET participants=? WHERE id='whenIsGood'").bind(JSON.stringify(participants)),
+      app.db.prepare("UPDATE recurring_availability SET weekday=2 WHERE volunteer_id='volunteer-1'"),
+    ]);
+    expect(success(await sync(app)).status.outcome).toBe('changed');
+    expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).recurringAvailability).toMatchObject([{ weekday: 1, start: '10:00', end: '12:00' }]);
+    const corrected = await app.read();
+    expect(corrected.imports).toHaveLength(first.imports.length + 1);
+    expect(success(await sync(app)).status.outcome).toBe('unchanged');
+    expect((await app.read()).imports).toEqual(corrected.imports);
   });
   it('refreshes present pending timestamps on identical checks while retaining disappeared submissions', async () => {
     const app = await application();
@@ -270,15 +291,17 @@ describe('automatic availability synchronization through local D1', () => {
     expect(dashboard.recurringAvailability).toMatchObject([{ start: '10:00', end: '12:00' }]);
     expect(dashboard.dataRevision).toBe(revision + 1 + Number(!previouslySynced));
   });
-  it('does not overwrite a newer source check when an older fetch finishes last', async () => {
+  it.each([false, true])('does not overwrite a newer source check when an older fetch finishes last (previous sync: %s)', async previouslySynced => {
     let arrived!: () => void; let release!: (html: string) => void; let delayed = true;
     const fetching = new Promise<void>(resolve => { arrived = resolve; });
     const response = new Promise<string>(resolve => { release = resolve; });
-    const app = await application({ fetchResults: async () => { if (delayed) { delayed = false; arrived(); return response; } return source([[4, '14:00', '15:00']]); } });
+    let priming = previouslySynced;
+    const app = await application({ fetchResults: async () => { if (priming) return source(); if (delayed) { delayed = false; arrived(); return response; } return source([[4, '14:00', '15:00']]); } });
+    if (previouslySynced) { success(await sync(app)); priming = false; }
     const older = Effect.runPromise(synchronize(testConfig, synchronizationSystemActor).pipe(Effect.provide(app.layer))); await fetching;
     success(await sync(app)); release(source()); await older;
     expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).recurringAvailability).toMatchObject([{ weekday: 4, start: '14:00', end: '15:00' }]);
-    expect((await app.read()).imports).toHaveLength(1);
+    expect((await app.read()).imports).toHaveLength(previouslySynced ? 2 : 1);
   });
   it('rolls back an interrupted transaction and safely retries the same intent once storage recovers', async () => {
     const app = await application(); app.setHtml(source()); const before = await app.read();
@@ -320,7 +343,7 @@ describe('automatic availability synchronization through local D1', () => {
     expect(view.pending).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'a', name: '', reason: 'missing-identity', intervals: [{ weekday: 1, start: '09:00', end: '11:00', timeZone: 'America/New_York' }] })]));
   });
 
-  it('uses a mapping saved during a source fetch and still applies the newest valid source times', async () => {
+  it.each(['14:00', '15:00'])('uses a mapping saved during a source fetch and still applies the newest valid source times (end: %s)', async end => {
     const html = (end: string) => JSON.stringify({ participants: [{ id: 'new', name: 'New Person', email: 'new@example.test', availability: [[2, '13:00', end]] }] });
     let first = true; let arrived!: () => void; let release!: (value: string) => void;
     const fetching = new Promise<void>(resolve => { arrived = resolve; });
@@ -329,8 +352,8 @@ describe('automatic availability synchronization through local D1', () => {
     success(await sync(app));
     const checking = Effect.runPromise(synchronize(testConfig, synchronizationSystemActor).pipe(Effect.provide(app.layer))); await fetching;
     success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'new', volunteerId: 'volunteer-1' }));
-    release(html('15:00')); await checking;
-    expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).recurringAvailability).toMatchObject([{ weekday: 2, end: '15:00' }]);
+    release(html(end)); await checking;
+    expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).recurringAvailability).toMatchObject([{ weekday: 2, end }]);
     expect(success(await app.request('admin.sync.read')).pending).toEqual([]);
   });
 

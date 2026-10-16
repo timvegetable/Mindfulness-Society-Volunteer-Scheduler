@@ -130,7 +130,7 @@ New behavior coverage exercises identical-source reconciliation after human avai
 
 ### OS process CPU follow-up
 
-Application candidate `2d6ae0135cd0d91c1a4f2d630fc16705f04ae058` remains undeployed. A second temporary harness measured the owned workerd process's user plus system CPU ticks from Linux `/proc`, with inspector profiling disabled. It used the same disposable backup workload, real local RSA verification, 20 warm-up requests and 150 measured invocations per operation. The counter resolution was 10 ms, aggregated across those invocations. Node driver CPU was excluded; local D1 and the synthetic request wrapper were included in workerd's process CPU.
+Application candidate `2d6ae0135cd0d91c1a4f2d630fc16705f04ae058` was still undeployed at this follow-up. A second temporary harness measured the owned workerd process's user plus system CPU ticks from Linux `/proc`, with inspector profiling disabled. It used the same disposable backup workload, real local RSA verification, 20 warm-up requests and 150 measured invocations per operation. The counter resolution was 10 ms, aggregated across those invocations. Node driver CPU was excluded; local D1 and the synthetic request wrapper were included in workerd's process CPU.
 
 | Operation | Original mean CPU (ms) | Candidate mean CPU (ms) |
 | --- | ---: | ---: |
@@ -139,4 +139,36 @@ Application candidate `2d6ae0135cd0d91c1a4f2d630fc16705f04ae058` remains undeplo
 | Synchronization view | 10.87 | 6.00 |
 | Schedule preview | 246.60 | 9.87 |
 
-These measurements strengthen the local improvement evidence but establish only warm mean process CPU on this host. They do not prove individual-invocation, cold-path, changed-source or deployed free-plan CPU compliance. A separate disposable tail-observer probe returned zero CPU/wall values even for deliberate computation, so local tail metrics cannot supply that missing evidence. The production deployment and up to two manual sync timing checks requested in chat still await operator approval. No application code changed during this follow-up; the 276 functional and 45 browser results continue to cover the same candidate.
+These measurements strengthen the local improvement evidence but establish only warm mean process CPU on this host. They do not prove individual-invocation, cold-path, changed-source or deployed free-plan CPU compliance. A separate disposable tail-observer probe returned zero CPU/wall values even for deliberate computation, so local tail metrics cannot supply that missing evidence. At the end of this follow-up, the production deployment and up to two manual sync timing checks requested in chat awaited operator approval. No application code changed during that follow-up; the 276 functional and 45 browser results covered the same candidate.
+
+### October 16 approved CPU candidate deployment and measurements
+
+The operator approved deployment of application candidate `2d6ae01` and up to two manual Sync now timing checks. The deployment checkout was `71fd3b2`; its differences from the approved application commit were release documentation only. A fresh private D1 export restored successfully into an in-memory database, passed integrity checking, and reported zero foreign-key violations. Fresh client build and tracked/private production-config dry runs passed. The existing deployment was `3554f098-e77e-437f-bbec-25ba6443119d`, retained as the immediate code rollback target subject to separate rollback approval.
+
+The approved candidate is deployed as Worker version `48b0aa83-44eb-4007-a9c4-75c237e9f372`, with the existing `*/30 * * * *` trigger and no migration. The previous browser session had ended; the operator completed a fresh Google sign-in. Production schedule and Availability sync reads succeeded. Private tail telemetry identified the new version for every measurement below:
+
+| Invocation start (UTC) | Operation | CPU (ms) | Wall (ms) |
+| --- | --- | ---: | ---: |
+| 18:00:57.952 | First approved manual sync | 27 | 867 |
+| 18:00:58.869 | Subsequent sync view read | 5 | 54 |
+| 18:01:00.454 | Scheduled sync | 16 | 1,428 |
+| 18:01:17.111 | Second approved manual sync | 11 | 695 |
+| 18:01:17.832 | Subsequent sync view read | 6 | 46 |
+
+Both manual checks visibly reported “Availability is up to date.” All listed invocations had outcome `ok` and zero exceptions. Fresh aggregate reads confirmed revisions remained 1/1, imports three, provenance 180, and participant/matched/pending counts 8/7/1. Effective-change time remained `2026-10-15T02:00:34.126Z`; attempt and success advanced together to `2026-10-16T18:01:17.179Z`. The new synchronized-domain-revision marker is 1. No duplicate history was created. Tail observation stopped after the authorized checks.
+
+The deployed candidate improves the observed manual and read costs, but **the 10 ms CPU goal remains unmet**: both manual checks and the observed scheduled invocation exceeded it. These few production samples do not establish a cold/warm performance distribution or changed-source fit. Both approved manual timing checks have been used; no further manual synchronization or deployment is covered by that approval.
+
+At the operator's request, all other open issues (#7–12), including their briefs and comments, were checked for a CPU dependency. Label formatting, roster-picker sorting and weekly schedule grouping are presentation work; grouping explicitly preserves the dated data and calculations. Proposal provenance and the single placeholder-account cleanup offer no material reduction in synchronization work. None provides a reason to defer CPU investigation.
+
+### Follow-on interval allocation candidate
+
+The next local candidate addresses measured parser hot spots. Weekly normalization validates each interval once, appends to local groups without repeatedly copying them, and shares a private merge helper with daily normalization. The helper copies output intervals before changing merge endpoints. Clock parsing retains its validation but avoids split/map allocations. Native WhenIsGood parsing formats each grid slot once per response rather than once per respondent selection. This interval-only comparison changes no database, API, authorization or scheduling policy.
+
+A temporary comparison used the same saved private 97,456-byte source response for both versions and asserted identical complete parsed output. Across three batches of 1,000 parses, warm Node process CPU was about 1.01 ms per parse for the deployed source and 0.60 ms for the revised source. A longer actual Worker comparison used disposable D1, the same input, real local RSA verification, 100 warm-ups and 500 measured invocations per operation. Deployed/revised whole-workerd mean CPU was 7.24/6.76 ms for scheduled checks and 7.58/7.02 ms for manual checks. Local D1 and wrapper CPU are included; these are warm means, not Cloudflare metering or individual-event guarantees. A shorter earlier process sample was noisy and did not demonstrate improvement; the repeated parser and longer fixed-input results provide the narrower evidence above.
+
+The final local candidate also records a SHA-256 source fingerprint including parser version and timezone in the existing `meta` table, atomically with a successful check. Identical source at the reconciled domain revision can reuse the saved parse; the source is still fetched and size checked every time. Source changes, domain edits and parser-version changes force parsing/reconciliation. Current users, revision assertions, generation fences and replay behavior remain. No migration or public response change is required. With the same longer local measurement, the combined candidate used 5.52 ms scheduled and 6.92 ms manual mean process CPU. These local warm means do not establish deployed compliance.
+
+Final validation passed: 280 functional tests, 45 synthetic native-browser checks, strict typechecks, stylesheet formatting, client build and tracked/private production-config dry runs. Coverage includes parser-version compatibility, identical-byte and semantically equivalent source, immutable interval merging, separate native respondent selections, concurrent human edits/mapping changes, revoked authority, superseded cached checks and transactional rollback. The attempted native stream-consumption optimization regressed measured CPU and was discarded; minification reduced bundle size but gave no material measured CPU improvement and remains unconfigured.
+
+The operator requested broader optimization options and asked whether splitting work across invocations would help. The [CPU strategy proposal](../performance/worker-cpu-strategy.md) recommends a durable Queue pipeline with one stage per consumer invocation, compares Workflows, focused SQL/validation changes and Rust/Wasm, and records measurement caveats. No architectural rewrite or new cloud resource was implemented. Production remains on `48b0aa83-44eb-4007-a9c4-75c237e9f372`; deploying the follow-on candidate requires a new explicit approval. The CPU goal remains open.

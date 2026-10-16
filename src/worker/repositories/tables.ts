@@ -1,6 +1,6 @@
 import type { Snapshot, StagedParticipant } from '../../shared/domain/models';
 
-type TableKey = Exclude<keyof Snapshot, 'dataRevision' | 'schedulingInputRevision' | 'synchronizedDataRevision'>;
+type TableKey = Exclude<keyof Snapshot, 'dataRevision' | 'schedulingInputRevision' | 'synchronizedDataRevision' | 'synchronizedSourceHash'>;
 type SqlValue = string | number | null;
 
 interface Table {
