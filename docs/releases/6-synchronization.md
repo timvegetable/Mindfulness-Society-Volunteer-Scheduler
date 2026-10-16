@@ -127,3 +127,16 @@ A temporary inspector harness exercised the actual Worker HTTP and scheduled ent
 The paired original/candidate local inspector samples, in milliseconds per invocation, were: scheduled 20.38/16.52; manual sync 27.17/19.49; sync view 18.98/12.06; schedule preview 476.09/16.92. Other candidate runs varied substantially, including scheduled estimates around 7–12 ms. These are sampled local-runtime durations with wrapper/profiler/native overhead, not Cloudflare's metered invocation CPU. Warm measurements also do not establish cold-invocation fit. The candidate has **not** established the Workers Free 10 ms requirement.
 
 New behavior coverage exercises identical-source reconciliation after human availability edits, preserved dated exceptions, pending first/last-seen timestamps, concurrent edits, revoked administrator authority after an earlier successful check, leap-year/date boundaries, and New York spring gaps/autumn repeated hours. Final validation passed on the corrected candidate: 276 functional tests, 45 synthetic native-browser checks, strict typechecks, CSS formatting, client build, and tracked/private production-config deployment dry runs. The initial browser run could not launch Chromium from the default cache; rerunning with the existing matching installation passed all 45 checks. Diff review checked current-role authorization, durable replay, concurrent revision/generation fences, history compatibility and date behavior. Temporary profiling probes were moved outside the repository. The application commit is identified in the chat before deployment approval. Deployment and any manual production sync timing checks require the explicit production approval described in README; no new deployment has occurred in this investigation.
+
+### OS process CPU follow-up
+
+Application candidate `2d6ae0135cd0d91c1a4f2d630fc16705f04ae058` remains undeployed. A second temporary harness measured the owned workerd process's user plus system CPU ticks from Linux `/proc`, with inspector profiling disabled. It used the same disposable backup workload, real local RSA verification, 20 warm-up requests and 150 measured invocations per operation. The counter resolution was 10 ms, aggregated across those invocations. Node driver CPU was excluded; local D1 and the synthetic request wrapper were included in workerd's process CPU.
+
+| Operation | Original mean CPU (ms) | Candidate mean CPU (ms) |
+| --- | ---: | ---: |
+| Scheduled unchanged check | 15.73 | 9.40 |
+| Manual unchanged sync | 20.80 | 8.27 |
+| Synchronization view | 10.87 | 6.00 |
+| Schedule preview | 246.60 | 9.87 |
+
+These measurements strengthen the local improvement evidence but establish only warm mean process CPU on this host. They do not prove individual-invocation, cold-path, changed-source or deployed free-plan CPU compliance. A separate disposable tail-observer probe returned zero CPU/wall values even for deliberate computation, so local tail metrics cannot supply that missing evidence. The production deployment and up to two manual sync timing checks requested in chat still await operator approval. No application code changed during this follow-up; the 276 functional and 45 browser results continue to cover the same candidate.
