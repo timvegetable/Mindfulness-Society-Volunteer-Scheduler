@@ -7,6 +7,7 @@
 skills-lock.json
 plan.md
 .impeccable/
+.dsh
 
 # Local build, database state, and private operator inputs
 node_modules/
