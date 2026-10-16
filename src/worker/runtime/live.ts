@@ -1,4 +1,5 @@
 import { Layer } from 'effect';
+import { applicationTimeZone } from '../../shared/domain/models';
 import { AuthService, makeGoogleAuth } from '../services/AuthService';
 import { databaseLayer } from '../services/Database';
 import { ClockLive } from '../services/Clock';
@@ -42,7 +43,7 @@ export function synchronizationLayer(env: Bindings) {
 }
 
 export function appConfig(env: Bindings): AppConfig {
-  return { timeZone: env.TIME_ZONE, displayIncrementMinutes: Number(env.DISPLAY_INCREMENT_MINUTES),
+  return { timeZone: applicationTimeZone, displayIncrementMinutes: Number(env.DISPLAY_INCREMENT_MINUTES),
     operatingHoursStart: env.OPERATING_HOURS_START, operatingHoursEnd: env.OPERATING_HOURS_END,
     oauthClientId: env.OAUTH_CLIENT_ID, adminEmails: env.ADMIN_EMAILS.split(',').map((email) => email.trim()).filter(Boolean) };
 }

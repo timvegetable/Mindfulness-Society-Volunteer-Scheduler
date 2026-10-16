@@ -387,12 +387,19 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     const state = await app.read(); expect(state.recurringAvailability).toEqual(before.recurringAvailability); expect(state.schedulingInputRevision).toBe(0);
     expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
   });
-  it('rejects an entire promotion if any matched participant uses another time zone', async () => {
-    const app = await application({ fixture: 'import-alternate.html' });
+  it('rejects an entire import before promotion if any matched participant uses another time zone', async () => {
+    const app = await application();
+    app.setHtml(JSON.stringify({ participants: [{ id: 'p1', name: 'Dana & Lee', email: 'dana@example.test', availability: [
+      [1, '09:00', '11:00', interval.timeZone], [2, '13:30', '15:00', 'Europe/London'],
+    ] }] }));
     success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'p1', volunteerId: 'volunteer-1' }));
-    success(await app.request('admin.import.whenIsGood.preview', {}));
+    const availabilityBefore = (await app.read()).recurringAvailability;
+    const preview = success(await app.request('admin.import.whenIsGood.preview', {}));
+    expect(preview.import.status).toBe('failed');
+    expect(preview.import.stagedAvailability).toEqual([]);
     const before = await app.read();
-    expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(before.recurringAvailability).toEqual(availabilityBefore);
+    expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
     expect(await app.read()).toEqual(before); expect((await app.read()).importedAvailability).toHaveLength(0);
   });
 });

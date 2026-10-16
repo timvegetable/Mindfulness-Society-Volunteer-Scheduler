@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 import { Temporal } from '@js-temporal/polyfill';
 import { operations, type Operation } from './operations';
+import { applicationTimeZone } from '../domain/models';
 export type { Operation } from './operations';
 
 const strict = <S extends Schema.Top>(schema: S): S["Rebuild"] => schema.annotate({ parseOptions: { onExcessProperty: 'error' } });
@@ -15,9 +16,7 @@ const time = Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/)
 const date = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/), Schema.makeFilter((value: string) => {
   try { return Temporal.PlainDate.from(value).toString() === value; } catch { return false; }
 }));
-const zone = text.check(Schema.makeFilter((value: string) => {
-  try { Temporal.Instant.from('2026-01-01T00:00:00Z').toZonedDateTimeISO(value); return true; } catch { return false; }
-}));
+const zone = text.check(Schema.makeFilter((value: string) => value === applicationTimeZone));
 const maybeText = Schema.optionalKey(Schema.NullOr(Schema.String));
 const timestamps = { createdAt: maybeText, updatedAt: maybeText };
 const interval = { start: time, end: time };

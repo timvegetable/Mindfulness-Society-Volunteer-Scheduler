@@ -22,7 +22,7 @@ describe('WhenIsGood parser', () => {
     expect(result.participants).toEqual([{ id: 'p1', name: 'Dana & Lee', email: 'dana@example.test', intervals: [
       { weekday: 1, start: '09:00', end: '11:00', timeZone: zone },
       { weekday: 2, start: '13:30', end: '15:00', timeZone: zone },
-      { weekday: 7, start: '09:00', end: '10:00', timeZone: 'Europe/London' },
+      { weekday: 7, start: '09:00', end: '10:00', timeZone: zone },
     ] }]);
   });
   it('handles brackets and escaped quotes inside names and array tuples', () => {
@@ -33,9 +33,9 @@ describe('WhenIsGood parser', () => {
   it('does not execute script and reports unrecognizable results', () => {
     expect(parseWhenIsGood(fixture('invalid'), zone)).toEqual({ ok: false, error: expect.any(String) });
   });
-  it('ignores malformed dates, clocks, zones and reversed intervals', () => {
+  it('ignores malformed dates, clocks and reversed intervals', () => {
     const result = parseWhenIsGood(JSON.stringify({ users: [{ name: 'A', times: [
-      ['2026-02-30', '09:00', '10:00'], [1, '25:00', '26:00'], [1, '11:00', '10:00'], [1, '09:00', '10:00', 'bad-zone'], [2, '09:00', '10:00'],
+      ['2026-02-30', '09:00', '10:00'], [1, '25:00', '26:00'], [1, '11:00', '10:00'], [2, '09:00', '10:00'],
     ] }] }), zone);
     expect(result.ok && result.participants[0]?.intervals).toEqual([{ weekday: 2, start: '09:00', end: '10:00', timeZone: zone }]);
   });

@@ -19,13 +19,16 @@ async function runtime() {
 describe('actual Worker scheduled boundary with synthetic external services and local D1', () => {
   it('reaches the shared workflow without Google or email and deduplicates redelivered events', async () => {
     const { app, env, event } = await runtime();
+    const legacyConfig = { ...env, TIME_ZONE: 'Europe/London' };
+    const clientConfig = await worker.fetch(new Request('https://scheduler.test/client-config'), legacyConfig);
+    expect(await clientConfig.json()).toMatchObject({ timeZone: 'America/New_York' });
     vi.stubGlobal('fetch', async (url: string) => {
       expect(url).toBe('https://whenisgood.net/d7y3d5c/results/mx8t23j');
       return new Response(source);
     });
-    await worker.scheduled(event, env); await worker.scheduled(event, env);
+    await worker.scheduled(event, legacyConfig); await worker.scheduled(event, legacyConfig);
     const dashboard = success(await app.request('volunteer.dashboard', {}, 'volunteer'));
-    expect(dashboard.recurringAvailability).toMatchObject([{ weekday: 1, start: '10:00', end: '12:00' }]);
+    expect(dashboard.recurringAvailability).toMatchObject([{ weekday: 1, start: '10:00', end: '12:00', timeZone: 'America/New_York' }]);
     const view = success(await app.request('admin.sync.read'));
     expect(view.imports).toHaveLength(1); expect(view.imports[0]?.actorId).toBe('system:whenIsGood');
     expect(view.dataRevision).toBe(1); expect(view.schedulingInputRevision).toBe(1);

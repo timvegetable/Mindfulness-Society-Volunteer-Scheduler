@@ -43,11 +43,12 @@ The fixture has three centers and five fictional volunteers. Tests create a sepa
 
 ## Configuration and development
 
+All application dates and intervals use the fixed `America/New_York` time zone, including daylight-saving transitions. The legacy `TIME_ZONE` environment variable does not override it.
+
 `wrangler.jsonc` contains safe placeholders and these defaults:
 
 | Variable | Purpose/default |
 | --- | --- |
-| `TIME_ZONE` | `America/New_York`; all newly written intervals use it |
 | `DISPLAY_INCREMENT_MINUTES` | `30` |
 | `OPERATING_HOURS_START`, `OPERATING_HOURS_END` | `09:00`, `21:00` |
 | `OAUTH_CLIENT_ID` | Public Google Identity Services client ID |

@@ -1,5 +1,6 @@
 import { decodeHTML } from 'entities';
 import { normalizeWeeklyIntervals, minuteTime } from '../domain/intervals';
+import { applicationTimeZone } from '../domain/models';
 import type { ImportMapping, ImportParticipant, StagedParticipant, Volunteer, Weekday, WeeklyInterval } from '../domain/models';
 
 type RecordValue = Record<string, unknown>;
@@ -62,8 +63,7 @@ function intervals(value: unknown, timeZone: string, inheritedDay?: Weekday, dep
   const parsedStart = clock(start);
   const parsedEnd = clock(end);
   if (!day || !parsedStart || !parsedEnd || parsedStart >= parsedEnd) return invalid();
-  try { new Intl.DateTimeFormat('en', { timeZone: zone }); } catch { return invalid(); }
-  if (strict && zone !== timeZone) return invalid();
+  if (zone !== applicationTimeZone) throw new Error('The scheduler uses America/New_York.');
   return [{ weekday: day, start: parsedStart, end: parsedEnd, timeZone: zone }];
 }
 
@@ -209,7 +209,7 @@ function nativeResults(html: string, timeZone: string, strict = false): ParsedRe
 }
 
 export function parseWhenIsGood(html: string, timeZone: string, options: { strict?: boolean } = {}): ParsedResults {
-  try { new Intl.DateTimeFormat('en', { timeZone }); } catch { return { ok: false, error: 'The configured source time zone is invalid.' }; }
+  if (timeZone !== applicationTimeZone) return { ok: false, error: 'The scheduler uses America/New_York.' };
   const native = nativeResults(html, timeZone, options.strict);
   if (native) return native;
   const participants: ImportParticipant[] = [];
@@ -227,7 +227,7 @@ export function parseWhenIsGood(html: string, timeZone: string, options: { stric
     if (depth > 40) return;
     if (Array.isArray(value)) { value.forEach(item => collect(item, depth + 1)); return; }
     if (!record(value)) return;
-    if (options.strict && ['timeZone', 'timezone', 'time_zone'].some(key => value[key] !== undefined && value[key] !== timeZone)) malformedAvailability = true;
+    if (['timeZone', 'timezone', 'time_zone'].some(key => value[key] !== undefined && value[key] !== applicationTimeZone)) malformedAvailability = true;
     for (const [key, child] of Object.entries(value)) {
       if (collections.has(key) && (Array.isArray(child) || record(child))) {
         const signature = JSON.stringify(child);

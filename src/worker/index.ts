@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { applicationTimeZone } from '../shared/domain/models';
 import { AppError } from '../shared/api/errors';
 import { dispatchResponse, publicFailure } from './api/dispatch';
 import { appConfig, liveLayer, synchronizationLayer, type Bindings } from './runtime/live';
@@ -19,7 +20,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/client-config') {
       if (request.method !== 'GET') return failure('INVALID_REQUEST', 'Use GET.', 405);
-      return Response.json({ oauthClientId: env.OAUTH_CLIENT_ID, timeZone: env.TIME_ZONE }, { headers });
+      return Response.json({ oauthClientId: env.OAUTH_CLIENT_ID, timeZone: applicationTimeZone }, { headers });
     }
     if (url.pathname !== '/api') return env.ASSETS.fetch(request);
     if (request.method !== 'POST') return failure('INVALID_REQUEST', 'Use POST /api.', 405);
