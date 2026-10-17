@@ -7,7 +7,7 @@ import { IdGenerator } from './services/IdGenerator';
 import { findIdempotency, prepareCommit, type CommitStatement, type IdempotencyKey } from './repositories/database';
 import { claimDelivery, insertJob, insertScheduledJob, jobSummary, latestJob, maintainJobs, readJob, readStage, saveStage,
   type SyncJob, type SyncMessage, type SyncQueue, type SyncStage } from './repositories/synchronizationJobs';
-import { digest, prepareSynchronization, syncStatus, unchangedSource, type ParsedSource, type SyncActor } from './synchronization';
+import { digest, prepareSynchronization, prepareSynchronizationStatus, syncStatus, unchangedSource, type ParsedSource, type SyncActor } from './synchronization';
 
 export type { SyncMessage } from './repositories/synchronizationJobs';
 export interface StartSynchronization { actor: SyncActor; key: IdempotencyKey; fingerprint: string; before: Snapshot; now: Date }
@@ -78,7 +78,9 @@ export function makeSynchronizationJobs(options: Options) {
         const parsed = parseWhenIsGood(stage.body, config.timeZone, { strict: true });
         fetched = parsed.ok ? { ...parsed, sourceHash: job.source_hash! } : parsed;
       } catch { fetched = { ok: false, error: 'The source snapshot could not be validated.' }; }
-      return saveStage(db, job, fetched.ok ? 'reconcile' : 'prepare', at, { kind: 'parsed', body: JSON.stringify(fetched) });
+      // A fingerprint miss may be cosmetic. Compare the parsed participants
+      // against the small head before loading roster/history for reconciliation.
+      return saveStage(db, job, 'prepare', at, { kind: 'parsed', body: JSON.stringify(fetched) });
     }
     if (job.phase === 'prepare' || job.phase === 'reconcile') {
       const stored: ParsedSource | { cached: true } = JSON.parse(stage.body);
@@ -95,6 +97,10 @@ export function makeSynchronizationJobs(options: Options) {
         return saveStage(db, job, 'reconcile', at);
       }
       const actor: SyncActor = job.actor_kind === 'system' ? { kind: 'system', id: 'system:whenIsGood' } : { kind: 'administrator', id: job.actor_id };
+      const key = { actorId: job.actor_id, operation: 'system.sync.apply', idempotencyKey: job.id };
+      const ready = prepareSynchronizationStatus(actor, fetched, before, job.started_check_id, new Date(job.created_at), key, job.fingerprint);
+      if (ready) return saveStage(db, job, 'commit', at, { kind: 'prepared', body: JSON.stringify({
+        statements: prepareCommit(ready), failure: fetched.ok ? null : fetched.error } satisfies PreparedJob) });
       const input = await Effect.runPromise(prepareSynchronization(actor, fetched, before, job.started_check_id, new Date(job.created_at),
         { actorId: job.actor_id, operation: 'system.sync.apply', idempotencyKey: job.id }, job.fingerprint)
         .pipe(Effect.provideService(IdGenerator, { next: Effect.sync(() => crypto.randomUUID()) }),

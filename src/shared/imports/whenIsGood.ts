@@ -141,17 +141,22 @@ function frequencies(values: string[]): Map<string, number> {
   return counts;
 }
 
+type MappingIndex = Map<MappingIdentity['kind'], Map<string, ImportMapping[]>>;
+
+function indexBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[]> {
+  const index = new Map<string, T[]>();
+  for (const row of rows) { const value = key(row); const matches = index.get(value); if (matches) matches.push(row); else index.set(value, [row]); }
+  return index;
+}
+
 function mappingForParticipant(
   participant: ImportParticipant,
-  mappings: ImportMapping[],
+  mappings: MappingIndex,
   emailCounts: Map<string, number>,
   nameCounts: Map<string, number>,
 ): { found: false } | { found: true; mapping: ImportMapping | null } {
   const lookup = (identity: MappingIdentity): { found: false } | { found: true; mapping: ImportMapping | null } => {
-    const matches = mappings.filter(mapping => {
-      const key = mappingIdentity(mapping);
-      return key?.kind === identity.kind && key.value === identity.value;
-    });
+    const matches = mappings.get(identity.kind)?.get(identity.value) ?? [];
     return matches.length ? { found: true, mapping: matches.length === 1 ? matches[0]! : null } : { found: false };
   };
 
@@ -272,7 +277,19 @@ export function parseWhenIsGood(html: string, timeZone: string, options: { stric
 
 export function stageParticipants(participants: ImportParticipant[], volunteers: Volunteer[], mappings: ImportMapping[], previous: StagedParticipant[] = []): { stagedAvailability: StagedParticipant[]; unmatched: ImportParticipant[]; matchedCount: number } {
   const volunteerIds = new Set(volunteers.map(volunteer => volunteer.id));
-  const sourceMappings = mappings.filter(mapping => mapping.source === 'whenIsGood');
+  const sourceMappings: MappingIndex = new Map();
+  for (const mapping of mappings) if (mapping.source === 'whenIsGood') {
+    const identity = mappingIdentity(mapping);
+    if (!identity) continue;
+    let index = sourceMappings.get(identity.kind);
+    if (!index) { index = new Map(); sourceMappings.set(identity.kind, index); }
+    const matches = index.get(identity.value);
+    if (matches) matches.push(mapping); else index.set(identity.value, [mapping]);
+  }
+  const volunteersByEmail = indexBy(volunteers, row => normalizeImportEmail(row.email));
+  const volunteersByName = indexBy(volunteers, row => normalizeImportName(row.name));
+  const previousMatches = new Map<string, string>();
+  for (const row of previous) if (row.volunteerId && !previousMatches.has(row.id)) previousMatches.set(row.id, row.volunteerId);
   const idCounts = frequencies(participants.map(participant => participant.id));
   const emailCounts = frequencies(participants.map(participant => normalizeImportEmail(participant.email)));
   const nameCounts = frequencies(participants.map(participant => normalizeImportName(participant.name)));
@@ -281,17 +298,17 @@ export function stageParticipants(participants: ImportParticipant[], volunteers:
     const email = normalizeImportEmail(participant.email);
     const name = normalizeImportName(participant.name);
     const emailMatches = email && emailCounts.get(email) === 1
-      ? volunteers.filter(volunteer => normalizeImportEmail(volunteer.email) === email) : [];
+      ? (volunteersByEmail.get(email) ?? []) : [];
     const nameMatches = name && nameCounts.get(name) === 1
-      ? volunteers.filter(volunteer => normalizeImportName(volunteer.name) === name) : [];
+      ? (volunteersByName.get(name) ?? []) : [];
     let volunteerId = mappingResult.found ? (mappingResult.mapping && volunteerIds.has(mappingResult.mapping.volunteerId) ? mappingResult.mapping.volunteerId : null)
       : emailMatches.length === 1 ? emailMatches[0]!.id
       : emailMatches.length === 0 && nameMatches.length === 1 ? nameMatches[0]!.id : null;
-    const previousMatch = previous.find(row => row.id === participant.id && row.volunteerId)?.volunteerId;
+    const previousMatch = previousMatches.get(participant.id);
     const mappedBySourceId = mappingResult.found && mappingResult.mapping?.sourceParticipantId === participant.id;
     const conflictingMatch = !mappedBySourceId && !!previousMatch && !!volunteerId && previousMatch !== volunteerId;
-    const ambiguousEmail = !!email && ((emailCounts.get(email) ?? 0) > 1 || volunteers.filter(row => normalizeImportEmail(row.email) === email).length > 1);
-    const ambiguousName = !!name && ((nameCounts.get(name) ?? 0) > 1 || volunteers.filter(row => normalizeImportName(row.name) === name).length > 1);
+    const ambiguousEmail = !!email && ((emailCounts.get(email) ?? 0) > 1 || (volunteersByEmail.get(email)?.length ?? 0) > 1);
+    const ambiguousName = !!name && ((nameCounts.get(name) ?? 0) > 1 || (volunteersByName.get(name)?.length ?? 0) > 1);
     const conflictingFields = !mappingResult.found && emailMatches.length === 1 && nameMatches.length === 1 && emailMatches[0]!.id !== nameMatches[0]!.id;
     const unstable = participant.identityStable === false;
     if ((idCounts.get(participant.id) ?? 0) > 1 || conflictingMatch || conflictingFields || unstable || (!mappingResult.found && ambiguousEmail)) volunteerId = null;

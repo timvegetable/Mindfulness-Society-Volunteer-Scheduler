@@ -47,10 +47,11 @@ function advance(job: SyncJob, next: JobPhase, now: string, diagnostic: string |
 export async function saveStage(db: D1Database, job: SyncJob, next: JobPhase, now: string,
   data?: { kind: string; body: string }, plan: CommitStatement[] = [], diagnostic: string | null = null, sourceHash: string | null = null): Promise<SyncMessage | null> {
   const statements = [
-    // UPDATE alone cannot fence a job deleted between the read and this batch.
-    sql(`INSERT INTO meta (key,value) VALUES ('syncJobFence', CASE WHEN EXISTS
+    // Domain writes require an explicit existence fence. Other advances insert
+    // artifacts/outbox rows whose foreign keys also reject a deleted job.
+    ...(job.phase === 'commit' ? [sql(`INSERT INTO meta (key,value) VALUES ('syncJobFence', CASE WHEN EXISTS
       (SELECT 1 FROM synchronization_jobs WHERE id=? AND version=? AND phase=?) THEN 'ok' ELSE NULL END)
-      ON CONFLICT(key) DO UPDATE SET value=excluded.value`, job.id, job.version, job.phase),
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value`, job.id, job.version, job.phase)] : []),
     advance(job, next, now, diagnostic, job.phase === 'commit' && plan.length > 0, sourceHash), ...plan,
   ];
   if (data) {
@@ -62,7 +63,9 @@ export async function saveStage(db: D1Database, job: SyncJob, next: JobPhase, no
       parts.push([job.id, data.kind, parts.length, data.body.slice(offset, end)]); offset = end;
     }
     if (!parts.length) parts.push([job.id, data.kind, 0, '']);
-    statements.push(sql('DELETE FROM synchronization_artifacts WHERE job_id=? AND kind=?', job.id, data.kind));
+    // Source/parsed snapshots are inserted once. Only a retried reconciliation
+    // replaces an earlier plan. Progress fencing rejects duplicate insertions.
+    if (data.kind === 'prepared') statements.push(sql('DELETE FROM synchronization_artifacts WHERE job_id=? AND kind=?', job.id, data.kind));
     // Keep each bound value comfortably below D1's per-value limit.
     for (let offset = 0; offset < parts.length; offset += 8) statements.push(sql(`INSERT INTO synchronization_artifacts (job_id,kind,part,body)
       SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]'),json_extract(value,'$[2]'),json_extract(value,'$[3]') FROM json_each(?)`, JSON.stringify(parts.slice(offset, offset + 8))));

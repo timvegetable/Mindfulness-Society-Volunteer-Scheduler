@@ -1,6 +1,6 @@
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import { AppError } from '../shared/api/errors';
-import { resultSchemas } from '../shared/api/schemas';
+import { decodeResult } from './api/validation';
 import { emptySyncStatus, type ImportParticipant, type PendingParticipant, type Snapshot, type StagedParticipant, type WeeklyInterval } from '../shared/domain/models';
 import { normalizeWeeklyIntervals } from '../shared/domain/intervals';
 import { normalizeImportEmail, normalizeImportName, parseWhenIsGood, stageParticipants, weeklyAvailabilityByVolunteer, whenIsGoodParserVersion } from '../shared/imports/whenIsGood';
@@ -28,11 +28,11 @@ export function synchronizationView(state: Snapshot) {
   return { status: syncStatus(state), pending: state.synchronizations[0]?.pending ?? [],
     imports: state.imports, volunteers: state.volunteers, mappings: state.importMappings };
 }
-const content = (participants: StagedParticipant[]) => JSON.stringify(participants.map(row => ({
+const content = (participants: StagedParticipant[]) => '[' + participants.map(row => JSON.stringify({
   id: row.id, name: normalizeImportName(row.name), email: normalizeImportEmail(row.email),
   intervals: normalizeWeeklyIntervals(row.intervals), volunteerId: row.volunteerId,
   identityStable: row.identityStable !== false, pendingReason: row.pendingReason ?? null,
-})).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+})).sort((a, b) => a.localeCompare(b)).join(',') + ']';
 const weeklyContent = (intervals: WeeklyInterval[]) => JSON.stringify(normalizeWeeklyIntervals(intervals.map(({ weekday, start, end, timeZone }) => ({ weekday, start, end, timeZone }))));
 
 // Exact parsed-source equality is deliberately narrower than semantic equality.
@@ -67,12 +67,13 @@ export function applySynchronizedParticipants(state: Snapshot, participants: Imp
     }
     const byVolunteer = weeklyAvailabilityByVolunteer(staged.stagedAvailability);
     const changedVolunteers = new Set([...byVolunteer].filter(([id, intervals]) => weeklyContent(intervals) !== weeklyContent(state.recurringAvailability.filter(row => row.volunteerId === id))).map(([id]) => id));
-    const sourceChanged = content(staged.stagedAvailability) !== content(previous?.participants ?? []);
+    const stagedContent = content(staged.stagedAvailability);
+    const sourceChanged = stagedContent !== content(previous?.participants ?? []);
     const changed = sourceChanged || changedVolunteers.size > 0;
     if (changed) {
       const runId = yield* ids.next;
       const contentHash = yield* Effect.tryPromise({
-        try: () => digest(content(staged.stagedAvailability)),
+        try: () => digest(stagedContent),
         catch: () => new AppError('INTERNAL_ERROR', 'Could not record synchronization content.'),
       });
       state.imports.push({ id: runId, source: 'whenIsGood', resultId: whenIsGoodSource.resultId, contentHash,
@@ -90,12 +91,16 @@ export function applySynchronizedParticipants(state: Snapshot, participants: Imp
   });
 }
 
-export function authorizeSyncActor(actor: SyncActor, state: Snapshot) {
-  if (actor.kind === 'system') return Effect.void;
+function syncActorError(actor: SyncActor, state: Snapshot): AppError | null {
+  if (actor.kind === 'system') return null;
   const user = state.users.find(row => row.id === actor.id && row.active);
-  if (!user) return Effect.fail(new AppError('UNAUTHORIZED', 'This account is no longer active.'));
-  if (!canUseOperation(user, 'admin.sync.now')) return Effect.fail(new AppError('FORBIDDEN', 'This account can no longer synchronize availability.'));
-  return Effect.void;
+  if (!user) return new AppError('UNAUTHORIZED', 'This account is no longer active.');
+  if (!canUseOperation(user, 'admin.sync.now')) return new AppError('FORBIDDEN', 'This account can no longer synchronize availability.');
+  return null;
+}
+export function authorizeSyncActor(actor: SyncActor, state: Snapshot) {
+  const error = syncActorError(actor, state);
+  return error ? Effect.fail(error) : Effect.void;
 }
 
 /** System authority is available only to the scheduled adapter, never decoded from HTTP. */
@@ -159,39 +164,52 @@ export function unchangedSource(before: Snapshot, fetched: ParsedSource): boolea
     && (fetched.sourceHash === before.synchronizedSourceHash || sourceContent(fetched.participants) === sourceContent(before.synchronizations[0].participants));
 }
 
+/** Status-only checks never clone history or acquire Effect services. */
+export function prepareSynchronizationStatus(actor: SyncActor, fetched: ParsedSource, before: Snapshot, startedCheckId: string | null, now: Date, key: IdempotencyKey, fingerprint: string): CommitInput | null {
+  const superseded = (before.synchronizations[0]?.checkId ?? null) !== startedCheckId;
+  const unchanged = unchangedSource(before, fetched);
+  if (!superseded && fetched.ok && !unchanged) return null;
+  const error = syncActorError(actor, before);
+  if (error) throw error;
+  const after = { ...before };
+  const previous = before.synchronizations[0];
+  const checkId = JSON.stringify([key.actorId, key.operation, key.idempotencyKey]);
+  if (!superseded) {
+    if (unchanged) {
+      after.synchronizations = [{ ...previous!, generation: previous!.generation + 1, checkId,
+        lastAttemptAt: now.toISOString(), lastSuccessAt: now.toISOString(), outcome: 'unchanged', diagnostic: null,
+        pending: previous!.pending.map(row => row.present ? { ...row, lastSeenAt: now.toISOString() } : row) }];
+    } else if (!fetched.ok) {
+      after.synchronizations = [{ ...emptySyncStatus(), ...previous, id: 'whenIsGood', generation: (previous?.generation ?? 0) + 1, checkId,
+        lastAttemptAt: now.toISOString(), outcome: 'failed', diagnostic: fetched.error,
+        participants: previous?.participants ?? [], pending: previous?.pending ?? [] }];
+    }
+  }
+  return synchronizationCommit(fetched, before, after, startedCheckId, now, key, fingerprint, false);
+}
+
+function synchronizationCommit(fetched: ParsedSource, before: Snapshot, after: Snapshot, startedCheckId: string | null, now: Date, key: IdempotencyKey, fingerprint: string, changed: boolean): CommitInput {
+  const dataRevision = before.dataRevision + Number(changed);
+  const schedulingInputRevision = before.schedulingInputRevision + Number(changed && schedulingInputsChanged(before, after));
+  let data;
+  try { data = decodeResult('admin.sync.now', { status: syncStatus(after), dataRevision, schedulingInputRevision }); }
+  catch { throw new AppError('INTERNAL_ERROR', 'Invalid synchronization response.'); }
+  return { before, after, key, fingerprint, response: JSON.stringify({ ok: true, data }), createdAt: now.toISOString(), advanceDataRevision: changed,
+    recordSynchronization: fetched.ok && (before.synchronizations[0]?.checkId ?? null) === startedCheckId,
+    ...(fetched.ok ? { synchronizedSourceHash: fetched.sourceHash } : {}) };
+}
+
 export function prepareSynchronization(actor: SyncActor, fetched: ParsedSource, before: Snapshot, startedCheckId: string | null, now: Date, key: IdempotencyKey, fingerprint: string) {
   return Effect.gen(function* () {
+    const ready = yield* Effect.try({ try: () => prepareSynchronizationStatus(actor, fetched, before, startedCheckId, now, key, fingerprint),
+      catch: error => error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'Could not prepare synchronization.') });
+    if (ready) return ready;
     yield* authorizeSyncActor(actor, before);
-    const checkId = JSON.stringify([key.actorId, key.operation, key.idempotencyKey]);
-    const unchanged = unchangedSource(before, fetched);
-    // Synchronization replaces availability/status arrays and appends history.
-    // Keep unrelated rows shared so diffing does not serialize them on every poll.
+    if (!fetched.ok) return yield* Effect.fail(new AppError('INTERNAL_ERROR', 'Synchronization source is unavailable.'));
     const after = { ...before, imports: [...before.imports], importedAvailability: [...before.importedAvailability] };
-    // Another poll completed while this response was in flight. Keep the newer snapshot.
-    const superseded = (before.synchronizations[0]?.checkId ?? null) !== startedCheckId;
-    let changed = false;
-    if (!superseded) {
-      if (unchanged) {
-        const previous = before.synchronizations[0]!;
-        after.synchronizations = [{ ...previous, generation: previous.generation + 1, checkId,
-          lastAttemptAt: now.toISOString(), lastSuccessAt: now.toISOString(), outcome: 'unchanged', diagnostic: null,
-          pending: previous.pending.map(row => row.present ? { ...row, lastSeenAt: now.toISOString() } : row) }];
-      } else if (fetched.ok) changed = yield* applySynchronizedParticipants(after, fetched.participants, now, actor, true, checkId);
-      else {
-        const previous = before.synchronizations[0];
-        after.synchronizations = [{ ...emptySyncStatus(), ...previous, id: 'whenIsGood', generation: (previous?.generation ?? 0) + 1, checkId,
-          lastAttemptAt: now.toISOString(), outcome: 'failed', diagnostic: fetched.error,
-          participants: previous?.participants ?? [], pending: previous?.pending ?? [] }];
-      }
-    }
-    const dataRevision = before.dataRevision + Number(changed);
-    const schedulingInputRevision = before.schedulingInputRevision + Number(schedulingInputsChanged(before, after));
-    const data = yield* Effect.try({ try: () => Schema.decodeUnknownSync(resultSchemas['admin.sync.now'])({ status: syncStatus(after), dataRevision, schedulingInputRevision }),
-      catch: () => new AppError('INTERNAL_ERROR', 'Invalid synchronization response.') });
-    const response = JSON.stringify({ ok: true, data });
-
-    const input: CommitInput = { before, after, key, fingerprint, response, createdAt: now.toISOString(), advanceDataRevision: changed,
-      recordSynchronization: fetched.ok && !superseded, ...(fetched.ok ? { synchronizedSourceHash: fetched.sourceHash } : {}) };
-    return input;
+    const checkId = JSON.stringify([key.actorId, key.operation, key.idempotencyKey]);
+    const changed = yield* applySynchronizedParticipants(after, fetched.participants, now, actor, true, checkId);
+    return yield* Effect.try({ try: () => synchronizationCommit(fetched, before, after, startedCheckId, now, key, fingerprint, changed),
+      catch: error => error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'Could not prepare synchronization.') });
   });
 }

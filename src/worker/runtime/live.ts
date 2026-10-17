@@ -6,7 +6,7 @@ import { Clock } from '../services/Clock';
 import { IdGenerator } from '../services/IdGenerator';
 import { EmailService, makeResendEmail } from '../services/EmailService';
 import { makeGmailEmail } from '../services/GmailService';
-import { WhenIsGoodClient, makeWhenIsGoodClient } from '../services/WhenIsGoodClient';
+import { WhenIsGoodClient, makeWhenIsGoodClient, fetchWhenIsGoodResults } from '../services/WhenIsGoodClient';
 import { whenIsGoodSource, type AppConfig } from '../config';
 import { makeSynchronizationJobs, SynchronizationJobs } from '../synchronizationJobs';
 import type { SyncQueue } from '../repositories/synchronizationJobs';
@@ -57,7 +57,6 @@ export function appConfig(env: Bindings): AppConfig {
 
 /** Queue consumers receive no authentication or email services. */
 export function synchronizationJobs(env: Bindings) {
-  const client = makeWhenIsGoodClient({ endpoint: whenIsGoodSource.endpoint, fetch });
   return makeSynchronizationJobs({ db: env.DB, queue: env.SYNC_QUEUE, config: appConfig(env),
-    fetchSource: () => Effect.runPromise(client.fetchResults(whenIsGoodSource.resultId)) });
+    fetchSource: () => fetchWhenIsGoodResults({ endpoint: whenIsGoodSource.endpoint, fetch }, whenIsGoodSource.resultId) });
 }

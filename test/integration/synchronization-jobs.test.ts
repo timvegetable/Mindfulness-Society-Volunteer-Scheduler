@@ -91,6 +91,18 @@ describe('durable queued synchronization through authenticated API and real loca
     expect(after.availabilityExceptions).toEqual(before.availabilityExceptions); expect(after.imports).toHaveLength(1);
     expect(await r.jobs.latest()).toMatchObject({ state: 'succeeded' });
   });
+  it('keeps history and revisions unchanged when only source formatting changes', async () => {
+    const r = await runtime(); await r.request(); await r.drain();
+    const before = await r.app.read();
+    r.setNow('2026-10-04T12:01:00.000Z'); r.setHtml('  \n' + source() + '\n');
+    await r.request(); await r.drain();
+    const after = await r.app.read();
+    expect(after.dataRevision).toBe(before.dataRevision);
+    expect(after.schedulingInputRevision).toBe(before.schedulingInputRevision);
+    expect(after.imports).toEqual(before.imports);
+    expect(after.recurringAvailability).toEqual(before.recurringAvailability);
+    expect(after.synchronizations[0]).toMatchObject({ outcome: 'unchanged', lastSuccessAt: '2026-10-04T12:01:00.000Z' });
+  });
   it('a newer check finishing first supersedes an older queued source snapshot', async () => {
     const r = await runtime(); await r.request(); await r.until('reconcile'); const older = r.messages.shift()!;
     r.setNow('2026-10-04T12:01:00.000Z'); r.setHtml(source('11:00')); await r.request(); await r.drain();
