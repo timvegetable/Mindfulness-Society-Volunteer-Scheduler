@@ -1,0 +1,342 @@
+{
+  "applicationSource": "55b1a71",
+  "worktreeBaseline": "c74029c",
+  "productionWorkerUnchanged": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+  "measurement": "Local Inspector CPU profile non-idle sample deltas, including local D1 and diagnostic overhead; not Cloudflare invocation CPU. Each fresh runtime made one initial read and two repeats.",
+  "referenceResponseBytes": 78467,
+  "runs": {
+    "baseline": {
+      "freshRuntimes": 4,
+      "firstReadProfileActiveMs": [
+        21.592,
+        21.678,
+        16.958,
+        16.969
+      ],
+      "repeatReadProfileActiveMs": [
+        7.224,
+        5.086,
+        8.576,
+        5.89,
+        6.523,
+        5.359,
+        7.538,
+        3.621
+      ],
+      "maxProfileActiveMs": 21.678
+    },
+    "primed": {
+      "freshRuntimes": 4,
+      "firstReadProfileActiveMs": [
+        7.401,
+        6.897,
+        7.161,
+        7.223
+      ],
+      "repeatReadProfileActiveMs": [
+        7.256,
+        4.653,
+        6.368,
+        4.843,
+        6.715,
+        4.709,
+        6.716,
+        4.643
+      ],
+      "maxProfileActiveMs": 7.401
+    },
+    "effect-startup": {
+      "freshRuntimes": 6,
+      "firstReadProfileActiveMs": [
+        20.624,
+        18.049,
+        16.451,
+        14.104,
+        15.805,
+        16.028
+      ],
+      "repeatReadProfileActiveMs": [
+        5.073,
+        5.454,
+        6.304,
+        4.987,
+        9.464,
+        3.718,
+        6.865,
+        5.372,
+        6.832,
+        4.886,
+        6.517,
+        5.65
+      ],
+      "maxProfileActiveMs": 20.624
+    },
+    "dispatch-startup": {
+      "freshRuntimes": 6,
+      "firstReadProfileActiveMs": [
+        15.835,
+        12.047,
+        14.039,
+        14.21,
+        10.062,
+        13.798
+      ],
+      "repeatReadProfileActiveMs": [
+        7.008,
+        3.154,
+        6.233,
+        3.177,
+        6.513,
+        5.174,
+        4.598,
+        4.667,
+        5.327,
+        4.539,
+        4.841,
+        5.721
+      ],
+      "maxProfileActiveMs": 15.835
+    },
+    "body-primed": {
+      "freshRuntimes": 5,
+      "firstReadProfileActiveMs": [
+        16.026,
+        14.908,
+        11.997,
+        16.299,
+        14.666
+      ],
+      "repeatReadProfileActiveMs": [
+        3.436,
+        4.661,
+        6.461,
+        3.7,
+        6.604,
+        4.65,
+        8.07,
+        5.623,
+        5.42,
+        4.834
+      ],
+      "maxProfileActiveMs": 16.299
+    },
+    "auth-primed": {
+      "freshRuntimes": 6,
+      "firstReadProfileActiveMs": [
+        9.909,
+        9.849,
+        10.727,
+        9.551,
+        10.909,
+        9.785
+      ],
+      "repeatReadProfileActiveMs": [
+        6.954,
+        5.011,
+        6.636,
+        4.592,
+        6.269,
+        5.023,
+        6.679,
+        4.795,
+        6.489,
+        4.814,
+        4.749,
+        5.51
+      ],
+      "maxProfileActiveMs": 10.909
+    },
+    "packed": {
+      "freshRuntimes": 6,
+      "firstReadProfileActiveMs": [
+        22.194,
+        13.751,
+        17.641,
+        16.256,
+        18.617,
+        15.145
+      ],
+      "repeatReadProfileActiveMs": [
+        6.594,
+        5.357,
+        7.716,
+        5.304,
+        4.918,
+        5.112,
+        6.515,
+        4.842,
+        6.177,
+        5.324,
+        6.905,
+        5.122
+      ],
+      "maxProfileActiveMs": 22.194
+    },
+    "ticket-prototype": {
+      "freshRuntimes": 6,
+      "firstReadProfileActiveMs": [
+        11.646,
+        16.753,
+        12.051,
+        14.75,
+        13.253,
+        13.513
+      ],
+      "repeatReadProfileActiveMs": [
+        6.734,
+        5.113,
+        5.786,
+        5.423,
+        5.082,
+        5.383,
+        5.669,
+        4.828,
+        6.678,
+        3.162,
+        6.759,
+        4.66
+      ],
+      "maxProfileActiveMs": 16.753
+    },
+    "plain-read": {
+      "freshRuntimes": 6,
+      "firstReadProfileActiveMs": [
+        20.808,
+        15.594,
+        13.762,
+        13.921,
+        15.129,
+        11.712
+      ],
+      "repeatReadProfileActiveMs": [
+        5.939,
+        3.642,
+        6.868,
+        3.16,
+        3.129,
+        3.148,
+        6.106,
+        4.603,
+        6.396,
+        3.379,
+        5.238,
+        4.593
+      ],
+      "maxProfileActiveMs": 20.808
+    },
+    "minified": {
+      "freshRuntimes": 6,
+      "firstReadProfileActiveMs": [
+        20.375,
+        16.798,
+        16.212,
+        19.298,
+        16.798,
+        14.805
+      ],
+      "repeatReadProfileActiveMs": [
+        6.776,
+        3.256,
+        7.691,
+        4.668,
+        7.306,
+        5.088,
+        7.888,
+        6.073,
+        5.809,
+        5.272,
+        5.549,
+        5.439
+      ],
+      "maxProfileActiveMs": 20.375
+    },
+    "materialized-ticket-prototype": {
+      "freshRuntimes": 8,
+      "firstReadProfileActiveMs": [
+        16.405,
+        8.577,
+        10.939,
+        9.122,
+        8.796,
+        9.176,
+        6.642,
+        7.13
+      ],
+      "repeatReadProfileActiveMs": [
+        4.974,
+        6.237,
+        4.35,
+        3.487,
+        4.627,
+        2.539,
+        4.492,
+        4.832,
+        4.083,
+        5.595,
+        3.998,
+        6.057,
+        1.928,
+        4.802,
+        3.889,
+        4.614
+      ],
+      "maxProfileActiveMs": 16.405
+    },
+    "lean-read-prototype": {
+      "freshRuntimes": 12,
+      "firstReadProfileActiveMs": [
+        4.568,
+        4.675,
+        6.216,
+        4.665,
+        4.31,
+        4.678,
+        4.843,
+        4.77,
+        4.129,
+        4.398,
+        4.148,
+        4.617
+      ],
+      "repeatReadProfileActiveMs": [
+        1.43,
+        3.223,
+        2.913,
+        1.862,
+        3.539,
+        4.085,
+        2.836,
+        1.923,
+        3.078,
+        3.362,
+        2.571,
+        2.438,
+        1.713,
+        3.346,
+        1.427,
+        3.681,
+        3.206,
+        2.959,
+        2.885,
+        3.128,
+        2.582,
+        3.395,
+        2.631,
+        2.244
+      ],
+      "maxProfileActiveMs": 6.216
+    }
+  },
+  "prototypeChecks": [
+    "tampered signature",
+    "expired ticket",
+    "wrong audience",
+    "wrong version",
+    "deactivated account",
+    "revoked administrator",
+    "stale projection",
+    "corrupt projection",
+    "exact reference response"
+  ],
+  "productionChanges": false
+}
