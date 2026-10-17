@@ -9,7 +9,7 @@ export interface TestDatabase {
 }
 
 /** Real workerd/Miniflare D1, including D1 transactional batch semantics. */
-export async function createTestDatabase(options: { seed?: boolean } = {}): Promise<TestDatabase> {
+export async function createTestDatabase(options: { seed?: boolean; scheduleReads?: boolean } = {}): Promise<TestDatabase> {
   const miniflare = new Miniflare(convertV4MiniflareOptions({
     modules: true,
     script: 'export default { fetch() { return new Response("local D1 integration test"); } };',
@@ -24,7 +24,7 @@ export async function createTestDatabase(options: { seed?: boolean } = {}): Prom
       const seed = await readFile(new URL('../fixtures/seed.sql', import.meta.url), 'utf8');
       await applySql(db, seed);
     }
-    return { db, service: makeDatabase(db), dispose: () => miniflare.dispose() };
+    return { db, service: makeDatabase(db, options.scheduleReads), dispose: () => miniflare.dispose() };
   } catch (error) {
     await miniflare.dispose();
     throw error;
@@ -33,6 +33,13 @@ export async function createTestDatabase(options: { seed?: boolean } = {}): Prom
 
 /** Used only for the fixed local DDL and synthetic test fixture. */
 export async function applySql(db: D1Database, sql: string): Promise<void> {
-  const statements = sql.split(';').map(statement => statement.trim()).filter(Boolean);
+  const statements: string[] = [];
+  let pending = '';
+  for (const piece of sql.split(';')) {
+    pending += piece + ';';
+    if (/CREATE\s+TRIGGER/i.test(pending) && !/END;\s*$/i.test(pending)) continue;
+    const statement = pending.trim(); pending = '';
+    if (statement !== ';') statements.push(statement);
+  }
   await db.batch(statements.map(statement => db.prepare(statement)));
 }

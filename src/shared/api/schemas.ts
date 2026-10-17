@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { roles } from '../domain/roles';
 import { isISODate } from '../domain/dates';
 import { operations, type Operation } from './operations';
 import { applicationTimeZone } from '../domain/models';
@@ -25,7 +26,7 @@ export const VolunteerSchema = object({
   id: text, name: text, email: text, lifecycleStatus: Schema.Literals(['active', 'newly-joined', 'inactive', 'graduated']),
   interviewStatus: Schema.Literals(['complete', 'incomplete']), readinessRank: Schema.NullOr(integer), source: maybeText, ...timestamps,
 });
-export const UserSchema = object({ id: text, email: text, roles: Schema.Array(Schema.Literals(['volunteer', 'center-contact', 'administrator'])), volunteerId: Schema.NullOr(text), centerIds: Schema.Array(text), active: Schema.Boolean });
+export const UserSchema = object({ id: text, email: text, roles: Schema.Array(Schema.Literals(roles)), volunteerId: Schema.NullOr(text), centerIds: Schema.Array(text), active: Schema.Boolean });
 export const RecurringIntervalSchema = object({ id: text, volunteerId: text, ...interval, weekday, timeZone: zone, source: maybeText, updatedAt: maybeText }).check(validInterval);
 export const AvailabilityExceptionSchema = object({ id: text, volunteerId: text, date, kind: Schema.Literals(['available', 'unavailable']), ...interval, timeZone: zone, reason: maybeText, updatedAt: maybeText }).check(validInterval);
 export const CandidateSchema = object({ id: text, centerId: text, weekday: workday, ...interval, timeZone: zone, requestedStaffCount: count, status: Schema.Literals(['candidate', 'confirmed', 'cancelled']), createdBy: maybeText, ...timestamps }).check(validInterval);
@@ -78,7 +79,7 @@ const syncResult = object({ ...revisions, ...jobResult, status: SyncStatusSchema
   imports: Schema.Array(ImportRunSchema), volunteers: Schema.Array(VolunteerSchema), mappings: Schema.Array(ImportMappingSchema) });
 export const resultSchemas = {
   'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, ...jobResult, status: SyncStatusSchema }),
-  'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema) }),
+  'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema), scheduleRead: Schema.optionalKey(object({ credential: text, expiresAt: revision })) }),
   'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
   'volunteer.availability.recurring.update': object({ ...revisions, intervals: Schema.Array(RecurringIntervalSchema) }),
   'volunteer.availability.exception.create': object({ ...revisions, exception: AvailabilityExceptionSchema }),

@@ -1,4 +1,7 @@
-import { Effect } from 'effect';
+import { scheduleReadMode } from './scheduleRead/configuration';
+import { Effect, Schema } from 'effect';
+import { decodeRequest, decodePayload, decodeResult } from './api/validation';
+import { ErrorEnvelopeSchema } from '../shared/api/schemas';
 import { applicationTimeZone } from '../shared/domain/models';
 import { AppError } from '../shared/api/errors';
 import { dispatchResponse, publicFailure } from './api/dispatch';
@@ -6,7 +9,7 @@ import { appConfig, liveServices, synchronizationJobs, type Bindings } from './r
 import { readBoundedText } from './services/http';
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
-const failure = (code: ConstructorParameters<typeof AppError>[0], message: string, status: number) => new Response(publicFailure(new AppError(code, message)), { status, headers });
+const failure = (code: ConstructorParameters<typeof AppError>[0], message: string, status: number, details?: unknown) => new Response(publicFailure(new AppError(code, message, details)), { status, headers });
 
 export default {
   async scheduled(controller: ScheduledController, env: Bindings): Promise<void> {
@@ -24,6 +27,12 @@ export default {
   },
   async fetch(request: Request, env: Bindings): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/api/schedule') {
+      if (scheduleReadMode(env) !== 'enabled') return failure('NOT_FOUND', 'This endpoint is unavailable.', 404);
+      if (!env.SCHEDULE_READER) return failure('INTERNAL_ERROR', 'The schedule is temporarily unavailable. Please try again.', 500);
+      try { return await env.SCHEDULE_READER.fetch(request); }
+      catch { return failure('INTERNAL_ERROR', 'The schedule is temporarily unavailable. Please try again.', 500); }
+    }
     if (url.pathname === '/client-config') {
       if (request.method !== 'GET') return failure('INVALID_REQUEST', 'Use GET.', 405);
       return Response.json({ oauthClientId: env.OAUTH_CLIENT_ID, timeZone: applicationTimeZone }, { headers });
@@ -36,6 +45,24 @@ export default {
       body = JSON.parse(await readBoundedText(new Response(request.body, { headers: request.headers }), 64 * 1024));
     } catch { return failure('INVALID_REQUEST', 'Expected a JSON request no larger than 64 KiB.', 400); }
     try {
+      if (scheduleReadMode(env) === 'enabled' && typeof body === 'object' && body !== null
+          && 'operation' in body && body.operation === 'admin.schedule.read') {
+        return failure('INVALID_REQUEST', 'Refresh this application to read the schedule.', 400, { scheduleReadProtocol: 1 });
+      }
+      if (scheduleReadMode(env) === 'enabled' && typeof body === 'object' && body !== null
+        && 'operation' in body && body.operation === 'session.me') {
+        if (!env.SCHEDULE_READER) return failure('INTERNAL_ERROR', 'Sign-in is temporarily unavailable.', 500);
+        let envelope;
+        try { envelope = decodeRequest(body); decodePayload('session.me', envelope.payload); }
+        catch { return failure('INVALID_REQUEST', 'Invalid sign-in request.', 400); }
+        const target = new URL(request.url); target.pathname = '/internal/session';
+        const exchanged = await env.SCHEDULE_READER.fetch(new Request(target, { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) }));
+        const result = await exchanged.json() as { ok?: unknown; data?: unknown };
+        if (result.ok === false) return Response.json(Schema.decodeUnknownSync(ErrorEnvelopeSchema)(result), { headers, status: exchanged.status });
+        if (result.ok !== true) return failure('INTERNAL_ERROR', 'Sign-in is temporarily unavailable.', 500);
+        return Response.json({ ok: true, data: decodeResult('session.me', result.data) }, { headers });
+      }
       const response = await Effect.runPromise(dispatchResponse(body, appConfig(env)).pipe(Effect.provide(liveServices(env))));
       return new Response(response, { headers });
     } catch {

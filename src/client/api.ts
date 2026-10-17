@@ -7,14 +7,28 @@ export class ApiError extends Error {
 /** A failed transport keeps the same intent key; successful mutations consume it. */
 export class ApiClient {
   private credential = '';
+  private generation = 0;
+  private scheduleProtocol = false;
+  private readTicket?: { credential: string; expiresAt: number };
+  private exchange?: Promise<unknown>;
   private readonly pending = new Map<string, string>();
   constructor(private readonly fetcher: typeof fetch = fetch, private readonly id: () => string = () => crypto.randomUUID()) {}
-  signIn(credential: string) { this.credential = credential; this.pending.clear(); }
-  signOut() { this.credential = ''; this.pending.clear(); }
-  async call<O extends Operation>(operation: O, payload: PayloadOf<O>, revision?: number): Promise<ResultOf<O>> {
+  signIn(credential: string) { this.signOut(); this.credential = credential; }
+  signOut() { this.generation++; this.credential = ''; this.readTicket = undefined; this.scheduleProtocol = false; this.exchange = undefined; this.pending.clear(); }
+  call<O extends Operation>(operation: O, payload: PayloadOf<O>, revision?: number): Promise<ResultOf<O>> {
+    return this.perform(operation, payload, revision, false);
+  }
+  private async perform<O extends Operation>(operation: O, payload: PayloadOf<O>, revision: number | undefined, renewed: boolean): Promise<ResultOf<O>> {
     if (!this.credential) throw new ApiError('UNAUTHORIZED', 'Please sign in to continue.');
+    const generation = this.generation;
+    const schedule = operation === 'admin.schedule.read' && this.scheduleProtocol;
+    if (schedule && (!this.readTicket || this.readTicket.expiresAt <= Date.now())) {
+      const exchange = this.exchange ??= this.call('session.me', {});
+      try { await exchange; } finally { if (this.exchange === exchange) this.exchange = undefined; }
+      if (generation !== this.generation) throw new ApiError('UNAUTHORIZED', 'Please sign in again.');
+    }
     const normalized = Schema.decodeUnknownSync(payloadSchemas[operation] as Schema.ConstraintDecoder<unknown, never>)(payload);
-    const body: Record<string, unknown> = { operation, payload: normalized, credential: this.credential };
+    const body: Record<string, unknown> = { operation, payload: normalized, credential: schedule ? this.readTicket?.credential : this.credential };
     const intent = JSON.stringify([operation, normalized, revision]);
     if (isMutation(operation)) {
       if (revision === undefined) throw new ApiError('INVALID_REQUEST', 'Reload this view before saving.');
@@ -26,16 +40,32 @@ export class ApiClient {
     let response: Response;
     // Native browser fetch rejects an unrelated object as its receiver.
     const fetcher = this.fetcher;
-    try { response = await fetcher('/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+    try { response = await fetcher(schedule ? '/api/schedule' : '/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
     catch { throw new ApiError('NETWORK_ERROR', 'Could not reach the server. Your changes have not been confirmed. You can retry.'); }
     let envelope: unknown;
     try { envelope = await response.json(); } catch { throw new ApiError('INVALID_RESPONSE', 'The server returned an unreadable response. Please try again.'); }
+    if (generation !== this.generation) throw new ApiError('UNAUTHORIZED', 'Please sign in again.');
     if (typeof envelope === 'object' && envelope !== null && 'ok' in envelope && envelope.ok === false) {
       const failure = Schema.decodeUnknownSync(ErrorEnvelopeSchema)(envelope);
+      const details = failure.error.details;
+      if (operation === 'admin.schedule.read' && !schedule && !renewed && failure.error.code === 'INVALID_REQUEST'
+        && typeof details === 'object' && details !== null && 'scheduleReadProtocol' in details && details.scheduleReadProtocol === 1) {
+        this.scheduleProtocol = true; this.readTicket = undefined;
+        return this.perform(operation, payload, revision, true);
+      }
+      if (schedule && failure.error.code === 'UNAUTHORIZED' && !renewed) {
+        this.readTicket = undefined;
+        return this.perform(operation, payload, revision, true);
+      }
       throw new ApiError(failure.error.code, failure.error.message);
     }
     if (!response.ok || typeof envelope !== 'object' || envelope === null || !('ok' in envelope) || envelope.ok !== true || !('data' in envelope)) throw new ApiError('INVALID_RESPONSE', 'The server returned an unexpected response. Please reload.');
     const data = Schema.decodeUnknownSync(resultSchemas[operation] as Schema.ConstraintDecoder<unknown, never>)(envelope.data) as ResultOf<O>;
+    if (operation === 'session.me') {
+      const ticket = (data as ResultOf<'session.me'>).scheduleRead;
+      if (ticket) { this.scheduleProtocol = true; this.readTicket = ticket; }
+      else if (this.scheduleProtocol) throw new ApiError('UNAUTHORIZED', 'Please reload and sign in again.');
+    }
     this.pending.delete(intent);
     return data;
   }

@@ -1,6 +1,7 @@
 export const applicationTimeZone = 'America/New_York';
 
-export type Role = 'volunteer' | 'center-contact' | 'administrator';
+import type { Role } from './roles';
+export type { Role } from './roles';
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export interface Interval { start: string; end: string }
 export interface WeeklyInterval extends Interval { weekday: Weekday; timeZone: string }

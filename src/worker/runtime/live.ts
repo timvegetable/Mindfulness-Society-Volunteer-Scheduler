@@ -1,3 +1,4 @@
+import { scheduleReadMode, type ScheduleReadBindings } from '../scheduleRead/configuration';
 import { Context, Effect } from 'effect';
 import { applicationTimeZone } from '../../shared/domain/models';
 import { instantMilliseconds } from '../../shared/domain/availability';
@@ -12,7 +13,8 @@ import { whenIsGoodSource, type AppConfig } from '../config';
 import { makeSynchronizationJobs, SynchronizationJobs } from '../synchronizationJobs';
 import type { SyncQueue } from '../repositories/synchronizationJobs';
 
-export interface Bindings {
+export interface Bindings extends ScheduleReadBindings {
+  SCHEDULE_READER?: Fetcher;
   DB: D1Database; ASSETS: Fetcher; SYNC_QUEUE: SyncQueue; SYNC_DEAD_LETTER_QUEUE: string;
   TIME_ZONE: string; DISPLAY_INCREMENT_MINUTES: string; OPERATING_HOURS_START: string; OPERATING_HOURS_END: string;
   OAUTH_CLIENT_ID: string; ADMIN_EMAILS: string;
@@ -50,7 +52,7 @@ const systemServices = Context.merge(
 
 /** The scheduled runtime has no Google authentication or email capability. */
 export function synchronizationServices(env: Bindings) {
-  return Context.mergeAll(systemServices, Context.make(Database, makeDatabase(env.DB)),
+  return Context.mergeAll(systemServices, Context.make(Database, makeDatabase(env.DB, scheduleReadMode(env) !== 'disabled')),
     Context.make(WhenIsGoodClient, makeWhenIsGoodClient({ endpoint: whenIsGoodSource.endpoint, fetch })));
 }
 

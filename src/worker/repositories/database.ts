@@ -1,3 +1,5 @@
+import { prepareSchedule, preparedScheduleStatements } from '../scheduleRead/prepare';
+import { representationTables } from '../scheduleRead/storage';
 import type { Operation } from '../../shared/api/operations';
 import { AppError } from '../../shared/api/errors';
 import { emptySnapshot, type Snapshot } from '../../shared/domain/models';
@@ -124,7 +126,7 @@ export async function findIdempotency(db: D1Database, key: IdempotencyKey, now: 
 export interface CommitStatement { sql: string; values: (string | number | null)[] }
 const statement = (sql: string, ...values: (string | number | null)[]): CommitStatement => ({ sql, values });
 
-export function prepareCommit(input: CommitInput): CommitStatement[] {
+export function prepareCommit(input: CommitInput, scheduleStatements: CommitStatement[] = []): CommitStatement[] {
   const { before, after, key, fingerprint, response, createdAt } = input;
   const diffs = tables.map(table => ({ table, ...tableDiff(table, before, after) }));
   if (input.advanceDataRevision === false && diffs.some(diff => diff.table.key !== 'synchronizations' && (diff.removed.length || diff.changed.length))) throw storageError();
@@ -171,14 +173,35 @@ export function prepareCommit(input: CommitInput): CommitStatement[] {
     statements.push(statement(`INSERT INTO meta (key, value) VALUES ('synchronizedSourceHash', ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value`, input.synchronizedSourceHash));
   }
+  statements.push(...scheduleStatements);
   statements.push(statement('DELETE FROM idempotency WHERE created_at < ?', retentionCutoff(createdAt)));
   statements.push(statement(`INSERT INTO idempotency (actor_id, operation, idempotency_key, fingerprint, response, created_at)
     VALUES (?, ?, ?, ?, ?, ?)`, key.actorId, key.operation, key.idempotencyKey, fingerprint, response, createdAt));
   return statements;
 }
 
-export async function commit(db: D1Database, input: CommitInput): Promise<void> {
-  await executeCommit(db, prepareCommit(input));
+export async function commit(db: D1Database, input: CommitInput, materializeSchedule = false): Promise<void> {
+  const changesSchedule = materializeSchedule && tables.filter(table => representationTables.some(key => key === table.key)).some(table => {
+    const diff = tableDiff(table, input.before, input.after);
+    return diff.removed.length > 0 || diff.changed.length > 0;
+  });
+  const schedule = changesSchedule ? preparedScheduleStatements(await prepareSchedule(input.after)) : [];
+  await executeCommit(db, prepareCommit(input, schedule));
+}
+
+/** Offline backfills use the same transactionally read input and preparation owner. */
+export async function prepareScheduleBackfill(db: D1Database): Promise<CommitStatement[]> {
+  const keys = operationTableKeys['admin.schedule.read']!;
+  const { snapshot, extra } = await readTables(db, tables.filter(table => keys.includes(table.key)), undefined,
+    [db.prepare("SELECT CAST(value AS INTEGER) AS version FROM meta WHERE key='scheduleViewRevision'")]);
+  const version = Number(extra[0]?.results[0]?.version ?? 0);
+  if (!Number.isSafeInteger(version) || version < 0) throw storageError();
+  const prepared = await prepareSchedule(snapshot);
+  return [statement(`INSERT INTO meta(key,value) VALUES ('scheduleReadFence', CASE WHEN
+    COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key='dataRevision'),0)=?
+    AND COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key='scheduleViewRevision'),0)=?
+    THEN 'ok' ELSE NULL END) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, snapshot.dataRevision, version),
+    ...preparedScheduleStatements(prepared)];
 }
 
 export async function executeCommit(db: D1Database, statements: CommitStatement[]): Promise<void> {

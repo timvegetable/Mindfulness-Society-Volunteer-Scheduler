@@ -53,12 +53,14 @@ if (new URLSearchParams(location.search).has('collision')) {
 
 const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-admin', email: 'admin@example.test', active: true, roles: ['administrator'], volunteerId: null, centerIds: [center.id] }, centers: [center] };
 
+const readSessions = new URLSearchParams(location.search).has('read-session');
+let sessionExchanges = 0, scheduleReads = 0;
 let apiReadCount = 0;
 const fixtureFetch: typeof fetch = async (input, init) => {
   if (input === '/client-config') return Response.json({ oauthClientId: 'synthetic.apps.googleusercontent.com', timeZone: 'America/New_York' });
   const latency = Math.min(1000, Math.max(0, Number(new URLSearchParams(location.search).get('latency')) || 0));
   if (latency) await new Promise(resolve => setTimeout(resolve, latency));
-  if (input !== '/api') throw new Error('Synthetic workspace blocks external requests');
+  if (input !== '/api' && input !== '/api/schedule') throw new Error('Synthetic workspace blocks external requests');
   const request = JSON.parse(String(init?.body));
   const operation = String(request.operation);
   if (operation.endsWith('.read')) document.querySelector('#sync-read-count')!.textContent = String(++apiReadCount);
@@ -79,8 +81,15 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       revisions.dataRevision++;
       data = { ...revisions, mapping }; break;
     }
-    case 'session.me': data = identity; break;
-    case 'admin.schedule.read': data = schedule; break;
+    case 'session.me': {
+      sessionExchanges++; document.documentElement.dataset.sessionExchanges = String(sessionExchanges);
+      data = readSessions ? { ...identity, scheduleRead: { credential: `read-${sessionExchanges}`, expiresAt: Date.now() + 900000 } } : identity; break;
+    }
+    case 'admin.schedule.read': {
+      if (readSessions && (input !== '/api/schedule' || request.credential !== `read-${sessionExchanges}`)) throw new Error('Incorrect synthetic read protocol');
+      document.documentElement.dataset.scheduleReads = String(++scheduleReads);
+      data = schedule; break;
+    }
     case 'admin.schedule.preview': data = { ...revisions, output: { assignments: [], backups: [], shortfalls: [] } }; break;
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;

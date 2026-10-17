@@ -22,8 +22,8 @@ export function success<O extends Operation>(result: ApiResult<O>): ResultOf<O> 
   if (!result.ok) throw new Error(`Expected success, received ${result.error.code}: ${result.error.message}`);
   return result.data;
 }
-export async function createApplication(options: { emailFails?: boolean; fetchFails?: boolean; fixture?: string; instant?: string; fetchResults?: () => Promise<string> } = {}) {
-  const local = await createTestDatabase();
+export async function createApplication(options: { scheduleReads?: boolean; emailFails?: boolean; fetchFails?: boolean; fixture?: string; instant?: string; fetchResults?: () => Promise<string> } = {}) {
+  const local = await createTestDatabase({ scheduleReads: options.scheduleReads });
   const notifications: EmailMessage[] = [];
   const fetches: string[] = [];
   let html = await readFile(new URL(`../fixtures/${options.fixture ?? 'import-normal.html'}`, import.meta.url), 'utf8');
@@ -33,7 +33,7 @@ export async function createApplication(options: { emailFails?: boolean; fetchFa
   const layer = Layer.mergeAll(
     Layer.succeed(Database, local.service),
     Layer.succeed(AuthService, { verify: credential => Object.hasOwn(emails, credential)
-      ? Effect.succeed({ email: emails[credential as Actor] })
+      ? Effect.succeed({ email: emails[credential as Actor], expiresAt: Math.floor(now.getTime() / 1000) + 3600 })
       : Effect.fail(new AppError('UNAUTHORIZED', 'Invalid test credential.')) }),
     Layer.succeed(Clock, { now: Effect.sync(() => new Date(now)) }), sequentialIds('workflow'),
     Layer.succeed(EmailService, { send: message => Effect.gen(function* () {

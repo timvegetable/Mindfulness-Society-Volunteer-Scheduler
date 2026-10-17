@@ -1,0 +1,76 @@
+import { build } from 'esbuild';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { Schema } from 'effect';
+import { expect, it } from 'vitest';
+import { resultSchemas } from '../../src/shared/api/schemas';
+import { executeCommit, prepareScheduleBackfill } from '../../src/worker/repositories/database';
+import { applySql } from '../helpers/database';
+
+it('exchanges real Google-style credentials and reads prepared schedules through native Worker crypto and D1', async () => {
+  const work = await mkdtemp(join(tmpdir(), 'native-schedule-read-')); let runtime: Miniflare | undefined;
+  try {
+    await build({ entryPoints: [resolve('src/worker/index.ts')], bundle: true, format: 'esm', platform: 'browser',
+      outfile: join(work, 'worker.js'), logLevel: 'silent' });
+    await build({ entryPoints: [resolve('src/worker/scheduleRead/worker.ts')], bundle: true, format: 'esm', platform: 'browser',
+      outfile: join(work, 'reader.js'), logLevel: 'silent' });
+    const { publicKey, privateKey } = await generateKeyPair('RS256', { extractable: true });
+    const key = { ...await exportJWK(publicKey), kid: 'synthetic-read-test', alg: 'RS256', use: 'sig' };
+    const google = (email: string, verified = true) => new SignJWT({ email, email_verified: verified })
+      .setProtectedHeader({ alg: 'RS256', kid: key.kid }).setIssuer('https://accounts.google.com')
+      .setAudience('native-read-client').setIssuedAt().setExpirationTime('10m').sign(privateKey);
+    let googleReads = 0;
+    const outboundService = (request: Request) => {
+        if (request.url !== 'https://www.googleapis.com/oauth2/v3/certs') throw Error('Unexpected synthetic external request');
+        googleReads++; return Response.json({ keys: [key] }, { headers: { 'Cache-Control': 'public,max-age=3600' } });
+      };
+    const readerBindings = { OAUTH_CLIENT_ID: 'native-read-client', SCHEDULE_READ_MODE: 'enabled', SCHEDULE_READ_AUDIENCE: 'native', SCHEDULE_READ_KEY: 'ac'.repeat(32) };
+    runtime = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'native-schedule-read', modules: true, modulesRoot: work,
+      scriptPath: join(work, 'worker.js'), compatibilityDate: '2026-10-04', d1Databases: { DB: 'native-read-shared' }, serviceBindings: { SCHEDULE_READER: 'private-reader' },
+      outboundService, bindings: { OAUTH_CLIENT_ID: 'native-read-client', ADMIN_EMAILS: '', EMAIL_FROM: 'unused@example.test',
+        SCHEDULE_READ_MODE: 'enabled', SCHEDULE_READ_AUDIENCE: 'native', SCHEDULE_READ_KEY: 'ac'.repeat(32),
+        DISPLAY_INCREMENT_MINUTES: '30', OPERATING_HOURS_START: '09:00', OPERATING_HOURS_END: '21:00' },
+
+    }, { name: 'private-reader', modules: true, modulesRoot: work, scriptPath: join(work, 'reader.js'),
+      compatibilityDate: '2026-10-04', d1Databases: { DB: 'native-read-shared' }, bindings: readerBindings, outboundService }] }));
+    const db = await runtime.getD1Database('DB') as unknown as D1Database;
+    await applySql(db, await readFile(new URL('../../schema.sql', import.meta.url), 'utf8'));
+    await applySql(db, await readFile(new URL('../fixtures/seed.sql', import.meta.url), 'utf8'));
+    await executeCommit(db, await prepareScheduleBackfill(db));
+    const admin = await google('admin@example.test');
+    async function call(operation: string, credential: string, path = '/api', payload: unknown = {}) {
+      const response = await runtime!.dispatchFetch('https://local'+path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operation, credential, payload }) });
+      return { response, body: await response.json() };
+    }
+    const envelope = Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas['session.me'] });
+    const session = Schema.decodeUnknownSync(envelope)((await call('session.me', admin)).body);
+    expect(session.data.scheduleRead?.expiresAt).toBeLessThanOrEqual(Date.now()+600000);
+    const ticket = session.data.scheduleRead!.credential;
+    const read = await call('admin.schedule.read', ticket, '/api/schedule');
+    expect(read.response.status).toBe(200);
+    expect(Schema.decodeUnknownSync(Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas['admin.schedule.read'] }))(read.body).data.run).toBeNull();
+    expect(googleReads).toBe(1);
+    expect((await call('admin.schedule.read', admin)).response.status).toBe(400);
+    expect((await call('admin.schedule.read', admin, '/api/schedule')).response.status).toBe(401);
+    expect((await call('admin.schedule.read', ticket, '/api/schedule', { extra: true })).response.status).toBe(400);
+    expect((await call('session.me', admin, '/api', { extra: true })).response.status).toBe(400);
+    const denied = await call('session.me', await google('admin@example.test', false));
+    expect(denied.body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
+    const volunteer = Schema.decodeUnknownSync(envelope)((await call('session.me', await google('alex@example.test'))).body);
+    expect(volunteer.data.scheduleRead).toBeUndefined();
+    const contact = Schema.decodeUnknownSync(envelope)((await call('session.me', await google('contact@example.test'))).body);
+    expect(contact.data.centers.map(center => center.id)).toEqual(['center-1']);
+    expect(contact.data.scheduleRead).toBeUndefined();
+    expect((await call('session.me', await google('inactive@example.test'))).response.status).toBe(401);
+    await db.prepare("UPDATE centers SET name='' WHERE id='center-1'").run();
+    expect((await call('session.me', admin)).response.status).toBe(500);
+    await db.prepare("UPDATE centers SET name='North Center' WHERE id='center-1'").run();
+    await db.prepare("UPDATE users SET roles='[]' WHERE id='user-admin'").run();
+    expect((await call('admin.schedule.read', ticket, '/api/schedule')).response.status).toBe(403);
+    expect(googleReads).toBe(1);
+  } finally { await runtime?.dispose(); await rm(work, { recursive: true, force: true }); }
+});

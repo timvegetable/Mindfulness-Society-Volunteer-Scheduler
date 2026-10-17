@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mindfulness-scheduler-reader",
+  "main": "src/worker/scheduleRead/worker.ts",
+  "compatibility_date": "2026-10-04",
+  "workers_dev": false,
+  "preview_urls": false,
+  "d1_databases": [{ "binding": "DB", "database_name": "mindfulness-scheduler-prod", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "vars": {
+    "SCHEDULE_READ_MODE": "enabled",
+    "SCHEDULE_READ_AUDIENCE": "mindfulness-scheduler.production",
+    "OAUTH_CLIENT_ID": "replace-with-public-google-client-id"
+  }
+}

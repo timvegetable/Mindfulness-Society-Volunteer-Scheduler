@@ -136,7 +136,7 @@ npm run build
 npx wrangler deploy --dry-run
 ```
 
-`npm test` runs Vitest once, including real local D1 transaction tests. `check` runs strict TypeScript checking with unchecked-index protection and unused-local/parameter checks, including the browser-test configuration. `build` builds the SPA and validates the Worker through Wrangler's deployment dry run; it does not deploy.
+`npm test` runs Vitest once, including real local D1 transaction tests. `check` runs strict TypeScript checking with unchecked-index protection and unused-local/parameter checks, including the browser-test configuration. `build` builds the SPA and validates both the main Worker and private schedule reader through Wrangler deployment dry runs; it does not deploy.
 
 `format:check` verifies the client stylesheet with Prettier. `test:browser` builds a fixed synthetic preview in a temporary directory and checks native Chromium layouts and navigation at desktop, tablet, and mobile sizes. Install its browser once with `npx playwright install chromium`. The suite uses port 5175 (override with `BROWSER_TEST_PORT`) independently of the interactive preview on 5174; later source edits do not reload a running suite. See the [browser validation guide](docs/agents/browser-validation.md) for manual checks, logs, and failure artifacts. These browser tests require no credentials and do not exercise the Worker. The separate native Queue integration test bundles the real Worker and exercises scheduled/manual synchronization, native Queue delivery, D1 and role rejection with synthetic RSA credentials and a mocked Google public-key endpoint; it does not call Google or production.
 
@@ -162,6 +162,9 @@ Jobs and a transactional outbox preserve progress across failed sends and redeli
 At 48 scheduled checks/day, an unchanged check normally has five deliveries (start, maintenance, fetch, prepare, commit), approximately 720 Queue operations/day using write/read/delete accounting. A fingerprint miss adds parsing and a head comparison; a genuine change then adds full reconciliation, approximately 1,008 operations/day if every check changes. Retries, recovery and manual traffic add operations. D1 query-budget tests cover 100 participants/500 intervals per invocation; source storage tests cover 2 MiB. These are functional/storage checks, not deployed CPU or daily quota guarantees. See the [Queue candidate release record](docs/releases/6-queue-pipeline.md) for measured evidence, unresolved CPU gates and rollout/rollback details, [Queue pricing](https://developers.cloudflare.com/queues/platform/pricing/) and [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
 Publication retains old outputs and chooses the greatest completed output revision. Schedule preview writes nothing. Candidate confirmation consumes one proposal into its next dated occurrence. Advisory candidate coverage does not reserve volunteers. Insights are computed from current data, without a persisted cache. A scheduling calculation reuses normalized availability from its fixed input snapshot; bounded caches retain at most 256 pure weekday and local-instant conversions each. New York daylight-saving conversion still uses Temporal. Users, roles and mutable application data are read from D1 for every request.
+
+
+The approved prepared-reader candidate is documented in the [implementation record](docs/performance/schedule-read-implementation.md). It remains disabled in the tracked main configuration and is not deployed. Its additive migration, private reader binding/secret, fenced backfill and protocol cutover require the separate production approvals described there. CPU fit, including first use, remains a release gate.
 
 ## Production procedure — explicit operator action required
 

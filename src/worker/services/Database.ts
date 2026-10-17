@@ -24,7 +24,7 @@ function operation<A>(run: () => Promise<A>): Effect.Effect<A, AppError> {
 }
 
 /** Binding access is isolated here; application workflows depend on the service. */
-export function makeDatabase(db: D1Database): DatabaseService {
+export function makeDatabase(db: D1Database, materializeSchedule = false): DatabaseService {
   return {
     read: operation(() => readSnapshot(db)),
     readForOperation: name => operation(() => readOperationSnapshot(db, name)),
@@ -32,7 +32,7 @@ export function makeDatabase(db: D1Database): DatabaseService {
     readSynchronizationHead: operation(() => readSynchronizationHead(db)),
     readSynchronization: operation(() => readSynchronizationSnapshot(db)),
     findIdempotency: (key, now) => operation(() => findIdempotency(db, key, now)),
-    commit: input => operation(() => commit(db, input)),
+    commit: input => operation(() => commit(db, input, materializeSchedule)),
   };
 }
 

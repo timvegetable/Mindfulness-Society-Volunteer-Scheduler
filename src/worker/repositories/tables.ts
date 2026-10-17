@@ -94,7 +94,10 @@ export function rowProjection(table: Table): string {
 
 export function decodeProjectedRow(table: Table, body: unknown): Record<string, unknown> {
   if (typeof body !== 'string') throw new Error('Missing stored record');
-  const row = JSON.parse(body) as Record<string, unknown>;
+  return restoreProjectedRow(table, JSON.parse(body) as Record<string, unknown>);
+}
+
+function restoreProjectedRow(table: Table, row: Record<string, unknown>): Record<string, unknown> {
   if (table.key === 'imports' && Array.isArray(row.stagedAvailability)) row.stagedAvailability = restoreLegacyParticipants(row.stagedAvailability);
   if (table.key === 'schedulingRuns' && Array.isArray(row.shortfalls)) {
     row.shortfalls = restoreLegacyShortfalls(row.shortfalls);
@@ -112,6 +115,29 @@ export function encodeRow(table: Table, row: object): SqlValue[] {
     if (typeof value === 'string' || typeof value === 'number') return value;
     throw new Error(`Unexpected storage value in ${table.name}.${column}`);
   });
+}
+
+/** Predict the values and binary ID order a subsequent D1 read will observe.
+ * Prepared views run before commit, when newly created optional fields may still
+ * be absent; storage encodes those fields as null.
+ */
+export function projectWrittenRows(table: Table, rows: readonly object[]): Record<string, unknown>[] {
+  const encoder = new TextEncoder();
+  return rows.map(row => {
+    const values = encodeRow(table, row);
+    const projected: Record<string, unknown> = {};
+    for (const [index, column] of table.columns.entries()) {
+      const value = values[index]!;
+      projected[table.properties[index]!] = table.json?.includes(column) ? JSON.parse(String(value))
+        : table.booleans?.includes(column) ? value === 1 : value;
+    }
+    return { row: restoreProjectedRow(table, projected), order: encoder.encode(String(projected.id)) };
+  }).sort((a, b) => {
+    for (let i = 0; i < Math.min(a.order.length, b.order.length); i++) {
+      if (a.order[i] !== b.order[i]) return a.order[i]! - b.order[i]!;
+    }
+    return a.order.length - b.order.length;
+  }).map(item => item.row);
 }
 
 export function tableDiff(table: Table, before: Snapshot, after: Snapshot): { removed: string[]; changed: SqlValue[][] } {

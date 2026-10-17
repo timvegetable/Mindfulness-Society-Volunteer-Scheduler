@@ -25,7 +25,7 @@ function harness() {
   let html = '<script>{"participants":[{"id":"p1","name":"Volunteer","email":"v@example.test","availability":[[1,"09:00","12:00"]]}]}</script>';
   let authDefect = false; let emailDefect = false;
   const layer = Layer.mergeAll(
-    Layer.succeed(AuthService, { verify: credential => authDefect ? Effect.die(new Error('private auth details')) : Effect.succeed({ email: credential }) }),
+    Layer.succeed(AuthService, { verify: credential => authDefect ? Effect.die(new Error('private auth details')) : Effect.succeed({ email: credential, expiresAt: 2000000000 }) }),
     Layer.succeed(Clock, { now: Effect.sync(() => new Date(now)) }),
     Layer.succeed(IdGenerator, { next: Effect.sync(() => `generated-${++ids}`) }),
     Layer.succeed(EmailService, { send: () => Effect.sync(() => { emails += 1; }).pipe(Effect.flatMap(() => emailDefect ? Effect.die(new Error('private provider details')) : Effect.void)) }),

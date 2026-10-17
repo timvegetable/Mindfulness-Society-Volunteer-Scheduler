@@ -18,7 +18,7 @@ describe('Google authentication', () => {
     let calls = 0;
     const auth = makeGoogleAuth({ audience: 'test-client', now: () => now, fetch: async () => { calls++; return new Response(jwks, { headers: { 'Cache-Control': 'public, max-age=600' } }); } });
     const credential = await token();
-    expect(await Effect.runPromise(auth.verify(credential))).toEqual({ email: 'alice@example.test' });
+    expect(await Effect.runPromise(auth.verify(credential))).toEqual({ email: 'alice@example.test', expiresAt: now / 1000 + 600 });
     await Effect.runPromise(auth.verify(credential));
     expect(calls).toBe(1);
   });
@@ -50,6 +50,6 @@ describe('Google authentication', () => {
     const auth = makeGoogleAuth({ audience: 'test-client', now: () => now, fetch: async () => ++calls === 1 ? new Response('', { status: 503 }) : new Response(jwks) });
     const credential = await token();
     await expect(Effect.runPromise(auth.verify(credential))).rejects.toThrow();
-    expect(await Effect.runPromise(auth.verify(credential))).toEqual({ email: 'alice@example.test' });
+    expect(await Effect.runPromise(auth.verify(credential))).toEqual({ email: 'alice@example.test', expiresAt: now / 1000 + 600 });
   });
 });
