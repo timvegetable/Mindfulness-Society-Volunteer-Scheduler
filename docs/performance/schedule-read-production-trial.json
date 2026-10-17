@@ -1,0 +1,192 @@
+{
+  "sourceCommit": "2ecbe19",
+  "dateUTC": "2026-10-17T21:08:58.093000+00:00",
+  "metric": "Cloudflare live-tail cpuTime per Worker invocation, milliseconds; sums pair sequential caller/reader reads. These are not Inspector samples or wall time.",
+  "scheduleReads": [
+    {
+      "sequence": 1,
+      "phase": "first read after sign-in",
+      "main": {
+        "worker": "main",
+        "timestamp": 1792271338093,
+        "operation": null,
+        "path": "/api/schedule",
+        "cpuMs": 0,
+        "wallMs": 49,
+        "outcome": "ok",
+        "status": 200,
+        "version": "e48eb632-b2f3-438d-b85a-61f5359b831c"
+      },
+      "reader": {
+        "worker": "reader",
+        "timestamp": 1792271338219,
+        "operation": "admin.schedule.read",
+        "path": "/api/schedule",
+        "cpuMs": 4,
+        "wallMs": 27,
+        "outcome": "ok",
+        "status": 200,
+        "version": "e573bc22-a7a8-4049-b884-0879dcb0681c"
+      },
+      "summedReportedCpuMs": 4
+    },
+    {
+      "sequence": 2,
+      "phase": "repeat",
+      "main": {
+        "worker": "main",
+        "timestamp": 1792271391606,
+        "operation": null,
+        "path": "/api/schedule",
+        "cpuMs": 0,
+        "wallMs": 35,
+        "outcome": "ok",
+        "status": 200,
+        "version": "e48eb632-b2f3-438d-b85a-61f5359b831c"
+      },
+      "reader": {
+        "worker": "reader",
+        "timestamp": 1792271391608,
+        "operation": "admin.schedule.read",
+        "path": "/api/schedule",
+        "cpuMs": 3,
+        "wallMs": 31,
+        "outcome": "ok",
+        "status": 200,
+        "version": "e573bc22-a7a8-4049-b884-0879dcb0681c"
+      },
+      "summedReportedCpuMs": 3
+    },
+    {
+      "sequence": 3,
+      "phase": "first observed read after both identical redeploys",
+      "main": {
+        "worker": "main",
+        "timestamp": 1792271434980,
+        "operation": null,
+        "path": "/api/schedule",
+        "cpuMs": 1,
+        "wallMs": 57,
+        "outcome": "ok",
+        "status": 200,
+        "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+      },
+      "reader": {
+        "worker": "reader",
+        "timestamp": 1792271435161,
+        "operation": "admin.schedule.read",
+        "path": "/api/schedule",
+        "cpuMs": 4,
+        "wallMs": 35,
+        "outcome": "ok",
+        "status": 200,
+        "version": "d679ba8e-64d3-4546-8fdf-055960777e67"
+      },
+      "summedReportedCpuMs": 5
+    },
+    {
+      "sequence": 4,
+      "phase": "repeat after redeploy",
+      "main": {
+        "worker": "main",
+        "timestamp": 1792271457983,
+        "operation": null,
+        "path": "/api/schedule",
+        "cpuMs": 1,
+        "wallMs": 31,
+        "outcome": "ok",
+        "status": 200,
+        "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+      },
+      "reader": {
+        "worker": "reader",
+        "timestamp": 1792271457986,
+        "operation": "admin.schedule.read",
+        "path": "/api/schedule",
+        "cpuMs": 2,
+        "wallMs": 26,
+        "outcome": "ok",
+        "status": 200,
+        "version": "d679ba8e-64d3-4546-8fdf-055960777e67"
+      },
+      "summedReportedCpuMs": 3
+    },
+    {
+      "sequence": 5,
+      "phase": "repeat after redeploy",
+      "main": {
+        "worker": "main",
+        "timestamp": 1792271461314,
+        "operation": null,
+        "path": "/api/schedule",
+        "cpuMs": 0,
+        "wallMs": 43,
+        "outcome": "ok",
+        "status": 200,
+        "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+      },
+      "reader": {
+        "worker": "reader",
+        "timestamp": 1792271461317,
+        "operation": "admin.schedule.read",
+        "path": "/api/schedule",
+        "cpuMs": 4,
+        "wallMs": 37,
+        "outcome": "ok",
+        "status": 200,
+        "version": "d679ba8e-64d3-4546-8fdf-055960777e67"
+      },
+      "summedReportedCpuMs": 4
+    }
+  ],
+  "maxSummedReportedScheduleCpuMs": 5,
+  "signIn": [
+    {
+      "worker": "main",
+      "timestamp": 1792271337774,
+      "operation": null,
+      "path": "/api",
+      "cpuMs": 2,
+      "wallMs": 144,
+      "outcome": "ok",
+      "status": 200,
+      "version": "e48eb632-b2f3-438d-b85a-61f5359b831c"
+    },
+    {
+      "worker": "reader",
+      "timestamp": 1792271337894,
+      "operation": "session.me",
+      "path": "/internal/session",
+      "cpuMs": 8,
+      "wallMs": 118,
+      "outcome": "ok",
+      "status": 200,
+      "version": "e573bc22-a7a8-4049-b884-0879dcb0681c"
+    }
+  ],
+  "backfill": {
+    "parts": 5,
+    "bytes": 78389,
+    "manifestValid": true,
+    "exactPreparedBytes": true,
+    "domainCoreUnchanged": true,
+    "revision": "1.0",
+    "readTriggers": 15
+  },
+  "rollout": {
+    "migration": "0004_schedule_reads.sql",
+    "bindingBatchStatements": 4,
+    "mainVersion": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6",
+    "readerVersion": "d679ba8e-64d3-4546-8fdf-055960777e67",
+    "mode": "enabled",
+    "cron": "*/30 * * * *",
+    "queueConsumers": 2,
+    "priorMainRollbackVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc"
+  },
+  "limitations": [
+    "Five reads of the current production schedule, including first observed reads on new deployments, do not bound every future isolate or larger dataset.",
+    "Sign-in reported 8 ms in the reader and 2 ms in the main Worker; the combined 10 ms has limited headroom.",
+    "Other authenticated HTTP endpoints and live writer preparation CPU were not requalified by this read-only trial.",
+    "No schedule publication, cancellation, participant linking, manual synchronization or notification was triggered during validation."
+  ]
+}

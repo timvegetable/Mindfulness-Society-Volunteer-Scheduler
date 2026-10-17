@@ -164,7 +164,7 @@ At 48 scheduled checks/day, an unchanged check normally has five deliveries (sta
 Publication retains old outputs and chooses the greatest completed output revision. Schedule preview writes nothing. Candidate confirmation consumes one proposal into its next dated occurrence. Advisory candidate coverage does not reserve volunteers. Insights are computed from current data, without a persisted cache. A scheduling calculation reuses normalized availability from its fixed input snapshot; bounded caches retain at most 256 pure weekday and local-instant conversions each. New York daylight-saving conversion still uses Temporal. Users, roles and mutable application data are read from D1 for every request.
 
 
-The approved prepared-reader candidate is documented in the [implementation record](docs/performance/schedule-read-implementation.md). It remains disabled in the tracked main configuration and is not deployed. Its additive migration, private reader binding/secret, fenced backfill and protocol cutover require the separate production approvals described there. CPU fit, including first use, remains a release gate.
+The approved prepared-reader candidate is documented in the [implementation record](docs/performance/schedule-read-implementation.md). The tracked main configuration defaults to disabled; the separately approved production configuration is enabled. The [production trial](docs/releases/6-prepared-schedule-reader.md) measured schedule reads at 3–5 ms summed caller/reader CPU, including the first observed read after redeploying both Workers. Broader first-use endpoint and writer CPU gates remain open under issue #6.
 
 ## Production procedure — explicit operator action required
 

@@ -1,6 +1,6 @@
 # Schedule reads at or below 9 ms: measured design proposal
 
-Status: implementation approved; candidate implementation is isolated on `codex/schedule-read-cpu`, with production unchanged. See the [implementation record](schedule-read-implementation.md). The remainder records the proposal and evidence available when it was approved.
+Status: implemented and deployed from source `2ecbe19`. The [production trial](../releases/6-prepared-schedule-reader.md) measured schedule reads at 3–5 ms summed caller/reader CPU. See the [implementation record](schedule-read-implementation.md). The remainder records the proposal and evidence available when it was approved.
 
 Original proposal status: not implemented or deployed. The user requested schedule reads at 9 ms or lower and previously asked that architectural rewrites be proposed before implementation. Work is isolated on `codex/schedule-read-cpu`; application source and production remain unchanged at `55b1a71` / Worker `8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc`.
 
