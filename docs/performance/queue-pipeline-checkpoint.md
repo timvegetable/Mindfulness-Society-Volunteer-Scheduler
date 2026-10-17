@@ -1,5 +1,7 @@
 # Queue pipeline checkpoint — October 16, 2026
 
+**Continuation:** the subsequent implementation and validation are recorded in [the Queue candidate release record](../releases/6-queue-pipeline.md). The notes below describe the original stopping point.
+
 The operator approved trying the Queue pipeline and then requested a stopping point within seven minutes. The minimal production prototype passed its initial CPU gate. The application pipeline remains unfinished and must not be deployed from this checkpoint.
 
 ## Deployed baseline

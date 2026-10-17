@@ -247,9 +247,10 @@ CREATE TABLE IF NOT EXISTS synchronization_jobs (
   intent_key TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
   started_check_id TEXT,
-  phase TEXT NOT NULL CHECK(phase IN ('fetch','parse','prepare','commit','done','failed')),
+  source_hash TEXT,
+  phase TEXT NOT NULL CHECK(phase IN ('fetch','parse','prepare','reconcile','commit','done','failed')),
   version INTEGER NOT NULL DEFAULT 0,
-  prepare_attempts INTEGER NOT NULL DEFAULT 0,
+  reconcile_attempts INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   diagnostic TEXT,
@@ -266,7 +267,7 @@ CREATE TABLE IF NOT EXISTS synchronization_outbox (
   job_id TEXT PRIMARY KEY REFERENCES synchronization_jobs(id) ON DELETE CASCADE,
   version INTEGER NOT NULL,
   phase TEXT NOT NULL,
-  sent_at TEXT
+  last_delivery_attempt_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_synchronization_jobs_created ON synchronization_jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_synchronization_jobs_updated ON synchronization_jobs(updated_at);

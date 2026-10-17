@@ -46,6 +46,11 @@ export async function readSynchronizationHead(db: D1Database): Promise<Snapshot>
   return (await readTables(db, synchronizationHeadTables)).snapshot;
 }
 
+/** Job state, artifacts and domain data share a transaction and one D1 round trip. */
+export function readSynchronizationStage(db: D1Database, full: boolean, extra: D1PreparedStatement[]) {
+  return readTables(db, full ? tables.filter(table => synchronizationTableKeys.includes(table.key)) : synchronizationHeadTables, undefined, extra);
+}
+
 export interface SynchronizationCheck { snapshot: Snapshot; replay: IdempotencyRecord | null }
 export function readSynchronizationCheck(db: D1Database, key: IdempotencyKey, now: string): Promise<SynchronizationCheck> {
   return readTables(db, synchronizationHeadTables, { key, now });
@@ -69,11 +74,12 @@ export async function readOperationSnapshot(db: D1Database, operation: Operation
   return (await readTables(db, keys ? tables.filter(table => keys.includes(table.key)) : tables)).snapshot;
 }
 
-async function readTables(db: D1Database, selectedTables: typeof tables, check?: { key: IdempotencyKey; now: string }): Promise<SynchronizationCheck> {
+async function readTables(db: D1Database, selectedTables: typeof tables, check?: { key: IdempotencyKey; now: string }, extra: D1PreparedStatement[] = []): Promise<SynchronizationCheck & { extra: D1Result<Record<string, unknown>>[] }> {
   // Import insertion order breaks equal-clock ties without assuming random IDs are chronological.
   const statements = selectedTables.map(table => db.prepare(`SELECT ${table.columns.join(', ')} FROM ${table.name} ORDER BY ${table.key === 'imports' ? 'rowid' : 'id'}`));
   statements.push(db.prepare('SELECT key, value FROM meta'));
   if (check) statements.push(idempotencyStatement(db, check.key, check.now));
+  statements.push(...extra);
   const results = await db.batch<Record<string, unknown>>(statements);
   const snapshot = emptySnapshot();
   for (const [index, table] of selectedTables.entries()) {
@@ -90,7 +96,7 @@ async function readTables(db: D1Database, selectedTables: typeof tables, check?:
     if (row.key === 'synchronizedSourceHash' && typeof row.value === 'string') snapshot.synchronizedSourceHash = row.value;
   }
   const row = check ? results[selectedTables.length + 1]?.results[0] as StoredIdempotency | undefined : undefined;
-  return { snapshot, replay: check ? idempotencyRecord(check.key, row) : null };
+  return { snapshot, replay: check ? idempotencyRecord(check.key, row) : null, extra: results.slice(selectedTables.length + 1 + Number(!!check)) };
 }
 
 function retentionCutoff(now: string): string {

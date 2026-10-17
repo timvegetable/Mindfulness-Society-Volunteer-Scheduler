@@ -41,6 +41,15 @@ npx wrangler d1 execute DB --local --command="SELECT id, name FROM volunteers OR
 
 The fixture has three centers and five fictional volunteers. Tests create a separate, disposable local D1 instance and apply `schema.sql` plus this fixture automatically. The operator's private seed is never required or read by automated tests.
 
+For an initialized local database that already has the idempotency and synchronization tables, add the job tables without resetting the roster:
+
+```sh
+npx wrangler d1 execute DB --local --file=migrations/0003_synchronization_jobs.sql
+```
+
+Wrangler emulates the configured Queues locally; development does not require creating remote queues. Do not rerun the destructive initializer or seed an existing private roster just to add the pipeline.
+
+
 ## Configuration and development
 
 All application dates and intervals use the fixed `America/New_York` time zone, including daylight-saving transitions. The legacy `TIME_ZONE` environment variable does not override it.
@@ -50,6 +59,7 @@ All application dates and intervals use the fixed `America/New_York` time zone, 
 | Variable | Purpose/default |
 | --- | --- |
 | `DISPLAY_INCREMENT_MINUTES` | `30` |
+| `SYNC_DEAD_LETTER_QUEUE` | `mindfulness-scheduler-sync-dead`; must match the dead-letter consumer name |
 | `OPERATING_HOURS_START`, `OPERATING_HOURS_END` | `09:00`, `21:00` |
 | `OAUTH_CLIENT_ID` | Public Google Identity Services client ID |
 | `ADMIN_EMAILS` | Comma-separated administrative notification recipients |
@@ -109,7 +119,7 @@ For Gmail, skip the Resend key and domain setup in the production procedure belo
 
 Availability synchronization uses the single society results page configured in `src/worker/config.ts`. Cloudflare invokes the Worker every **30 minutes**, even with all browsers closed. The interval is operator-configurable through `triggers.crons` in `wrangler.jsonc`; the default is `*/30 * * * *`. No separately managed server or Google session is required for scheduled execution.
 
-Administrators open **Availability sync** to see durable status, pending participants, and import history, or use **Sync now**. Resolved participants update weekly availability automatically; explicit empty availability clears only those represented volunteers. Missing participants, dated exceptions, assignments, cancellations, backups, and proposals are preserved. New or ambiguous submissions stay in the administrator queue until linked to an existing roster record. Enrollment and account approval remain separate. Source failures retain the last valid state and show sanitized diagnostics.
+Administrators open **Availability sync** to see durable status, pending participants, and import history, or use **Sync now**. Sync now queues a durable check; use **Reload view** to see queued/running/completed/failed progress and the saved result. There is no background browser polling. Resolved participants update weekly availability automatically; explicit empty availability clears only those represented volunteers. Missing participants, dated exceptions, assignments, cancellations, backups, and proposals are preserved. New or ambiguous submissions stay in the administrator queue until linked to an existing roster record. Enrollment and account approval remain separate. Source failures retain the last valid state and show sanitized diagnostics.
 
 Browsers read saved data on page load/sign-in, view navigation, and **Reload view**. There is no periodic or visibility-triggered browser polling. An open page can therefore remain older than the latest scheduled check until reloaded. Unsaved forms and reviewed previews stay in place; reload asks before discarding them, and saves racing an effective synchronization change receive the existing stale-revision message.
 
@@ -128,7 +138,7 @@ npx wrangler deploy --dry-run
 
 `npm test` runs Vitest once, including real local D1 transaction tests. `check` runs strict TypeScript checking with unchecked-index protection and unused-local/parameter checks, including the browser-test configuration. `build` builds the SPA and validates the Worker through Wrangler's deployment dry run; it does not deploy.
 
-`format:check` verifies the client stylesheet with Prettier. `test:browser` builds a fixed synthetic preview in a temporary directory and checks native Chromium layouts and navigation at desktop, tablet, and mobile sizes. Install its browser once with `npx playwright install chromium`. The suite uses port 5175 (override with `BROWSER_TEST_PORT`) independently of the interactive preview on 5174; later source edits do not reload a running suite. See the [browser validation guide](docs/agents/browser-validation.md) for manual checks, logs, and failure artifacts. These browser tests require no credentials and do not exercise the Worker.
+`format:check` verifies the client stylesheet with Prettier. `test:browser` builds a fixed synthetic preview in a temporary directory and checks native Chromium layouts and navigation at desktop, tablet, and mobile sizes. Install its browser once with `npx playwright install chromium`. The suite uses port 5175 (override with `BROWSER_TEST_PORT`) independently of the interactive preview on 5174; later source edits do not reload a running suite. See the [browser validation guide](docs/agents/browser-validation.md) for manual checks, logs, and failure artifacts. These browser tests require no credentials and do not exercise the Worker. The separate native Queue integration test bundles the real Worker and exercises scheduled/manual synchronization, native Queue delivery, D1 and role rejection with synthetic RSA credentials and a mocked Google public-key endpoint; it does not call Google or production.
 
 Tests cover deterministic ranking and availability overlays, every role/operation combination, dated candidate confirmation, cancellation with live backup revalidation, import fixture parsing and atomic promotion, stale revisions, concurrent competing mutations, durable replay, and post-commit notification failures. See [TASKS.md](TASKS.md) for implementation and verification evidence.
 
@@ -139,15 +149,17 @@ GitHub Actions runs these checks on pushes and pull requests, with a manual run 
 - `src/shared/` contains Effect Schemas and pure intervals, availability, scheduling, coverage, and insights.
 - `src/worker/` contains typed Effect workflows, capability services, D1 repositories, and the HTTP boundary.
 - `src/client/` contains the SPA and response validation. Google credentials remain in memory only.
-- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql` and `migrations/0002_synchronization.sql` are additive migrations.
+- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql`, `migrations/0002_synchronization.sql`, and `migrations/0003_synchronization_jobs.sql` are additive migrations.
 
 Every mutation requires a reviewed `expectedRevision` and an `idempotencyKey`. Replays are scoped by actor and operation and compare a canonical serialization of validated, normalized payloads. Identical retries return the stored response bytes even after other writes advance the revision; changed input with the same key is rejected.
 
-Repository snapshots load the tables needed by each operation in one D1 batch, including current accounts and revision metadata. A mutation batch begins with a revision assertion that causes a database constraint failure when the expected revision is stale. Domain changes, exactly one global revision increment, any scheduling-input increment, 24-hour replay cleanup, and the successful response record commit together. Any failure rolls the batch back. Application handlers never issue raw SQL. This relies on [D1's transactional batch contract](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) and is tested with concurrent local D1 requests.
+Repository snapshots load the tables needed by each operation in one D1 batch, including current accounts and revision metadata. A domain-changing mutation batch begins with a revision assertion that causes a database constraint failure when the expected revision is stale. Domain changes, exactly one global revision increment, any scheduling-input increment, 24-hour replay cleanup, and the successful response record commit together. Any failure rolls the batch back. Application handlers never issue raw SQL. This relies on [D1's transactional batch contract](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) and is tested with concurrent local D1 requests.
 
-Synchronization shares the fetch/parser/matching rules and transactional commits across scheduled execution, Sync now, and participant linking. Status generations fence overlapping source checks. One retry re-reads state after a conflicting human write; an older in-flight check cannot overwrite a newer completed check. Unchanged normalized source content adds no import/provenance rows and advances neither domain nor scheduling revisions. Check timestamps and failure status commit independently. Idempotency responses retain the existing 24-hour window; scheduled redeliveries use the event time as their durable key.
+Synchronization uses a durable Queue pipeline. Cron only enqueues scheduled start and maintenance references; it never loads the roster or fetches the source. Each consumer invocation handles one message/stage. Fetch bounds the source and compares a versioned parser/timezone/content fingerprint. Unchanged source skips HTML storage and parsing. Changed input is stored in bounded D1 chunks, parsed once, reconciled using the shared rules and committed atomically. A human edit between cache lookup and preparation routes the job to full reconciliation. Current administrator authority, domain revision and synchronization generation are checked inside the final transaction; only that stage changes availability/history. Consumers do not verify JWTs. Unchanged results add no history/provenance and advance neither domain nor scheduling revisions. Parser semantic changes must advance `whenIsGoodParserVersion`.
 
-The 30-minute interval means 48 scheduled executions per day. Repository writes use one JSON-bound statement per changed table, avoiding a query for every interval and the bound-parameter limit. Scheduled synchronization first reads status, current accounts, revision metadata and its replay record in one batch. An exact parsed-source match at the last reconciled domain revision updates status without loading the roster or import history; changed source, missing revision metadata or any intervening domain write forces full reconciliation. A versioned SHA-256 fingerprint of successfully parsed HTML also skips repeated parsing of identical source at that reconciled revision. The source is fetched and size checked on every poll; the fingerprint includes the parser version and timezone. Parser semantic changes must advance `whenIsGoodParserVersion` to invalidate older results. Both markers are stored in the existing `meta` table in the same transaction as the result, so no additional migration is required. Synchronization leaves unrelated records and existing interval provenance untouched; mutation replay records contain status and revisions rather than a copy of the growing history. A disposable D1 test enforces the free-plan 50-query invocation limit with 100 participants and 500 intervals. These checks do not measure deployed CPU time or daily row quotas. See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
+Jobs and a transactional outbox preserve progress across failed sends and redelivery. A redelivered old message republishes the current durable stage; maintenance retries delivery attempts older than five minutes, one per invocation. With the 30-minute cron, recovery can wait until the next scheduled check. Matching failed versions are handled by a dead-letter consumer; one-hour expiry also terminates abandoned jobs. Intermediate artifacts are removed on completion/failure, and terminal jobs retain a 24-hour window with bounded cleanup. Permanent import history is unaffected. Manual replay retains the existing 24-hour actor/operation/key semantics. Conflicting human writes allow at most three reconciliation attempts; a newer completed check supersedes older jobs.
+
+At 48 scheduled checks/day, an unchanged check normally has five deliveries (start, maintenance, fetch, prepare, commit), approximately 720 Queue operations/day using write/read/delete accounting. Changed input normally adds parsing, approximately 864 operations/day if every check changes. Retries, recovery and manual traffic add operations. D1 query-budget tests cover 100 participants/500 intervals per invocation; source storage tests cover 2 MiB. These are functional/storage checks, not deployed CPU or daily quota guarantees. See the [Queue candidate release record](docs/releases/6-queue-pipeline.md) for measured evidence, unresolved CPU gates and rollout/rollback details, [Queue pricing](https://developers.cloudflare.com/queues/platform/pricing/) and [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
 Publication retains old outputs and chooses the greatest completed output revision. Schedule preview writes nothing. Candidate confirmation consumes one proposal into its next dated occurrence. Advisory candidate coverage does not reserve volunteers. Insights are computed from current data, without a persisted cache. A scheduling calculation reuses normalized availability from its fixed input snapshot; bounded caches retain at most 256 pure weekday and local-instant conversions each. New York daylight-saving conversion still uses Temporal. Users, roles and mutable application data are read from D1 for every request.
 
@@ -166,11 +178,16 @@ npx wrangler d1 export mindfulness-scheduler-prod --remote --config wrangler.pro
 npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0001_idempotency.sql
 # PRODUCTION WRITE: explicit approval required before releasing synchronization.
 npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0002_synchronization.sql
+# PRODUCTION RESOURCES: explicit approval required for the Queue pipeline.
+npx wrangler queues create mindfulness-scheduler-sync-dead --config wrangler.production.local.json
+npx wrangler queues create mindfulness-scheduler-sync --config wrangler.production.local.json
+# PRODUCTION WRITE: explicit approval required for the Queue pipeline migration.
+npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0003_synchronization_jobs.sql
 # PRODUCTION SECRET WRITE: explicit approval required; enter the key interactively.
 npx wrangler secret put EMAIL_API_KEY --config wrangler.production.local.json
 ```
 
-Verify the reviewed production config includes the 30-minute Cron Trigger, then run the full validation suite and a dry run before deploying. Then, only after separate explicit deployment approval:
+For the Queue candidate, add the producer/consumer definitions and dead-letter variable from the tracked config to the reviewed private config; retain batch size one for both consumers. Verify the reviewed production config includes the 30-minute Cron Trigger, then run the full validation suite and a dry run before deploying. Then, only after separate explicit deployment approval:
 
 ```sh
 # PRODUCTION DEPLOYMENT: explicit approval required.

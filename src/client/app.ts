@@ -327,9 +327,16 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
   const outcome = data.status.outcome === 'never' ? 'Waiting for the first check.' : data.status.outcome === 'failed' ? 'The latest check failed. Saved availability is preserved.' : `${data.status.participantCount} participants · ${data.status.matchedCount} matched · ${data.status.pendingCount} needing attention`;
   panel.append(el('p', outcome, 'notice'));
   if (data.status.diagnostic) panel.append(el('p', data.status.diagnostic, 'status error'));
+  if (data.job) {
+    const jobMessage = data.job.state === 'queued' ? 'An availability check is queued. Use Reload view to see its result.'
+      : data.job.state === 'running' ? 'An availability check is running. Use Reload view to see its result.'
+      : data.job.state === 'failed' ? `The latest availability check failed. ${data.job.diagnostic ?? 'Start another check.'}`
+      : 'The latest availability check completed.';
+    panel.append(el('p', jobMessage, data.job.state === 'failed' ? 'status error' : 'notice'));
+  }
   panel.append(button('Sync now', async () => {
     const checked = await api.call('admin.sync.now', {}, data.dataRevision);
-    await refreshView('imports', checked.status.outcome === 'failed' ? 'Sync failed. Saved availability is preserved; see the status for details.' : checked.status.outcome === 'unchanged' ? 'Availability is up to date.' : 'Availability synchronized.', '.content button', {});
+    await refreshView('imports', checked.job ? 'Availability check queued. Use Reload view to see its result.' : checked.status.outcome === 'failed' ? 'Sync failed. Saved availability is preserved; see the status for details.' : checked.status.outcome === 'unchanged' ? 'Availability is up to date.' : 'Availability synchronized.', '.content button', {});
   }));
   const pending = card('Participants needing attention', 'Link to an existing roster record. New volunteers must complete the usual enrollment process first; a submission does not grant account access.'); content.append(pending);
   const reasons = { new: 'New submission', ambiguous: 'Conflicting or duplicate identity', 'missing-identity': 'Missing email or identity information', 'unstable-identity': 'Stable source identity needed' };

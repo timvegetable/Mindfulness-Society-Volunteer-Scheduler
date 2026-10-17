@@ -8,9 +8,11 @@ import { EmailService, makeResendEmail } from '../services/EmailService';
 import { makeGmailEmail } from '../services/GmailService';
 import { WhenIsGoodClient, makeWhenIsGoodClient } from '../services/WhenIsGoodClient';
 import { whenIsGoodSource, type AppConfig } from '../config';
+import { makeSynchronizationJobs, SynchronizationJobs } from '../synchronizationJobs';
+import type { SyncQueue } from '../repositories/synchronizationJobs';
 
 export interface Bindings {
-  DB: D1Database; ASSETS: Fetcher;
+  DB: D1Database; ASSETS: Fetcher; SYNC_QUEUE: SyncQueue; SYNC_DEAD_LETTER_QUEUE: string;
   TIME_ZONE: string; DISPLAY_INCREMENT_MINUTES: string; OPERATING_HOURS_START: string; OPERATING_HOURS_END: string;
   OAUTH_CLIENT_ID: string; ADMIN_EMAILS: string;
   EMAIL_API_KEY?: string; EMAIL_FROM: string;
@@ -27,7 +29,7 @@ export function liveServices(env: Bindings) {
     verifiers.set(env.OAUTH_CLIENT_ID, verifier);
   }
   return Context.mergeAll(
-    synchronizationServices(env), Context.make(AuthService, verifier),
+    synchronizationServices(env), Context.make(SynchronizationJobs, synchronizationJobs(env)), Context.make(AuthService, verifier),
     Context.make(EmailService, env.EMAIL_PROVIDER === 'gmail'
       ? makeGmailEmail({ clientId: env.GMAIL_CLIENT_ID ?? '', clientSecret: env.GMAIL_CLIENT_SECRET ?? '',
         refreshToken: env.GMAIL_REFRESH_TOKEN ?? '', from: env.EMAIL_FROM, fetch })
@@ -51,4 +53,11 @@ export function appConfig(env: Bindings): AppConfig {
   return { timeZone: applicationTimeZone, displayIncrementMinutes: Number(env.DISPLAY_INCREMENT_MINUTES),
     operatingHoursStart: env.OPERATING_HOURS_START, operatingHoursEnd: env.OPERATING_HOURS_END,
     oauthClientId: env.OAUTH_CLIENT_ID, adminEmails: env.ADMIN_EMAILS.split(',').map((email) => email.trim()).filter(Boolean) };
+}
+
+/** Queue consumers receive no authentication or email services. */
+export function synchronizationJobs(env: Bindings) {
+  const client = makeWhenIsGoodClient({ endpoint: whenIsGoodSource.endpoint, fetch });
+  return makeSynchronizationJobs({ db: env.DB, queue: env.SYNC_QUEUE, config: appConfig(env),
+    fetchSource: () => Effect.runPromise(client.fetchResults(whenIsGoodSource.resultId)) });
 }

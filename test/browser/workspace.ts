@@ -53,6 +53,7 @@ if (new URLSearchParams(location.search).has('collision')) {
 
 const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-admin', email: 'admin@example.test', active: true, roles: ['administrator'], volunteerId: null, centerIds: [center.id] }, centers: [center] };
 
+let apiReadCount = 0;
 const fixtureFetch: typeof fetch = async (input, init) => {
   if (input === '/client-config') return Response.json({ oauthClientId: 'synthetic.apps.googleusercontent.com', timeZone: 'America/New_York' });
   const latency = Math.min(1000, Math.max(0, Number(new URLSearchParams(location.search).get('latency')) || 0));
@@ -60,10 +61,14 @@ const fixtureFetch: typeof fetch = async (input, init) => {
   if (input !== '/api') throw new Error('Synthetic workspace blocks external requests');
   const request = JSON.parse(String(init?.body));
   const operation = String(request.operation);
+  if (operation.endsWith('.read')) document.querySelector('#sync-read-count')!.textContent = String(++apiReadCount);
   let data: unknown;
   switch (operation) {
     case 'admin.sync.read': data = { ...synchronization, ...revisions }; break;
-    case 'admin.sync.now': data = { ...revisions, status: { ...synchronization.status, outcome: 'unchanged' } }; break;
+    case 'admin.sync.now': {
+      synchronization = { ...synchronization, job: { id: 'synthetic-job', state: 'queued', createdAt: '2026-10-16T12:00:00Z', updatedAt: '2026-10-16T12:00:00Z', diagnostic: null } };
+      data = { ...revisions, status: synchronization.status, job: synchronization.job }; break;
+    }
     case 'admin.import.mapping.upsert': {
       if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
@@ -87,7 +92,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
 
 const tools = document.querySelector<HTMLElement>('#browser-check')!;
 tools.style.cssText = 'padding:1rem;background:#fff;border-bottom:2px solid #245b47;overflow-wrap:anywhere';
-tools.innerHTML = `<strong>Synthetic browser workspace — no real data or services</strong>
+tools.innerHTML = `<strong>Synthetic browser workspace — no real data or services</strong><p>Saved-view reads: <span id="sync-read-count">0</span></p>
   <p>Set the expected viewport after resizing, then check each page. Review synchronization and pending participants.</p>
   <label>Expected width <input id="expected-width" type="number" min="1" style="width:7rem"></label>
   <label>Expected height <input id="expected-height" type="number" min="1" style="width:7rem"></label>

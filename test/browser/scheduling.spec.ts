@@ -96,7 +96,14 @@ test('administrator sees automatic synchronization status and pending submission
   await expect(page.locator('.pending-participants tbody tr')).toHaveCount(40);
   await expect(page.getByRole('button', { name: 'Promote matched availability' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Sync now', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Availability is up to date');
+  await expect(page.getByRole('alert')).toContainText('Availability check queued');
+  await expect(page.getByText('An availability check is queued. Use Reload view to see its result.', { exact: true })).toBeVisible();
+  const reads = await page.locator('#sync-read-count').innerText();
+  await page.waitForTimeout(1500);
+  await expect(page.locator('#sync-read-count')).toHaveText(reads);
+  await page.getByRole('button', { name: 'Reload view', exact: true }).click();
+  await expect(page.getByText('An availability check is queued. Use Reload view to see its result.', { exact: true })).toBeVisible();
+  await expect(page.locator('#sync-read-count')).toHaveText(String(Number(reads) + 1));
 });
 
 

@@ -5,8 +5,16 @@
   "compatibility_date": "2026-10-04",
   "assets": { "directory": "./dist/client", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api", "/client-config"] },
   "d1_databases": [{ "binding": "DB", "database_name": "mindfulness-scheduler-prod", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "queues": {
+    "producers": [{ "binding": "SYNC_QUEUE", "queue": "mindfulness-scheduler-sync" }],
+    "consumers": [
+      { "queue": "mindfulness-scheduler-sync", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 3, "max_concurrency": 1, "retry_delay": 30, "dead_letter_queue": "mindfulness-scheduler-sync-dead" },
+      { "queue": "mindfulness-scheduler-sync-dead", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 3, "max_concurrency": 1, "retry_delay": 30 }
+    ]
+  },
   "triggers": { "crons": ["*/30 * * * *"] },
   "vars": {
+    "SYNC_DEAD_LETTER_QUEUE": "mindfulness-scheduler-sync-dead",
     "TIME_ZONE": "America/New_York",
     "DISPLAY_INCREMENT_MINUTES": "30",
     "OPERATING_HOURS_START": "09:00",
