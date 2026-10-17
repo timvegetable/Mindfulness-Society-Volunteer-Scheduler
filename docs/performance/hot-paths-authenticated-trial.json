@@ -1,0 +1,308 @@
+{
+  "sourceCommit": "55b1a71",
+  "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+  "manualActions": 1,
+  "tailStopped": true,
+  "invocations": [
+    {
+      "timestamp": "2026-10-17T20:03:41.529000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.schedule.read"
+        }
+      ],
+      "cpuMs": 17,
+      "wallMs": 90,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:03:44.467000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.sync.read"
+        }
+      ],
+      "cpuMs": 6,
+      "wallMs": 55,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:03:51.527000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.insights.read"
+        }
+      ],
+      "cpuMs": 8,
+      "wallMs": 32,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:04:02.914000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "center.candidate.read"
+        }
+      ],
+      "cpuMs": 7,
+      "wallMs": 29,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:04:12.443000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.schedule.read"
+        }
+      ],
+      "cpuMs": 5,
+      "wallMs": 35,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:04:17.398000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.schedule.read"
+        }
+      ],
+      "cpuMs": 4,
+      "wallMs": 25,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:04:21.133000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.sync.read"
+        }
+      ],
+      "cpuMs": 9,
+      "wallMs": 57,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:04:26.947000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.sync.now"
+        }
+      ],
+      "cpuMs": 6,
+      "wallMs": 343,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:04:27.351000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.sync.read"
+        }
+      ],
+      "cpuMs": 5,
+      "wallMs": 55,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:04:27.852000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "queue",
+      "labels": [
+        {
+          "kind": "Availability sync stage:",
+          "value": "fetch"
+        }
+      ],
+      "cpuMs": 5,
+      "wallMs": 506,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": 1
+    },
+    {
+      "timestamp": "2026-10-17T20:04:33.809000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "queue",
+      "labels": [
+        {
+          "kind": "Availability sync stage:",
+          "value": "prepare"
+        }
+      ],
+      "cpuMs": 2,
+      "wallMs": 346,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": 1
+    },
+    {
+      "timestamp": "2026-10-17T20:04:34.267000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "queue",
+      "labels": [
+        {
+          "kind": "Availability sync stage:",
+          "value": "commit"
+        }
+      ],
+      "cpuMs": 1,
+      "wallMs": 188,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": 1
+    },
+    {
+      "timestamp": "2026-10-17T20:04:38.251000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.sync.read"
+        }
+      ],
+      "cpuMs": 3,
+      "wallMs": 42,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    },
+    {
+      "timestamp": "2026-10-17T20:05:01.709000+00:00",
+      "workerVersion": "8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc",
+      "eventKind": "http",
+      "labels": [
+        {
+          "kind": "Scheduling API operation:",
+          "value": "admin.sync.read"
+        }
+      ],
+      "cpuMs": 5,
+      "wallMs": 118,
+      "outcome": "ok",
+      "exceptionCount": 0,
+      "queueBatchSize": null
+    }
+  ],
+  "finalAudit": [
+    {
+      "success": true,
+      "results": [
+        {
+          "phase": "done",
+          "count": 38
+        }
+      ]
+    },
+    {
+      "success": true,
+      "results": [
+        {
+          "last_attempt_at": "2026-10-17T20:04:26.961Z",
+          "last_success_at": "2026-10-17T20:04:26.961Z",
+          "effective_change_at": "2026-10-15T02:00:34.126Z",
+          "outcome": "unchanged",
+          "participant_count": 8,
+          "matched_count": 7,
+          "pending_count": 1
+        }
+      ]
+    },
+    {
+      "success": true,
+      "results": [
+        {
+          "artifacts": 0
+        }
+      ]
+    },
+    {
+      "success": true,
+      "results": [
+        {
+          "outbox": 0
+        }
+      ]
+    },
+    {
+      "success": true,
+      "results": [
+        {
+          "key": "dataRevision",
+          "value": "1.0"
+        },
+        {
+          "key": "schedulingInputRevision",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "success": true,
+      "results": [
+        {
+          "imports": 3
+        }
+      ]
+    },
+    {
+      "success": true,
+      "results": [
+        {
+          "provenance": 180
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Small sequential sample, not controlled cold/warm isolates or p95/p99",
+    "Sign-in session.me occurred before tail capture",
+    "Genuinely changed source not exercised",
+    "Volunteer-only/contact-only live accounts unavailable"
+  ]
+}

@@ -66,3 +66,19 @@ Every captured event reported `ok`, with zero exceptions and Queue batch size on
 The final audit found 37 completed jobs, no remaining artifacts or outbox entries, revisions 1/1, imports/provenance 3/180 and participant/matched/pending counts 8/7/1. Attempt and success timestamps advanced to `2026-10-17T20:01:01.735Z`; the effective-change timestamp stayed `2026-10-15T02:00:34.126Z`. No source or roster edits were made.
 
 The browser's previous Google credential expired. Reload view reached the Worker but returned the application's unauthorized response and signed the UI out. Its operation-labeled invocation used 8 ms CPU; HTTP 200 and tail `ok` do not make it a successful authenticated read. The user was asked to complete Google sign-in. Successful authenticated-read measurements and the single approved manual Sync now remain pending that sign-in; the manual action has not been performed. Approval for those exact checks persists. No live volunteer-only/contact-only isolation or genuinely changed-source measurement was obtained.
+
+## Authenticated follow-up — October 17, 20:03–20:05 UTC
+
+The operator completed sign-in with the enrolled administrator/center-contact account. The existing published schedule, synchronization status, Insights and Center proposals loaded successfully through the production browser. Live tail attributed each request to its operation on the same deployed Worker version:
+
+| Operation | Sequential captured CPU samples, ms |
+| --- | --- |
+| admin.schedule.read | 17, 5, 4 |
+| admin.sync.read | 6, 9, 5, 3, 5 |
+| admin.insights.read | 8 |
+| center.candidate.read | 7 |
+| admin.sync.now | 6 |
+
+Exactly one approved Sync now was clicked. Its unchanged Queue stages measured fetch **5 ms**, prepare **2 ms**, commit **1 ms**. An explicit Reload view showed the completed check at 4:04 PM New York time. The audit confirmed success/attempt at `2026-10-17T20:04:26.961Z`, unchanged effective-change time, revisions 1/1, imports/provenance 3/180, participant counts 8/7/1, 38 completed jobs and zero artifacts/outbox entries. Every captured invocation reported `ok` with zero exceptions. Tail collection is stopped. [Sanitized measurements and audit](hot-paths-authenticated-trial.json).
+
+The 17 ms schedule read keeps the strict CPU goal open despite the subsequent 4–5 ms samples and successful Queue paths. This is the first captured schedule request, not a proven cold-isolate event; the sample cannot identify whether public-key acquisition/import, lazy runtime initialization, D1 response handling or another cost caused the excess. Sign-in's session.me request occurred before capture and was not measured. Next diagnosis should separate fixed first-use authentication/runtime work from schedule-specific conversion/validation in a native profile before changing the security model or splitting the read. Genuinely changed-source production costs, larger input bounds and live volunteer-only/contact-only isolation remain unverified. No additional deployment or rollback occurred in this follow-up.
