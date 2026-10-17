@@ -1,6 +1,6 @@
 # Worker CPU hot paths — October 17, 2026
 
-This is an undeployed optimization candidate on `codex/worker-cpu-hot-paths`, continuing the [Queue production trial](queue-production-trial.json). Production remains Worker `423ec4f6-f100-4637-9d74-d674461d19fa` from `5a6e188`. The 10 ms CPU goal and issue #6 remain open.
+This candidate on `codex/worker-cpu-hot-paths` continues the [Queue production trial](queue-production-trial.json). The approved deployment and subsequent scheduled measurement are recorded below. The 10 ms CPU goal and issue #6 remain open.
 
 ## Changes and checkpoints
 
@@ -44,4 +44,25 @@ Permanent coverage includes malformed schema differential checks across every op
 
 No new migration or Queue resources are needed. Before an explicitly approved deployment, export a fresh private backup and review the existing private configuration with both batch-one consumers and the 30-minute cron. Deploy the exact reviewed commit, record its Worker version and startup time, and collect operation-attributed CPU for available authenticated reads, one separately approved manual check and a natural cron. Include first-use and warm requests; inspect errors, final job state, artifact/outbox cleanup, revisions and unchanged history. Stop tail collection afterward. Do not manufacture changed production source data. A genuinely changed production run and live volunteer-only/contact-only account isolation remain unverified.
 
-Rollback for this candidate is the existing Worker version `423ec4f6-f100-4637-9d74-d674461d19fa`, preserving both Queue consumers and cron. Code rollback does not restore data. Rolling back farther to pre-Queue code requires the separate consumer-detachment procedure in the [Queue release record](../releases/6-queue-pipeline.md). No rollback or deployment was performed during this continuation.
+Rollback for this candidate is Worker version `423ec4f6-f100-4637-9d74-d674461d19fa`, preserving both Queue consumers and cron. Code rollback does not restore data. Rolling back farther to pre-Queue code requires the separate consumer-detachment procedure in the [Queue release record](../releases/6-queue-pipeline.md).
+
+## Approved production trial — October 17, 20:00 UTC
+
+The operator subsequently approved deployment of `55b1a71`, authenticated read measurements, one manual Sync now and observation of the next cron. A fresh private backup passed disposable restore integrity and foreign-key checks. Deployment produced Worker **`8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc`**, with **40 ms startup**, both existing batch-one Queue consumers and `*/30 * * * *` retained. No migration, resource creation or rollback occurred. Public client and configuration endpoints returned HTTP 200 via curl; an earlier urllib probe failed and did not establish an application failure.
+
+The natural 20:00 UTC scheduled event arrived at 20:00:59.926 UTC. Live tail captured the complete unchanged-source pipeline on that exact Worker version:
+
+| Invocation | CPU, ms |
+| --- | ---: |
+| Cron | 1 |
+| Queue start | 3 |
+| Queue recovery | 2 |
+| Fetch, fingerprint hit | 7 |
+| Unchanged prepare | 5 |
+| Commit | 1 |
+
+Every captured event reported `ok`, with zero exceptions and Queue batch size one. This is a promising production sample below 10 ms for the unchanged path, not a percentile guarantee or evidence for the unexercised parse/changed reconciliation path. Tail collection is stopped. See [sanitized invocation and audit evidence](hot-paths-production-trial.json).
+
+The final audit found 37 completed jobs, no remaining artifacts or outbox entries, revisions 1/1, imports/provenance 3/180 and participant/matched/pending counts 8/7/1. Attempt and success timestamps advanced to `2026-10-17T20:01:01.735Z`; the effective-change timestamp stayed `2026-10-15T02:00:34.126Z`. No source or roster edits were made.
+
+The browser's previous Google credential expired. Reload view reached the Worker but returned the application's unauthorized response and signed the UI out. Its operation-labeled invocation used 8 ms CPU; HTTP 200 and tail `ok` do not make it a successful authenticated read. The user was asked to complete Google sign-in. Successful authenticated-read measurements and the single approved manual Sync now remain pending that sign-in; the manual action has not been performed. Approval for those exact checks persists. No live volunteer-only/contact-only isolation or genuinely changed-source measurement was obtained.

@@ -96,7 +96,7 @@ The final remote audit found two completed jobs, zero intermediate artifacts and
 
 ### Next optimization boundary
 
-The subsequent undeployed candidate is recorded in [Worker CPU hot paths](../performance/worker-cpu-hot-paths.md), with separate rollback commits on `codex/worker-cpu-hot-paths`, native local measurements and final functional/browser validation. Production remains the version recorded above; the follow-up does not establish the 10 ms production gate.
+The subsequent candidate and its approved deployment are recorded in [Worker CPU hot paths](../performance/worker-cpu-hot-paths.md), with separate rollback commits on `codex/worker-cpu-hot-paths`, native local measurements and final functional/browser validation. Worker `8e14fcd6-94ac-4a7d-95f0-99ced8df0cbc` supersedes the trial above. One complete unchanged scheduled pipeline measured 1–7 ms per invocation; authenticated reads and changed-source production costs remain unverified, so the full 10 ms production gate remains open.
 
 Keep the experiment reversible on `codex/worker-cpu-budget`, with implementation checkpoint `5a6e188` and this measurement record in a separate commit. Preserve the recorded prior Worker version for deployment rollback; reverting source alone does not detach consumers or undo the additive migration.
 
