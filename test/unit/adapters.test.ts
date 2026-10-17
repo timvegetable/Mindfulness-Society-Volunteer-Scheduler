@@ -75,10 +75,19 @@ describe('external adapters with local fetch fakes', () => {
   });
   it('bounds actual streamed bytes and advisory content length, while preserving split UTF-8', async () => {
     await expect(readBoundedText(new Response('small', { headers: { 'Content-Length': '100' } }), 10)).rejects.toThrow('size limit');
+    expect(await readBoundedText(new Response(null), 0)).toBe('');
+    expect(await readBoundedText(new Response('é'), 2)).toBe('é');
     const encoded = new TextEncoder().encode('é');
     const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoded.slice(0, 1)); controller.enqueue(encoded.slice(1)); controller.close(); } });
     expect(await readBoundedText(new Response(body), 2)).toBe('é');
     await expect(readBoundedText(new Response('é'), 1)).rejects.toThrow('size limit');
+    let cancelled = false;
+    const oversized = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); },
+      cancel() { cancelled = true; },
+    });
+    await expect(readBoundedText(new Response(oversized), 2)).rejects.toThrow('size limit');
+    expect(cancelled).toBe(true);
   });
   it('provides deterministic clock and ID services without global mocks', async () => {
     const program = Effect.gen(function*() {
