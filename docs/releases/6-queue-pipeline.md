@@ -2,7 +2,7 @@
 
 ## Status and behavior
 
-This candidate implements the Queue experiment approved by the operator. It has not been deployed to the application, and migration `0003_synchronization_jobs.sql` has not been applied to production. Production CPU compliance remains unverified. The original [prototype checkpoint](../performance/queue-pipeline-checkpoint.md) records the 0–2 ms minimal deployed consumer baseline.
+This candidate implements the Queue experiment approved by the operator. The operator approved the concrete rollout and candidate `5a6e188` was deployed at approximately 2026-10-17 02:26 UTC as Worker version `423ec4f6-f100-4637-9d74-d674461d19fa`. Both Queues and consumers are active, and migration `0003_synchronization_jobs.sql` has been applied to production. The production trial failed the strict 10 ms CPU gate; the goal remains unresolved. The original [prototype checkpoint](../performance/queue-pipeline-checkpoint.md) records the 0–2 ms minimal deployed consumer baseline.
 
 Cron now sends only a scheduled intent and a maintenance reference. It performs no D1 reads, source fetch, Google verification or reconciliation. Each Queue delivery processes one stage. Both consumers are configured for batch size one, concurrency one, three retries and a 30-second retry delay.
 
@@ -48,7 +48,7 @@ The attempted fresh private production backup export failed with Cloudflare auth
 
 ## Concrete production trial and rollback
 
-The separate production approval required by README remains outstanding for this application release. Reload the application after deployment to load the queued-status client; an already-open older bundle can retain its former immediate-result wording until refreshed. The reviewable actions are:
+The operator granted the separate production approval required by README for this application release, including a fresh backup, Queue creation, migration, exact candidate deployment, one manual check and natural cron observation. Reload the application after deployment to load the queued-status client; an already-open older bundle can retain its former immediate-result wording until refreshed. The reviewable actions are:
 
 1. Export a fresh private D1 backup and verify access to the currently deployed Worker version. Last recorded production version is `48b0aa83-44eb-4007-a9c4-75c237e9f372`; recheck it before rollout.
 2. Create `mindfulness-scheduler-sync-dead`, then `mindfulness-scheduler-sync`. They carry only internal references.
@@ -59,3 +59,43 @@ The separate production approval required by README remains outstanding for this
 For rollback, detach both Queue consumers first, then restore the verified prior Worker version. Retain the queues until in-flight work is accounted for. The additive tables may remain; the previous Worker ignores them. Under the rollout's rollback authorization, mark unfinished jobs failed and remove only their intermediate artifacts/outbox rows if abandoning this candidate. Do not drop/reset existing tables or restore a full database backup over concurrent human edits. Completed availability changes are data changes and are not undone by code rollback; review them separately if needed. The previous application was already observed above the CPU target, so rollback restores prior behavior without resolving this goal.
 
 Current source references: [Workers CPU limits](https://developers.cloudflare.com/workers/platform/limits/#cpu-time), [Queue batching/retries](https://developers.cloudflare.com/queues/configuration/batching-retries/), [dead-letter queues](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/), and [Wrangler Queue configuration](https://developers.cloudflare.com/workers/wrangler/configuration/#queues). The configured batch size is deliberate: multiple messages in one invocation would share its CPU work.
+
+
+## Approved rollout observations — October 17 UTC
+
+The fresh private backup `production-backup-queue-20261017T-refresh.local.sql` was exported with mode 0600 and restored into an in-memory SQLite database. `PRAGMA quick_check` returned `ok`. It contained 74 volunteers, three users, 54 assignments, three imports, 180 imported-availability records and no availability exceptions or job tables. Domain/scheduling revisions remained 1/1. The prior Worker version was rechecked before writes and remained `48b0aa83-44eb-4007-a9c4-75c237e9f372` at 100%.
+
+Both named Queues were created, then the five-statement additive migration succeeded. A subsequent remote read confirmed all three job tables, unchanged revisions and unchanged import/provenance counts. The candidate deployment succeeded with both consumers, the producer and the existing cron. Its reported startup time was 29 ms; startup time is separate from per-invocation CPU.
+
+The first OAuth refresh reported a missing CSRF session cookie. A subsequent default Wrangler consent requested 30 permissions; automatic approval review rejected accepting that broad grant. The login attempt was canceled. Existing CLI credentials successfully exported D1 and completed the approved deployment, so no additional consent was necessary.
+
+Phase-only production tail collection began before the first observed scheduled check. The operator completed Google sign-in in a fresh app tab. One manual Sync now and the natural 02:30 UTC scheduled check completed. Tail collection was stopped after the final audit.
+
+
+### Metered production CPU
+
+| Invocation | CPU ms |
+| --- | ---: |
+| Cron | 0 |
+| Scheduled start | 5 |
+| Maintenance recovery | 3 |
+| Manual enqueue | 6 |
+| Manual fetch, initial fingerprint miss | 12 |
+| Parse | 8 |
+| Reconcile | 15 |
+| Manual commit | 1 |
+| Scheduled fetch, fingerprint hit | 11 |
+| Unchanged prepare | 13 |
+| Scheduled commit | 2 |
+
+Initial authenticated HTTP calls measured 17 and 13 ms; later observed HTTP calls measured 10, 6 and 6 ms before a final explicit reload. These requests were observed sequentially through the signed-in UI; raw tail data does not identify operation names, and the sanitized artifact does not guess them. The manual enqueue measurement is correlated with the single agent-initiated Sync now action. See [sanitized invocation evidence](../performance/queue-production-trial.json) for all captured events, including final reads. Integer 0 ms telemetry does not mean zero work. Every captured invocation reported `ok` with no exceptions, including those above the operator's strict design constraint; successful execution does not establish CPU compliance.
+
+This is a small first-use sample, not a p95/p99 or controlled cold/warm experiment. The source was semantically unchanged. The first fetch lacked the new source fingerprint and therefore exercised parse/reconcile, but it did not create new import history or change availability. A real changed-domain reconciliation remains unmeasured.
+
+The final remote audit found two completed jobs, zero intermediate artifacts and zero outbox entries. Data and scheduling revisions stayed 1/1; imports/provenance stayed 3/180. The UI displayed a successful check (10:30 PM manual, then 10:31 PM scheduled) and 8/7/1 participant counts. No rollback was performed: the candidate is functionally working, and the prior version was also over budget. The additive migration and both Queues remain active in production.
+
+### Next optimization boundary
+
+Keep the experiment reversible on `codex/worker-cpu-budget`, with implementation checkpoint `5a6e188` and this measurement record in a separate commit. Preserve the recorded prior Worker version for deployment rollback; reverting source alone does not detach consumers or undo the additive migration.
+
+The measured priorities are fetch (11–12 ms), unchanged preparation (13 ms), reconciliation (15 ms) and initial authenticated reads (13–17 ms). Further stage splitting alone does not establish a solution: measure fixed setup, D1 decoding/serialization and shared runtime/response validation costs before choosing the next seam. A lighter dedicated consumer/runtime is a possible architectural change to propose and prototype, rather than silently replacing the application. Preserve final transactional authorization/revision fences and source deduplication. Do not close issue #6 or declare the 10 ms goal achieved.

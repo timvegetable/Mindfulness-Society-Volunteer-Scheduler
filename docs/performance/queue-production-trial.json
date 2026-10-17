@@ -1,0 +1,178 @@
+{
+  "sourceCommit": "5a6e188",
+  "workerVersion": "423ec4f6-f100-4637-9d74-d674461d19fa",
+  "note": "Small observational sample; integer CPU telemetry; not a cold/warm distribution or changed-domain workload. HTTP operations are intentionally not inferred from request paths.",
+  "invocations": [
+    {
+      "at": 1792204027362,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 0,
+      "wallMs": 1,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204191233,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 0,
+      "wallMs": 0,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204195441,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 17,
+      "wallMs": 101,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204195589,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 13,
+      "wallMs": 37,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204211346,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 10,
+      "wallMs": 50,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204213416,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 6,
+      "wallMs": 448,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204213998,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 6,
+      "wallMs": 40,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204214502,
+      "kind": "queue",
+      "phase": "fetch",
+      "cpuMs": 12,
+      "wallMs": 958,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204220015,
+      "kind": "queue",
+      "phase": "parse",
+      "cpuMs": 8,
+      "wallMs": 673,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204220921,
+      "kind": "queue",
+      "phase": "reconcile",
+      "cpuMs": 15,
+      "wallMs": 565,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204221637,
+      "kind": "queue",
+      "phase": "commit",
+      "cpuMs": 1,
+      "wallMs": 193,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204254717,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 51,
+      "wallMs": 151,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204259691,
+      "kind": "cron",
+      "phase": null,
+      "cpuMs": 0,
+      "wallMs": 558,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204265235,
+      "kind": "queue",
+      "phase": "start",
+      "cpuMs": 5,
+      "wallMs": 457,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204266256,
+      "kind": "queue",
+      "phase": "recover",
+      "cpuMs": 3,
+      "wallMs": 175,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204271377,
+      "kind": "queue",
+      "phase": "fetch",
+      "cpuMs": 11,
+      "wallMs": 764,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204272288,
+      "kind": "queue",
+      "phase": "prepare",
+      "cpuMs": 13,
+      "wallMs": 291,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204272854,
+      "kind": "queue",
+      "phase": "commit",
+      "cpuMs": 2,
+      "wallMs": 198,
+      "outcome": "ok",
+      "exceptionCount": 0
+    },
+    {
+      "at": 1792204297877,
+      "kind": "http",
+      "phase": null,
+      "cpuMs": 24,
+      "wallMs": 84,
+      "outcome": "ok",
+      "exceptionCount": 0
+    }
+  ]
+}
