@@ -29,6 +29,12 @@ describe('local D1 database transactions', () => {
     expect(snapshot.schedulingInputRevision).toBe(0);
   });
 
+  it('rejects non-JSON legacy field text instead of silently accepting SQLite JSON5 syntax', async () => {
+    const { db, service } = await database();
+    await db.prepare('UPDATE users SET roles=? WHERE id=?').bind("['administrator']", 'user-admin').run();
+    await expect(Effect.runPromise(service.read)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+  });
+
   it('reads missing revision rows as zero and creates them on the first advance', async () => {
     const { db } = await database();
     await db.prepare('DELETE FROM meta').run();

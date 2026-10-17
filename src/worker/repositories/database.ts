@@ -1,7 +1,7 @@
 import type { Operation } from '../../shared/api/operations';
 import { AppError } from '../../shared/api/errors';
 import { emptySnapshot, type Snapshot } from '../../shared/domain/models';
-import { decodeRow, tableDiff, tables } from './tables';
+import { decodeProjectedRow, rowProjection, tableDiff, tables } from './tables';
 
 export interface IdempotencyKey { actorId: string; operation: string; idempotencyKey: string }
 export interface IdempotencyRecord extends IdempotencyKey { fingerprint: string; response: string; createdAt: string }
@@ -76,7 +76,7 @@ export async function readOperationSnapshot(db: D1Database, operation: Operation
 
 async function readTables(db: D1Database, selectedTables: typeof tables, check?: { key: IdempotencyKey; now: string }, extra: D1PreparedStatement[] = []): Promise<SynchronizationCheck & { extra: D1Result<Record<string, unknown>>[] }> {
   // Import insertion order breaks equal-clock ties without assuming random IDs are chronological.
-  const statements = selectedTables.map(table => db.prepare(`SELECT ${table.columns.join(', ')} FROM ${table.name} ORDER BY ${table.key === 'imports' ? 'rowid' : 'id'}`));
+  const statements = selectedTables.map(table => db.prepare(rowProjection(table)));
   statements.push(db.prepare('SELECT key, value FROM meta'));
   if (check) statements.push(idempotencyStatement(db, check.key, check.now));
   statements.push(...extra);
@@ -85,7 +85,7 @@ async function readTables(db: D1Database, selectedTables: typeof tables, check?:
   for (const [index, table] of selectedTables.entries()) {
     const rows = results[index]?.results;
     if (!rows) throw storageError();
-    (snapshot as unknown as Record<string, unknown>)[table.key] = rows.map(row => decodeRow(table, row));
+    (snapshot as unknown as Record<string, unknown>)[table.key] = rows.map(row => decodeProjectedRow(table, row.body));
   }
   for (const row of results[selectedTables.length]?.results ?? []) {
     if (row.key === 'dataRevision' || row.key === 'schedulingInputRevision' || row.key === 'synchronizedDataRevision') {

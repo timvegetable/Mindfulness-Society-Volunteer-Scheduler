@@ -42,23 +42,14 @@ function property(column: string): string {
   return column.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
 
-function decodeJson(table: Table, column: string, value: unknown): unknown {
-  const decoded: unknown = JSON.parse(typeof value === 'string' ? value : '[]');
-  // Legacy imports stored flat provenance intervals rather than participant records.
-  if (table.name === 'imports' && column === 'staged_availability' && Array.isArray(decoded)) {
-    return restoreLegacyParticipants(decoded);
-  }
-  // Older scheduling runs persisted the missing staff count as "unfilled".
-  if (table.name === 'scheduling_runs' && column === 'shortfalls' && Array.isArray(decoded)) {
-    return decoded.map(item => {
-      if (typeof item === 'object' && item !== null && 'unfilled' in item && !('missing' in item)) {
-        const { unfilled, ...fields } = item;
-        return { ...fields, missing: unfilled };
-      }
-      return item;
-    });
-  }
-  return decoded;
+function restoreLegacyShortfalls(rows: unknown[]): unknown[] {
+  return rows.map(item => {
+    if (typeof item === 'object' && item !== null && 'unfilled' in item && !('missing' in item)) {
+      const { unfilled, ...fields } = item;
+      return { ...fields, missing: unfilled };
+    }
+    return item;
+  });
 }
 
 function restoreLegacyParticipants(rows: unknown[]): unknown[] {
@@ -86,14 +77,29 @@ function restoreLegacyParticipants(rows: unknown[]): unknown[] {
   return restored;
 }
 
-export function decodeRow(table: Table, row: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(table.columns.map((column, index) => {
-    const value = row[column];
-    const decoded: unknown = table.json?.includes(column)
-      ? decodeJson(table, column, value)
-      : table.booleans?.includes(column) ? value === 1 : value;
-    return [table.properties[index]!, decoded];
-  }));
+/** D1 assembles each domain record once, avoiding its per-column JS conversion. */
+const projections = new Map<Table, string>();
+export function rowProjection(table: Table): string {
+  const cached = projections.get(table);
+  if (cached) return cached;
+  const fields = table.columns.flatMap((column, index) => {
+    const value = table.json?.includes(column) ? `json(CASE WHEN json_valid(COALESCE(${column},'[]')) THEN COALESCE(${column},'[]') ELSE '' END)`
+      : table.booleans?.includes(column) ? `json(CASE WHEN ${column}=1 THEN 'true' ELSE 'false' END)` : column;
+    return [`'${table.properties[index]}'`, value];
+  });
+  const query = `SELECT json_object(${fields.join(',')}) AS body FROM ${table.name} ORDER BY ${table.key === 'imports' ? 'rowid' : 'id'}`;
+  projections.set(table, query);
+  return query;
+}
+
+export function decodeProjectedRow(table: Table, body: unknown): Record<string, unknown> {
+  if (typeof body !== 'string') throw new Error('Missing stored record');
+  const row = JSON.parse(body) as Record<string, unknown>;
+  if (table.key === 'imports' && Array.isArray(row.stagedAvailability)) row.stagedAvailability = restoreLegacyParticipants(row.stagedAvailability);
+  if (table.key === 'schedulingRuns' && Array.isArray(row.shortfalls)) {
+    row.shortfalls = restoreLegacyShortfalls(row.shortfalls);
+  }
+  return row;
 }
 
 export function encodeRow(table: Table, row: object): SqlValue[] {

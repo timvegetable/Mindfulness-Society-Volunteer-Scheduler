@@ -1,3 +1,4 @@
+import { decodePayload, decodeRequest, decodeResult } from '../../src/worker/api/validation';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { operations } from '../../src/shared/api/operations';
@@ -43,14 +44,53 @@ const results: Record<string, object> = {
 describe('shared API schemas', () => {
   it.each(operations)('%s has a strict payload and a validated revision-bearing result', (operation) => {
     expect(Schema.decodeUnknownSync(payloadSchemas[operation])(payloads[operation])).toEqual(payloads[operation]);
+    expect(decodePayload(operation, payloads[operation])).toEqual(payloads[operation]);
+    expect(() => decodePayload(operation, { ...(payloads[operation] as object), unknownField: true })).toThrow();
     expect(() => Schema.decodeUnknownSync(payloadSchemas[operation])({ ...(payloads[operation] as object), unknownField: 'substituted' })).toThrow();
     const result = { ...results[operation], dataRevision: 2, schedulingInputRevision: 1 };
     expect(Schema.decodeUnknownSync(resultSchemas[operation])(result)).toEqual(result);
+    expect(decodeResult(operation, result)).toEqual(result);
+    expect(() => decodeResult(operation, { ...result, dataRevision: -1 })).toThrow();
+    expect(() => decodeResult(operation, { ...result, unknownField: 'private' })).toThrow();
     expect(() => Schema.decodeUnknownSync(resultSchemas[operation])(results[operation])).toThrow();
+  });
+  it.each(operations)('%s preserves boundary validation when nested values are corrupted', operation => {
+    const compare = (fixture: unknown, fast: (value: unknown) => unknown, original: (value: unknown) => unknown) => {
+      const paths: (string | number)[][] = [];
+      function visit(value: unknown, path: (string | number)[]) {
+        paths.push(path);
+        if (value !== null && typeof value === 'object') {
+          for (const [key, child] of Object.entries(value)) visit(child, [...path, Array.isArray(value) ? Number(key) : key]);
+        }
+      }
+      visit(fixture, []);
+      const accepted = (decode: (value: unknown) => unknown, value: unknown) => { try { decode(value); return true; } catch { return false; } };
+      for (const path of paths) for (const replacement of [null, undefined, false, -1, 1.5, NaN, Infinity, 'invalid', '2026-02-30', {}, [], [undefined], Array(1), { privateField: true }]) {
+        let value: unknown = replacement;
+        if (path.length) {
+          value = structuredClone(fixture);
+          let parent = value as Record<string | number, unknown>;
+          for (const key of path.slice(0, -1)) parent = parent[key] as Record<string | number, unknown>;
+          parent[path.at(-1)!] = replacement;
+        }
+        expect(accepted(fast, value), `${operation} ${path.join('.')}`).toBe(accepted(original, value));
+      }
+    };
+    compare({ ...results[operation], dataRevision: 2, schedulingInputRevision: 1 },
+      value => decodeResult(operation, value), Schema.decodeUnknownSync(resultSchemas[operation]));
+    compare(payloads[operation], value => decodePayload(operation, value), Schema.decodeUnknownSync(payloadSchemas[operation]));
+    compare({ operation, credential: 'synthetic', payload: payloads[operation], expectedRevision: 1, idempotencyKey: 'synthetic' },
+      decodeRequest, Schema.decodeUnknownSync(RequestEnvelopeSchema));
   });
   it('rejects unknown envelope fields and unknown operations', () => {
     const request = { operation: 'session.me', payload: {}, credential: 'token' };
     expect(Schema.decodeUnknownSync(RequestEnvelopeSchema)(request)).toEqual(request);
+    expect(decodeRequest(request)).toEqual(request);
+    for (const key of Object.keys(request)) {
+      const missing = { ...request } as Record<string, unknown>; delete missing[key];
+      const accepts = (fn: (value: unknown) => unknown) => { try { fn(missing); return true; } catch { return false; } };
+      expect(accepts(decodeRequest)).toBe(accepts(Schema.decodeUnknownSync(RequestEnvelopeSchema)));
+    }
     expect(() => Schema.decodeUnknownSync(RequestEnvelopeSchema)({ ...request, operation: 'admin.insights.refresh' })).toThrow();
     expect(() => Schema.decodeUnknownSync(RequestEnvelopeSchema)({ ...request, volunteerId: 'other' })).toThrow();
     expect(() => Schema.decodeUnknownSync(RequestEnvelopeSchema)({ ...request, expectedRevision: -1 })).toThrow();
@@ -59,6 +99,7 @@ describe('shared API schemas', () => {
     const decode = Schema.decodeUnknownSync(payloadSchemas['volunteer.availability.recurring.update']);
     expect(() => decode({ intervals: [{ ...weekly, volunteerId: 'substituted' }] })).toThrow();
     expect(() => decode({ intervals: Array.from({ length: 101 }, () => weekly) })).toThrow();
+    expect(() => decodePayload('volunteer.availability.recurring.update', { intervals: Array.from({ length: 101 }, () => weekly) })).toThrow();
     expect(decode({ intervals: Array.from({ length: 100 }, () => weekly) }).intervals).toHaveLength(100);
   });
   it('rejects invalid dates, times, interval ordering, weekdays and timezone names', () => {

@@ -1,8 +1,9 @@
+import { decodePayload, decodeRequest, decodeResult } from './validation';
 import { SynchronizationJobs } from '../synchronizationJobs';
 import { synchronize } from '../synchronization';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option } from 'effect';
 import { AppError } from '../../shared/api/errors';
-import { RequestEnvelopeSchema, payloadSchemas, resultSchemas, type Operation } from '../../shared/api/schemas';
+import { type Operation } from '../../shared/api/schemas';
 import { normalizeWeeklyIntervals } from '../../shared/domain/intervals';
 import type { Snapshot, User } from '../../shared/domain/models';
 import { AuthService } from '../services/AuthService';
@@ -26,27 +27,26 @@ export function canonical(value: unknown): string {
 }
 
 function normalizePayload(operation: Operation, raw: unknown) {
-  const schema = payloadSchemas[operation];
-  let payload = normalize(Schema.decodeUnknownSync(schema)(raw));
+  let payload = normalize(decodePayload(operation, raw));
   if (operation === 'volunteer.availability.recurring.update') {
-    const input = Schema.decodeUnknownSync(payloadSchemas[operation])(payload);
+    const input = decodePayload(operation, payload);
     payload = { intervals: normalizeWeeklyIntervals(input.intervals) };
   }
   if (operation === 'admin.import.mapping.upsert') {
-    const input = Schema.decodeUnknownSync(payloadSchemas[operation])(payload);
+    const input = decodePayload(operation, payload);
     payload = { ...input, ...(input.sourceEmail ? { sourceEmail: input.sourceEmail.toLowerCase() } : {}) };
   }
-  return Schema.decodeUnknownSync(schema)(payload);
+  return decodePayload(operation, payload);
 }
 
 function authorizeScope(operation: Operation, payload: unknown, user: User, state: Snapshot) {
   if (operation === 'center.candidate.update') {
-    const input = Schema.decodeUnknownSync(payloadSchemas[operation])(payload);
+    const input = decodePayload(operation, payload);
     const candidate = state.candidateSchedules.find((row) => row.id === input.candidateId);
     if ((candidate && !canUseCenter(user, candidate.centerId)) || (input.centerId && !canUseCenter(user, input.centerId))) return false;
   }
   if (operation === 'volunteer.assignment.cancel') {
-    const input = Schema.decodeUnknownSync(payloadSchemas[operation])(payload);
+    const input = decodePayload(operation, payload);
     const assignment = state.assignments.find((row) => row.id === input.assignmentId);
     if (assignment && assignment.volunteerId !== user.volunteerId) return false;
   }
@@ -56,7 +56,9 @@ function authorizeScope(operation: Operation, payload: unknown, user: User, stat
 /** Returns the exact serialized successful response; durable replays preserve those bytes. */
 export function dispatch(raw: unknown, config: AppConfig) {
   return Effect.gen(function* () {
-    const envelope = yield* Effect.try({ try: () => Schema.decodeUnknownSync(RequestEnvelopeSchema)(raw), catch: () => new AppError('INVALID_REQUEST', 'Invalid request envelope or operation.') });
+    const envelope = yield* Effect.try({ try: () => decodeRequest(raw), catch: () => new AppError('INVALID_REQUEST', 'Invalid request envelope or operation.') });
+    // Attribute invocation CPU without logging credentials, identities or payloads.
+    console.info('Scheduling API operation:', envelope.operation);
     const auth = yield* AuthService;
     const identity = yield* auth.verify(envelope.credential);
     const database = yield* Database;
@@ -90,7 +92,7 @@ export function dispatch(raw: unknown, config: AppConfig) {
     const result = yield* handleOperation(operation, payload, { state, user, config, now });
     const dataRevision = before.dataRevision + (write ? 1 : 0);
     const schedulingInputRevision = before.schedulingInputRevision + (write && schedulingInputsChanged(before, state) ? 1 : 0);
-    const data = yield* Effect.try({ try: () => Schema.decodeUnknownSync(resultSchemas[operation])({ ...result, dataRevision, schedulingInputRevision }), catch: () => new AppError('INTERNAL_ERROR', 'The operation produced an invalid response.') });
+    const data = yield* Effect.try({ try: () => decodeResult(operation, { ...result, dataRevision, schedulingInputRevision }), catch: () => new AppError('INTERNAL_ERROR', 'The operation produced an invalid response.') });
     const response = JSON.stringify({ ok: true, data });
     if (!write) return response;
     const committed = yield* database.commit({ before, after: state, key, fingerprint, response, createdAt: now.toISOString() }).pipe(Effect.match({ onSuccess: () => null, onFailure: (error) => error }));
