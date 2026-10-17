@@ -1,0 +1,991 @@
+{
+  "sourceCheckpoint": "8475233",
+  "metric": "Inspector sampled non-idle active time, ms; 100us sampling, includes diagnostic/native overhead; not Cloudflare CPU accounting",
+  "productionChanged": false,
+  "experiments": [
+    {
+      "experiment": "isolated-three-queries",
+      "interpretation": "Clean isolated reader; source before final exchange extraction. Relative local evidence only.",
+      "freshRuntimes": 16,
+      "samples": [
+        {
+          "run": 0,
+          "call": 0,
+          "profileActiveMs": 6.339
+        },
+        {
+          "run": 0,
+          "call": 1,
+          "profileActiveMs": 2.234
+        },
+        {
+          "run": 0,
+          "call": 2,
+          "profileActiveMs": 3.699
+        },
+        {
+          "run": 1,
+          "call": 0,
+          "profileActiveMs": 5.881
+        },
+        {
+          "run": 1,
+          "call": 1,
+          "profileActiveMs": 4.853
+        },
+        {
+          "run": 1,
+          "call": 2,
+          "profileActiveMs": 5.033
+        },
+        {
+          "run": 2,
+          "call": 0,
+          "profileActiveMs": 7.471
+        },
+        {
+          "run": 2,
+          "call": 1,
+          "profileActiveMs": 2.66
+        },
+        {
+          "run": 2,
+          "call": 2,
+          "profileActiveMs": 5.49
+        },
+        {
+          "run": 3,
+          "call": 0,
+          "profileActiveMs": 4.099
+        },
+        {
+          "run": 3,
+          "call": 1,
+          "profileActiveMs": 3.863
+        },
+        {
+          "run": 3,
+          "call": 2,
+          "profileActiveMs": 2.231
+        },
+        {
+          "run": 4,
+          "call": 0,
+          "profileActiveMs": 6.535
+        },
+        {
+          "run": 4,
+          "call": 1,
+          "profileActiveMs": 3.508
+        },
+        {
+          "run": 4,
+          "call": 2,
+          "profileActiveMs": 4.5
+        },
+        {
+          "run": 5,
+          "call": 0,
+          "profileActiveMs": 5.838
+        },
+        {
+          "run": 5,
+          "call": 1,
+          "profileActiveMs": 1.917
+        },
+        {
+          "run": 5,
+          "call": 2,
+          "profileActiveMs": 3.279
+        },
+        {
+          "run": 6,
+          "call": 0,
+          "profileActiveMs": 7.092
+        },
+        {
+          "run": 6,
+          "call": 1,
+          "profileActiveMs": 4.008
+        },
+        {
+          "run": 6,
+          "call": 2,
+          "profileActiveMs": 3.847
+        },
+        {
+          "run": 7,
+          "call": 0,
+          "profileActiveMs": 7.546
+        },
+        {
+          "run": 7,
+          "call": 1,
+          "profileActiveMs": 3.709
+        },
+        {
+          "run": 7,
+          "call": 2,
+          "profileActiveMs": 3.692
+        },
+        {
+          "run": 8,
+          "call": 0,
+          "profileActiveMs": 6.175
+        },
+        {
+          "run": 8,
+          "call": 1,
+          "profileActiveMs": 3.489
+        },
+        {
+          "run": 8,
+          "call": 2,
+          "profileActiveMs": 2.068
+        },
+        {
+          "run": 9,
+          "call": 0,
+          "profileActiveMs": 4.968
+        },
+        {
+          "run": 9,
+          "call": 1,
+          "profileActiveMs": 3.195
+        },
+        {
+          "run": 9,
+          "call": 2,
+          "profileActiveMs": 3.375
+        },
+        {
+          "run": 10,
+          "call": 0,
+          "profileActiveMs": 5.872
+        },
+        {
+          "run": 10,
+          "call": 1,
+          "profileActiveMs": 3.413
+        },
+        {
+          "run": 10,
+          "call": 2,
+          "profileActiveMs": 3.853
+        },
+        {
+          "run": 11,
+          "call": 0,
+          "profileActiveMs": 5.909
+        },
+        {
+          "run": 11,
+          "call": 1,
+          "profileActiveMs": 3.175
+        },
+        {
+          "run": 11,
+          "call": 2,
+          "profileActiveMs": 3.722
+        },
+        {
+          "run": 12,
+          "call": 0,
+          "profileActiveMs": 6.858
+        },
+        {
+          "run": 12,
+          "call": 1,
+          "profileActiveMs": 3.363
+        },
+        {
+          "run": 12,
+          "call": 2,
+          "profileActiveMs": 2.214
+        },
+        {
+          "run": 13,
+          "call": 0,
+          "profileActiveMs": 4.463
+        },
+        {
+          "run": 13,
+          "call": 1,
+          "profileActiveMs": 2.908
+        },
+        {
+          "run": 13,
+          "call": 2,
+          "profileActiveMs": 3.52
+        },
+        {
+          "run": 14,
+          "call": 0,
+          "profileActiveMs": 5.945
+        },
+        {
+          "run": 14,
+          "call": 1,
+          "profileActiveMs": 3.844
+        },
+        {
+          "run": 14,
+          "call": 2,
+          "profileActiveMs": 3.518
+        },
+        {
+          "run": 15,
+          "call": 0,
+          "profileActiveMs": 6.391
+        },
+        {
+          "run": 15,
+          "call": 1,
+          "profileActiveMs": 3.066
+        },
+        {
+          "run": 15,
+          "call": 2,
+          "profileActiveMs": 3.172
+        }
+      ]
+    },
+    {
+      "experiment": "exchange-baseline",
+      "interpretation": "Existing deployed-source session.me in local runtime; no read ticket.",
+      "freshRuntimes": 6,
+      "samples": [
+        {
+          "run": 0,
+          "call": 0,
+          "profileActiveMs": 17.857
+        },
+        {
+          "run": 0,
+          "call": 1,
+          "profileActiveMs": 3.829
+        },
+        {
+          "run": 0,
+          "call": 2,
+          "profileActiveMs": 4.302
+        },
+        {
+          "run": 1,
+          "call": 0,
+          "profileActiveMs": 13.114
+        },
+        {
+          "run": 1,
+          "call": 1,
+          "profileActiveMs": 4.199
+        },
+        {
+          "run": 1,
+          "call": 2,
+          "profileActiveMs": 3.548
+        },
+        {
+          "run": 2,
+          "call": 0,
+          "profileActiveMs": 12.627
+        },
+        {
+          "run": 2,
+          "call": 1,
+          "profileActiveMs": 3.069
+        },
+        {
+          "run": 2,
+          "call": 2,
+          "profileActiveMs": 3.423
+        },
+        {
+          "run": 3,
+          "call": 0,
+          "profileActiveMs": 14.307
+        },
+        {
+          "run": 3,
+          "call": 1,
+          "profileActiveMs": 3.678
+        },
+        {
+          "run": 3,
+          "call": 2,
+          "profileActiveMs": 3.229
+        },
+        {
+          "run": 4,
+          "call": 0,
+          "profileActiveMs": 12.766
+        },
+        {
+          "run": 4,
+          "call": 1,
+          "profileActiveMs": 3.561
+        },
+        {
+          "run": 4,
+          "call": 2,
+          "profileActiveMs": 3.141
+        },
+        {
+          "run": 5,
+          "call": 0,
+          "profileActiveMs": 16.026
+        },
+        {
+          "run": 5,
+          "call": 1,
+          "profileActiveMs": 3.888
+        },
+        {
+          "run": 5,
+          "call": 2,
+          "profileActiveMs": 4.387
+        }
+      ]
+    },
+    {
+      "experiment": "isolated-exchange",
+      "interpretation": "Private lazy exchange; retained source design, local first-use gate unresolved.",
+      "freshRuntimes": 8,
+      "samples": [
+        {
+          "run": 0,
+          "call": 0,
+          "profileActiveMs": 27.318
+        },
+        {
+          "run": 0,
+          "call": 1,
+          "profileActiveMs": 3.138
+        },
+        {
+          "run": 0,
+          "call": 2,
+          "profileActiveMs": 7.154
+        },
+        {
+          "run": 1,
+          "call": 0,
+          "profileActiveMs": 14.431
+        },
+        {
+          "run": 1,
+          "call": 1,
+          "profileActiveMs": 3.688
+        },
+        {
+          "run": 1,
+          "call": 2,
+          "profileActiveMs": 4.536
+        },
+        {
+          "run": 2,
+          "call": 0,
+          "profileActiveMs": 11.457
+        },
+        {
+          "run": 2,
+          "call": 1,
+          "profileActiveMs": 2.721
+        },
+        {
+          "run": 2,
+          "call": 2,
+          "profileActiveMs": 3.352
+        },
+        {
+          "run": 3,
+          "call": 0,
+          "profileActiveMs": 11.673
+        },
+        {
+          "run": 3,
+          "call": 1,
+          "profileActiveMs": 2.876
+        },
+        {
+          "run": 3,
+          "call": 2,
+          "profileActiveMs": 1.579
+        },
+        {
+          "run": 4,
+          "call": 0,
+          "profileActiveMs": 9.192
+        },
+        {
+          "run": 4,
+          "call": 1,
+          "profileActiveMs": 3.363
+        },
+        {
+          "run": 4,
+          "call": 2,
+          "profileActiveMs": 3.376
+        },
+        {
+          "run": 5,
+          "call": 0,
+          "profileActiveMs": 11.761
+        },
+        {
+          "run": 5,
+          "call": 1,
+          "profileActiveMs": 3.746
+        },
+        {
+          "run": 5,
+          "call": 2,
+          "profileActiveMs": 3.229
+        },
+        {
+          "run": 6,
+          "call": 0,
+          "profileActiveMs": 8.01
+        },
+        {
+          "run": 6,
+          "call": 1,
+          "profileActiveMs": 1.59
+        },
+        {
+          "run": 6,
+          "call": 2,
+          "profileActiveMs": 2.869
+        },
+        {
+          "run": 7,
+          "call": 0,
+          "profileActiveMs": 12.755
+        },
+        {
+          "run": 7,
+          "call": 1,
+          "profileActiveMs": 2.282
+        },
+        {
+          "run": 7,
+          "call": 2,
+          "profileActiveMs": 4.011
+        }
+      ]
+    },
+    {
+      "experiment": "isolated-static-exchange",
+      "interpretation": "Static exchange import; rejected experiment.",
+      "freshRuntimes": 8,
+      "samples": [
+        {
+          "run": 0,
+          "call": 0,
+          "profileActiveMs": 15.475
+        },
+        {
+          "run": 0,
+          "call": 1,
+          "profileActiveMs": 3.382
+        },
+        {
+          "run": 0,
+          "call": 2,
+          "profileActiveMs": 4.483
+        },
+        {
+          "run": 1,
+          "call": 0,
+          "profileActiveMs": 11.57
+        },
+        {
+          "run": 1,
+          "call": 1,
+          "profileActiveMs": 3.255
+        },
+        {
+          "run": 1,
+          "call": 2,
+          "profileActiveMs": 3.25
+        },
+        {
+          "run": 2,
+          "call": 0,
+          "profileActiveMs": 11.776
+        },
+        {
+          "run": 2,
+          "call": 1,
+          "profileActiveMs": 3.226
+        },
+        {
+          "run": 2,
+          "call": 2,
+          "profileActiveMs": 3.56
+        },
+        {
+          "run": 3,
+          "call": 0,
+          "profileActiveMs": 12.133
+        },
+        {
+          "run": 3,
+          "call": 1,
+          "profileActiveMs": 3.076
+        },
+        {
+          "run": 3,
+          "call": 2,
+          "profileActiveMs": 3.751
+        },
+        {
+          "run": 4,
+          "call": 0,
+          "profileActiveMs": 11.287
+        },
+        {
+          "run": 4,
+          "call": 1,
+          "profileActiveMs": 3.301
+        },
+        {
+          "run": 4,
+          "call": 2,
+          "profileActiveMs": 5.13
+        },
+        {
+          "run": 5,
+          "call": 0,
+          "profileActiveMs": 10.423
+        },
+        {
+          "run": 5,
+          "call": 1,
+          "profileActiveMs": 3.581
+        },
+        {
+          "run": 5,
+          "call": 2,
+          "profileActiveMs": 3.904
+        },
+        {
+          "run": 6,
+          "call": 0,
+          "profileActiveMs": 12.472
+        },
+        {
+          "run": 6,
+          "call": 1,
+          "profileActiveMs": 3.891
+        },
+        {
+          "run": 6,
+          "call": 2,
+          "profileActiveMs": 3.568
+        },
+        {
+          "run": 7,
+          "call": 0,
+          "profileActiveMs": 10.718
+        },
+        {
+          "run": 7,
+          "call": 1,
+          "profileActiveMs": 1.585
+        },
+        {
+          "run": 7,
+          "call": 2,
+          "profileActiveMs": 3.231
+        }
+      ]
+    },
+    {
+      "experiment": "isolated-stream-exchange",
+      "interpretation": "Bounded TransformStream reader; rejected experiment.",
+      "freshRuntimes": 8,
+      "samples": [
+        {
+          "run": 0,
+          "call": 0,
+          "profileActiveMs": 16.662
+        },
+        {
+          "run": 0,
+          "call": 1,
+          "profileActiveMs": 3.403
+        },
+        {
+          "run": 0,
+          "call": 2,
+          "profileActiveMs": 3.956
+        },
+        {
+          "run": 1,
+          "call": 0,
+          "profileActiveMs": 11.094
+        },
+        {
+          "run": 1,
+          "call": 1,
+          "profileActiveMs": 1.752
+        },
+        {
+          "run": 1,
+          "call": 2,
+          "profileActiveMs": 3.042
+        },
+        {
+          "run": 2,
+          "call": 0,
+          "profileActiveMs": 13.975
+        },
+        {
+          "run": 2,
+          "call": 1,
+          "profileActiveMs": 4.495
+        },
+        {
+          "run": 2,
+          "call": 2,
+          "profileActiveMs": 3.578
+        },
+        {
+          "run": 3,
+          "call": 0,
+          "profileActiveMs": 9.402
+        },
+        {
+          "run": 3,
+          "call": 1,
+          "profileActiveMs": 1.752
+        },
+        {
+          "run": 3,
+          "call": 2,
+          "profileActiveMs": 4.474
+        },
+        {
+          "run": 4,
+          "call": 0,
+          "profileActiveMs": 10.671
+        },
+        {
+          "run": 4,
+          "call": 1,
+          "profileActiveMs": 4.086
+        },
+        {
+          "run": 4,
+          "call": 2,
+          "profileActiveMs": 3.006
+        },
+        {
+          "run": 5,
+          "call": 0,
+          "profileActiveMs": 11.174
+        },
+        {
+          "run": 5,
+          "call": 1,
+          "profileActiveMs": 3.648
+        },
+        {
+          "run": 5,
+          "call": 2,
+          "profileActiveMs": 2.907
+        },
+        {
+          "run": 6,
+          "call": 0,
+          "profileActiveMs": 12.12
+        },
+        {
+          "run": 6,
+          "call": 1,
+          "profileActiveMs": 3.585
+        },
+        {
+          "run": 6,
+          "call": 2,
+          "profileActiveMs": 3.721
+        },
+        {
+          "run": 7,
+          "call": 0,
+          "profileActiveMs": 11.458
+        },
+        {
+          "run": 7,
+          "call": 1,
+          "profileActiveMs": 4.073
+        },
+        {
+          "run": 7,
+          "call": 2,
+          "profileActiveMs": 5.778
+        }
+      ]
+    },
+    {
+      "experiment": "proxy-read",
+      "interpretation": "Concurrent Inspector profiles; UNCALIBRATED: main/reader may overlap native program time. Do not sum for a request CPU claim.",
+      "freshRuntimes": 12,
+      "samples": [
+        {
+          "run": 0,
+          "call": 0,
+          "main": 10.698,
+          "reader": 10.812,
+          "profileActiveMs": 21.509999999999998
+        },
+        {
+          "run": 0,
+          "call": 1,
+          "main": 0,
+          "reader": 3.619,
+          "profileActiveMs": 3.619
+        },
+        {
+          "run": 0,
+          "call": 2,
+          "main": 0,
+          "reader": 2.655,
+          "profileActiveMs": 2.655
+        },
+        {
+          "run": 1,
+          "call": 0,
+          "main": 11.126,
+          "reader": 8.496,
+          "profileActiveMs": 19.622
+        },
+        {
+          "run": 1,
+          "call": 1,
+          "main": 3.538,
+          "reader": 1.735,
+          "profileActiveMs": 5.273
+        },
+        {
+          "run": 1,
+          "call": 2,
+          "main": 0,
+          "reader": 2.399,
+          "profileActiveMs": 2.399
+        },
+        {
+          "run": 2,
+          "call": 0,
+          "main": 16.269,
+          "reader": 10.346,
+          "profileActiveMs": 26.615
+        },
+        {
+          "run": 2,
+          "call": 1,
+          "main": 3.735,
+          "reader": 3.588,
+          "profileActiveMs": 7.323
+        },
+        {
+          "run": 2,
+          "call": 2,
+          "main": 3.842,
+          "reader": 4.48,
+          "profileActiveMs": 8.322000000000001
+        },
+        {
+          "run": 3,
+          "call": 0,
+          "main": 10.503,
+          "reader": 8.672,
+          "profileActiveMs": 19.175
+        },
+        {
+          "run": 3,
+          "call": 1,
+          "main": 6.327,
+          "reader": 8.249,
+          "profileActiveMs": 14.576
+        },
+        {
+          "run": 3,
+          "call": 2,
+          "main": 0,
+          "reader": 5.104,
+          "profileActiveMs": 5.104
+        },
+        {
+          "run": 4,
+          "call": 0,
+          "main": 11.204,
+          "reader": 5.23,
+          "profileActiveMs": 16.434
+        },
+        {
+          "run": 4,
+          "call": 1,
+          "main": 3.946,
+          "reader": 1.716,
+          "profileActiveMs": 5.662
+        },
+        {
+          "run": 4,
+          "call": 2,
+          "main": 3.325,
+          "reader": 3.49,
+          "profileActiveMs": 6.815
+        },
+        {
+          "run": 5,
+          "call": 0,
+          "main": 11.72,
+          "reader": 11.572,
+          "profileActiveMs": 23.292
+        },
+        {
+          "run": 5,
+          "call": 1,
+          "main": 4.322,
+          "reader": 2.041,
+          "profileActiveMs": 6.3629999999999995
+        },
+        {
+          "run": 5,
+          "call": 2,
+          "main": 0,
+          "reader": 2.853,
+          "profileActiveMs": 2.853
+        },
+        {
+          "run": 6,
+          "call": 0,
+          "main": 10.853,
+          "reader": 9.835,
+          "profileActiveMs": 20.688000000000002
+        },
+        {
+          "run": 6,
+          "call": 1,
+          "main": 4.124,
+          "reader": 3.968,
+          "profileActiveMs": 8.091999999999999
+        },
+        {
+          "run": 6,
+          "call": 2,
+          "main": 6.582,
+          "reader": 4.653,
+          "profileActiveMs": 11.235
+        },
+        {
+          "run": 7,
+          "call": 0,
+          "main": 11.597,
+          "reader": 9.25,
+          "profileActiveMs": 20.847
+        },
+        {
+          "run": 7,
+          "call": 1,
+          "main": 3.214,
+          "reader": 3.388,
+          "profileActiveMs": 6.602
+        },
+        {
+          "run": 7,
+          "call": 2,
+          "main": 0,
+          "reader": 4.173,
+          "profileActiveMs": 4.173
+        },
+        {
+          "run": 8,
+          "call": 0,
+          "main": 9.16,
+          "reader": 8.455,
+          "profileActiveMs": 17.615000000000002
+        },
+        {
+          "run": 8,
+          "call": 1,
+          "main": 3.418,
+          "reader": 4.298,
+          "profileActiveMs": 7.716
+        },
+        {
+          "run": 8,
+          "call": 2,
+          "main": 3.388,
+          "reader": 3.307,
+          "profileActiveMs": 6.695
+        },
+        {
+          "run": 9,
+          "call": 0,
+          "main": 11.315,
+          "reader": 7.122,
+          "profileActiveMs": 18.436999999999998
+        },
+        {
+          "run": 9,
+          "call": 1,
+          "main": 4.455,
+          "reader": 4.834,
+          "profileActiveMs": 9.289
+        },
+        {
+          "run": 9,
+          "call": 2,
+          "main": 3.7,
+          "reader": 4.665,
+          "profileActiveMs": 8.365
+        },
+        {
+          "run": 10,
+          "call": 0,
+          "main": 10.771,
+          "reader": 9.71,
+          "profileActiveMs": 20.481
+        },
+        {
+          "run": 10,
+          "call": 1,
+          "main": 3.396,
+          "reader": 2.635,
+          "profileActiveMs": 6.031
+        },
+        {
+          "run": 10,
+          "call": 2,
+          "main": 3.577,
+          "reader": 4.458,
+          "profileActiveMs": 8.035
+        },
+        {
+          "run": 11,
+          "call": 0,
+          "main": 16.516,
+          "reader": 8.926,
+          "profileActiveMs": 25.442
+        },
+        {
+          "run": 11,
+          "call": 1,
+          "main": 4.01,
+          "reader": 2.148,
+          "profileActiveMs": 6.1579999999999995
+        },
+        {
+          "run": 11,
+          "call": 2,
+          "main": 0,
+          "reader": 4.016,
+          "profileActiveMs": 4.016
+        }
+      ]
+    }
+  ]
+}

@@ -45,13 +45,19 @@ describe('prepared schedule public read workflow', () => {
     expect(await view(app)).toEqual(success(await app.request('admin.schedule.read')));
     expect((await app.db.prepare('SELECT * FROM schedule_read_parts ORDER BY part').all()).results).toEqual(originalParts.results);
   });
-  it('atomically updates cancellation, backup promotion, shortfalls and publication without replay duplication', async () => {
+  it.each([
+    ['Schedule change 😀', 'Schedule change 😀'],
+    ['Lone high \ud800', 'Lone high �'],
+    ['Lone low \udc00', 'Lone low �'],
+    ['Existing ���', 'Existing ���'],
+  ])('atomically updates cancellation and publication with stored reason %j', async (reason, storedReason) => {
     const app = await application();
     const metadata = { expectedRevision: 0, idempotencyKey: 'cancel-once' };
-    const result = success(await app.request('volunteer.assignment.cancel', { assignmentId: 'assignment-1' }, 'volunteer', metadata));
+    const result = success(await app.request('volunteer.assignment.cancel', { assignmentId: 'assignment-1', reason }, 'volunteer', metadata));
     expect(result.promotedAssignment).not.toBeNull();
     const cancelled = await view(app); expect(cancelled).toEqual(success(await app.request('admin.schedule.read')));
-    expect(await app.request('volunteer.assignment.cancel', { assignmentId: 'assignment-1' }, 'volunteer', metadata)).toEqual({ ok: true, data: result });
+    expect(cancelled.assignments.find(row => row.id === 'assignment-1')?.cancellationReason).toBe(storedReason);
+    expect(await app.request('volunteer.assignment.cancel', { assignmentId: 'assignment-1', reason }, 'volunteer', metadata)).toEqual({ ok: true, data: result });
     expect(await view(app)).toEqual(cancelled);
     success(await app.request('admin.schedule.rerun'));
     const published = await view(app); expect(published).toEqual(success(await app.request('admin.schedule.read')));

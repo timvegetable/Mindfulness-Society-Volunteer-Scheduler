@@ -112,7 +112,10 @@ export function encodeRow(table: Table, row: object): SqlValue[] {
     if (table.json?.includes(column)) return JSON.stringify(value ?? []);
     if (table.booleans?.includes(column)) return value ? 1 : 0;
     if (value == null) return null;
-    if (typeof value === 'string' || typeof value === 'number') return value;
+    // One UTF-8 storage boundary: native bindings otherwise replace lone UTF-16
+    // surrogates differently from the prepared JSON projection. Valid pairs stay intact.
+    if (typeof value === 'string') return value.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+    if (typeof value === 'number') return value;
     throw new Error(`Unexpected storage value in ${table.name}.${column}`);
   });
 }
