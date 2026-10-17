@@ -1,5 +1,6 @@
 import { Context, Effect } from 'effect';
 import { applicationTimeZone } from '../../shared/domain/models';
+import { instantMilliseconds } from '../../shared/domain/availability';
 import { AuthService, makeGoogleAuth } from '../services/AuthService';
 import { Database, makeDatabase } from '../services/Database';
 import { Clock } from '../services/Clock';
@@ -19,6 +20,10 @@ export interface Bindings {
   EMAIL_PROVIDER?: 'resend' | 'gmail';
   GMAIL_CLIENT_ID?: string; GMAIL_CLIENT_SECRET?: string; GMAIL_REFRESH_TOKEN?: string;
 }
+
+// Initialize pure timezone machinery during module startup, rather than charging
+// its first use to an authenticated request. This reads no clock or external data.
+instantMilliseconds('2000-01-01', '12:00', applicationTimeZone);
 
 // Authentication caches only public signing keys. Users/roles always come from D1.
 const verifiers = new Map<string, ReturnType<typeof makeGoogleAuth>>();

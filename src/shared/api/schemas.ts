@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { isISODate } from '../domain/dates';
 import { operations, type Operation } from './operations';
 import { applicationTimeZone } from '../domain/models';
 export type { Operation } from './operations';
@@ -12,9 +13,7 @@ const count = integer.check(Schema.isBetween({ minimum: 0, maximum: 2 }));
 const weekday = Schema.Literals([1, 2, 3, 4, 5, 6, 7]);
 const workday = Schema.Literals([1, 2, 3, 4, 5]);
 const time = Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/));
-const date = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/), Schema.makeFilter((value: string) => {
-  try { return new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value; } catch { return false; }
-}));
+const date = Schema.String.check(Schema.makeFilter(isISODate));
 const zone = text.check(Schema.makeFilter((value: string) => value === applicationTimeZone));
 const maybeText = Schema.optionalKey(Schema.NullOr(Schema.String));
 const timestamps = { createdAt: maybeText, updatedAt: maybeText };

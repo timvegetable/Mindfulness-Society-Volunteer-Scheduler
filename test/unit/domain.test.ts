@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeIntervals, normalizeWeeklyIntervals, subtractIntervals, timeMinutes, coversInterval } from '../../src/shared/domain/intervals';
-import { availableForSession, eligibleVolunteer, overlayExceptions, sessionsOverlap, instantMilliseconds } from '../../src/shared/domain/availability';
+import { availableForSession, eligibleVolunteer, overlayExceptions, sessionsOverlap, instantMilliseconds, futureStartCheck } from '../../src/shared/domain/availability';
 import { currentAssignments, currentRun, generateSchedule, schedulableSessions, selectBackup } from '../../src/shared/domain/scheduler';
 import { candidateCoverage, candidateSession, confirmedDateCoverage, nextOccurrence } from '../../src/shared/domain/candidates';
 import { computeInsights } from '../../src/shared/domain/insights';
@@ -193,6 +193,17 @@ describe('current insights', () => {
 });
 
 describe('New York daylight-saving conversion across repeated calculations', () => {
+  it('keeps the dashboard date shortcut equivalent across DST, UTC midnight and distant dates', () => {
+    for (const at of ['2026-03-08T07:15:00Z', '2026-03-08T07:45:00Z', '2026-11-01T05:15:00Z', '2026-11-01T06:15:00Z', '2026-10-17T00:01:00Z', '2026-10-17T23:59:00Z']) {
+      const now = Date.parse(at), later = futureStartCheck(now);
+      for (const date of ['0000-02-29', '2026-01-01', '2026-03-08', '2026-10-16', '2026-10-17', '2026-10-18', '2026-11-01', '2026-12-31']) {
+        for (const time of ['00:00', '01:30', '02:30', '12:00', '23:59']) expect(later(date, time, zone)).toBe(instantMilliseconds(date, time, zone) > now);
+      }
+      expect(() => later('2026-02-30', '12:00', zone)).toThrow();
+      expect(() => later('2026-12-31', '25:00', zone)).toThrow();
+      expect(later('2026-12-31', '12:00', 'Europe/London')).toBe(instantMilliseconds('2026-12-31', '12:00', 'Europe/London') > now);
+    }
+  });
   it('keeps spring gaps and autumn repeated hours consistent in future-session selection', () => {
     expect(instantMilliseconds('2026-03-08', '02:30', zone)).toBe(Date.parse('2026-03-08T07:30:00Z'));
     const autumn = { ...session('fall-session', 1, '01:30', '02:30'), date: '2026-11-01' };

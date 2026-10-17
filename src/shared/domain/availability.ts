@@ -1,4 +1,6 @@
 import { Temporal } from '@js-temporal/polyfill';
+import { isISODate } from './dates';
+import { applicationTimeZone } from './models';
 import { coversNormalizedInterval, validateInterval, normalizeIntervals, subtractIntervals } from './intervals';
 import type { AvailabilityException, Interval, Session, Snapshot, Volunteer, Weekday } from './models';
 
@@ -32,6 +34,21 @@ export function instantFor(date: string, time: string, timeZone: string): Tempor
 }
 export function instantMilliseconds(date: string, time: string, timeZone: string): number {
   return localInstant(date, time, timeZone).milliseconds;
+}
+
+/** New York is always less than a day from UTC. Only nearby dates need an
+ * exact conversion; keep Temporal's gap/repeated-hour semantics at that boundary.
+ */
+export function futureStartCheck(now: number): (date: string, time: string, timeZone: string) => boolean {
+  const previousDay = new Date(now - 86400000).toISOString().slice(0, 10);
+  const nextDay = new Date(now + 86400000).toISOString().slice(0, 10);
+  return (date, time, timeZone) => {
+    if (timeZone === applicationTimeZone && isISODate(date) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      if (date < previousDay) return false;
+      if (date > nextDay) return true;
+    }
+    return instantMilliseconds(date, time, timeZone) > now;
+  };
 }
 
 export function overlayExceptions(recurring: readonly Interval[], exceptions: readonly Pick<AvailabilityException, 'kind' | 'start' | 'end'>[]): Interval[] {
