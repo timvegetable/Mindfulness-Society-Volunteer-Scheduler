@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
 import { AppError } from '../../shared/api/errors';
-import { makeGoogleVerifier, type VerifiedIdentity } from './GoogleVerifier';
-export type { VerifiedIdentity } from './GoogleVerifier';
+import { makeGoogleVerifier, type VerifiedIdentity as GoogleIdentity } from './GoogleVerifier';
+export interface VerifiedIdentity extends GoogleIdentity { readonly accountId?: string }
 export class AuthService extends Context.Service<AuthService, {
   readonly verify: (credential: string) => Effect.Effect<VerifiedIdentity, AppError>;
 }>()('AuthService') {}

@@ -10,6 +10,7 @@ const object = <F extends Schema.Struct.Fields>(fields: F) => strict(Schema.Stru
 const text = Schema.String.check(Schema.isMinLength(1));
 const integer = Schema.Number.check(Schema.isInt());
 const revision = integer.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }));
+const readSession = object({ credential: text, expiresAt: revision });
 const count = integer.check(Schema.isBetween({ minimum: 0, maximum: 2 }));
 const weekday = Schema.Literals([1, 2, 3, 4, 5, 6, 7]);
 const workday = Schema.Literals([1, 2, 3, 4, 5]);
@@ -79,7 +80,7 @@ const syncResult = object({ ...revisions, ...jobResult, status: SyncStatusSchema
   imports: Schema.Array(ImportRunSchema), volunteers: Schema.Array(VolunteerSchema), mappings: Schema.Array(ImportMappingSchema) });
 export const resultSchemas = {
   'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, ...jobResult, status: SyncStatusSchema }),
-  'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema), scheduleRead: Schema.optionalKey(object({ credential: text, expiresAt: revision })) }),
+  'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema), scheduleRead: Schema.optionalKey(readSession), readSession: Schema.optionalKey(readSession) }),
   'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
   'volunteer.availability.recurring.update': object({ ...revisions, intervals: Schema.Array(RecurringIntervalSchema) }),
   'volunteer.availability.exception.create': object({ ...revisions, exception: AvailabilityExceptionSchema }),

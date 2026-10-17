@@ -1,0 +1,56 @@
+{
+  "sourceCommit": "2ecbe19",
+  "metric": "Cloudflare live-tail cpuTime, milliseconds per main Worker invocation",
+  "samples": [
+    {
+      "operation": "admin.sync.read",
+      "cpuMs": 16,
+      "status": 200,
+      "outcome": "ok",
+      "timestamp": 1792272130318,
+      "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+    },
+    {
+      "operation": "admin.insights.read",
+      "cpuMs": 7,
+      "status": 200,
+      "outcome": "ok",
+      "timestamp": 1792272159053,
+      "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+    },
+    {
+      "operation": "center.candidate.read",
+      "cpuMs": 27,
+      "status": 200,
+      "outcome": "ok",
+      "timestamp": 1792272197189,
+      "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+    },
+    {
+      "operation": "center.candidate.read",
+      "cpuMs": 16,
+      "status": 200,
+      "outcome": "ok",
+      "timestamp": 1792272275786,
+      "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+    },
+    {
+      "operation": "center.candidate.read",
+      "cpuMs": 17,
+      "status": 200,
+      "outcome": "ok",
+      "timestamp": 1792272365987,
+      "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+    },
+    {
+      "operation": "admin.sync.read",
+      "cpuMs": 8,
+      "status": 200,
+      "outcome": "ok",
+      "timestamp": 1792272366284,
+      "version": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6"
+    }
+  ],
+  "privacy": "Only operation, CPU, timestamp, outcome, status and deployed version retained.",
+  "limitation": "First observed operations and repeats on current deployment; not a controlled fresh-isolate matrix."
+}

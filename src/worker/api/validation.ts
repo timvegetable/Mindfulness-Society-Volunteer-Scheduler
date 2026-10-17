@@ -1,5 +1,5 @@
 import { Schema, SchemaAST } from 'effect';
-import { RequestEnvelopeSchema, payloadSchemas, resultSchemas, type RequestEnvelope, type Operation, type ResultOf, type PayloadOf } from '../../shared/api/schemas';
+import { RequestEnvelopeSchema, UserSchema, payloadSchemas, resultSchemas, type RequestEnvelope, type Operation, type ResultOf, type PayloadOf } from '../../shared/api/schemas';
 
 type Guard = (value: unknown) => boolean;
 
@@ -74,6 +74,8 @@ function decoder(schema: Schema.ConstraintDecoder<unknown>): (value: unknown) =>
 const resultDecoders = Object.fromEntries(Object.entries(resultSchemas).map(([operation, schema]) => [operation, decoder(schema)])) as Record<Operation, (value: unknown) => unknown>;
 const payloadDecoders = Object.fromEntries(Object.entries(payloadSchemas).map(([operation, schema]) => [operation, decoder(schema)])) as Record<Operation, (value: unknown) => unknown>;
 const requestDecoder = decoder(RequestEnvelopeSchema);
+const userDecoder = decoder(UserSchema);
+export const decodeUser = (value: unknown): typeof UserSchema.Type => userDecoder(value) as typeof UserSchema.Type;
 
 export function decodeResult<O extends Operation>(operation: O, value: unknown): ResultOf<O> {
   return resultDecoders[operation](value) as ResultOf<O>;

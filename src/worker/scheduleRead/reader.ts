@@ -29,7 +29,7 @@ export async function readSchedule(request: Request, env: ScheduleReadBindings &
       || (Object.hasOwn(body, 'expectedRevision') && (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0))
       || (Object.hasOwn(body, 'idempotencyKey') && (typeof body.idempotencyKey !== 'string' || !body.idempotencyKey))) throw new AppError('INVALID_REQUEST', 'Invalid schedule request.');
     console.info('Scheduling API operation:', 'admin.schedule.read');
-    const identity = await readTicketsFor(env)!.verify(body.credential, Date.now());
+    const identity = await readTicketsFor(env, body.credential.startsWith('r2.') ? 'session' : 'schedule')!.verify(body.credential, Date.now());
     const [users, manifests, parts] = await env.DB.batch<Record<string, unknown>>([
       env.DB.prepare(`SELECT ${accountColumns} FROM users WHERE id=? AND lower(trim(email))=?`)
         .bind(identity.accountId, identity.email),

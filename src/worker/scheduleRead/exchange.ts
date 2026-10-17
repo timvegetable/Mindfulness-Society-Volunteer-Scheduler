@@ -27,7 +27,8 @@ export async function exchangeSession(request: Request, env: ScheduleReadBinding
       throw new AppError('INVALID_REQUEST', 'Invalid sign-in request.');
     }
     console.info('Scheduling API operation:', 'session.me');
-    const tickets = readTicketsFor(env);
+    const useSession = request.headers.get('X-Read-Session-Protocol') === '2';
+    const tickets = readTicketsFor(env, useSession ? 'session' : 'schedule');
     if (!tickets) throw new AppError('NOT_FOUND', 'This endpoint is unavailable.');
     if (cached?.audience !== env.OAUTH_CLIENT_ID) cached = { audience: env.OAUTH_CLIENT_ID,
       verify: makeGoogleVerifier({ audience: env.OAUTH_CLIENT_ID, fetch, now: () => Date.now() }) };
@@ -48,7 +49,8 @@ export async function exchangeSession(request: Request, env: ScheduleReadBinding
     }).map(row => ({
       id: row.id, name: row.name, active: row.active === 1, createdAt: row.created_at, updatedAt: row.updated_at,
     })), dataRevision: storedRevision(meta.get('dataRevision') ?? 0), schedulingInputRevision: storedRevision(meta.get('schedulingInputRevision') ?? 0),
-    ...(canUseOperation(user, 'admin.schedule.read') ? { scheduleRead: await tickets.issue(user, identity.expiresAt, Date.now()) } : {}) };
+    ...(useSession ? { readSession: await tickets.issue(user, identity.expiresAt, Date.now()) }
+      : canUseOperation(user, 'admin.schedule.read') ? { scheduleRead: await tickets.issue(user, identity.expiresAt, Date.now()) } : {}) };
     return new Response(JSON.stringify({ ok: true, data }), { headers });
   } catch (error) {
     const failure = error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'Sign-in is temporarily unavailable. Please try again.');

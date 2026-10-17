@@ -64,6 +64,8 @@ const fixtureFetch: typeof fetch = async (input, init) => {
   const request = JSON.parse(String(init?.body));
   const operation = String(request.operation);
   if (operation.endsWith('.read')) document.querySelector('#sync-read-count')!.textContent = String(++apiReadCount);
+  if (readSessions && ['admin.sync.read', 'admin.insights.read', 'center.candidate.read', 'admin.schedule.read', 'admin.schedule.preview'].includes(operation)
+    && request.credential !== `read-${sessionExchanges}`) throw new Error('Incorrect synthetic read-session credential');
   let data: unknown;
   switch (operation) {
     case 'admin.sync.read': data = { ...synchronization, ...revisions }; break;
@@ -83,7 +85,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
     }
     case 'session.me': {
       sessionExchanges++; document.documentElement.dataset.sessionExchanges = String(sessionExchanges);
-      data = readSessions ? { ...identity, scheduleRead: { credential: `read-${sessionExchanges}`, expiresAt: Date.now() + 900000 } } : identity; break;
+      data = readSessions ? { ...identity, readSession: { credential: `read-${sessionExchanges}`, expiresAt: Date.now() + 900000 } } : identity; break;
     }
     case 'admin.schedule.read': {
       if (readSessions && (input !== '/api/schedule' || request.credential !== `read-${sessionExchanges}`)) throw new Error('Incorrect synthetic read protocol');

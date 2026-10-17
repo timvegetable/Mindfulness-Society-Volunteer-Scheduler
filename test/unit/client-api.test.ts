@@ -116,3 +116,54 @@ it('acquires a read session when cutover happens while the new client is already
   expect(await api.call('admin.schedule.read', {})).toEqual(scheduleData);
   expect(paths).toEqual(['/api','/api','/api/schedule']);
 });
+
+const readSessionData = (credential: string, expiresAt = Date.now() + 600000) => {
+  const { scheduleRead: _legacy, ...session } = sessionData(credential, expiresAt);
+  return { ...session, readSession: { credential, expiresAt } };
+};
+const proposalsData = { dataRevision: 1, schedulingInputRevision: 1, centers: [], candidates: [] };
+describe('general read sessions', () => {
+  it('uses the same bounded read session across schedule and other reads while writes keep Google credentials', async () => {
+    const calls: { path: string; credential: string }[] = [];
+    const api = new ApiClient(async (input, init) => {
+      const body = JSON.parse(String(init?.body)); calls.push({ path: String(input), credential: body.credential });
+      if (body.operation === 'session.me') return reply(readSessionData('r2.read-session'));
+      if (body.operation === 'admin.schedule.read') return reply(scheduleData);
+      if (body.operation === 'center.candidate.read') return reply(proposalsData);
+      return success();
+    });
+    api.signIn('google'); await api.call('session.me', {});
+    await api.call('center.candidate.read', {}); await api.call('admin.schedule.read', {});
+    await api.call('volunteer.availability.recurring.update', { intervals: [] }, 1);
+    expect(calls).toEqual([{ path: '/api', credential: 'google' }, { path: '/api', credential: 'r2.read-session' },
+      { path: '/api/schedule', credential: 'r2.read-session' }, { path: '/api', credential: 'google' }]);
+  });
+  it('shares expiry renewal across mixed explicit reads and never retries forbidden reads', async () => {
+    let exchanges = 0, reads = 0;
+    const api = new ApiClient(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.operation === 'session.me') return reply(readSessionData('r2.'+(++exchanges), exchanges === 1 ? 0 : Date.now()+600000));
+      reads++; expect(body.credential).toBe('r2.2');
+      if (reads === 3) return new Response(JSON.stringify({ ok: false, error: { code: 'FORBIDDEN', message: 'Revoked' } }), { status: 403 });
+      return reply(body.operation === 'admin.schedule.read' ? scheduleData : proposalsData);
+    });
+    api.signIn('google'); await api.call('session.me', {});
+    await Promise.all([api.call('center.candidate.read', {}), api.call('admin.schedule.read', {})]);
+    await expect(api.call('center.candidate.read', {})).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(exchanges).toBe(2); expect(reads).toBe(3);
+  });
+  it('renews once after invalidation and recovers a live protocol cutover without a Google read fallback', async () => {
+    let exchanges = 0, reads = 0;
+    const api = new ApiClient(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.operation === 'session.me') return reply(readSessionData('r2.'+(++exchanges)));
+      reads++;
+      if (body.credential === 'google') return new Response(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST',
+        message: 'Reload', details: { readSessionProtocol: 2 } } }), { status: 400 });
+      if (body.credential === 'r2.1' && reads > 2) return new Response(JSON.stringify({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Expired' } }), { status: 401 });
+      return reply(proposalsData);
+    });
+    api.signIn('google'); await api.call('center.candidate.read', {}); await api.call('center.candidate.read', {});
+    expect(exchanges).toBe(2); expect(reads).toBe(4);
+  });
+});

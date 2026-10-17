@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { makeReadSessionAuth } from '../../src/worker/services/ReadSessionAuth';
 import { makeGoogleAuth } from '../../src/worker/services/AuthService';
 const now = Date.parse('2026-10-04T12:00:00Z');
 let pair: Awaited<ReturnType<typeof generateKeyPair>>;
@@ -51,5 +52,28 @@ describe('Google authentication', () => {
     const credential = await token();
     await expect(Effect.runPromise(auth.verify(credential))).rejects.toThrow();
     expect(await Effect.runPromise(auth.verify(credential))).toEqual({ email: 'alice@example.test', expiresAt: now / 1000 + 600 });
+  });
+});
+
+
+describe('private read-session authentication boundary', () => {
+  it('requires a verified account ID and performs verification for each request', async () => {
+    let calls = 0;
+    const identity = { accountId: 'account', email: 'admin@example.test', expiresAt: Math.floor(Date.now()/1000)+60 };
+    const auth = makeReadSessionAuth({ fetch: async () => { calls++; return Response.json({ ok: true, kind: 'api.read', identity }); } });
+    expect(await Effect.runPromise(auth.verify('r2.ticket'))).toEqual(identity);
+    expect(await Effect.runPromise(auth.verify('r2.ticket'))).toEqual(identity);
+    expect(calls).toBe(2);
+  });
+  it('rejects unavailable, malformed and expired verification results without trusting partial identity', async () => {
+    for (const identity of [{ email: 'admin@example.test', expiresAt: Math.floor(Date.now()/1000)+60 },
+      { accountId: '', email: 'admin@example.test', expiresAt: Math.floor(Date.now()/1000)+60 },
+      { accountId: 'account', email: ' ADMIN@example.test ', expiresAt: Math.floor(Date.now()/1000)+60 },
+      { accountId: 'account', email: 'admin@example.test', expiresAt: 0 }]) {
+      const auth = makeReadSessionAuth({ fetch: async () => Response.json({ ok: true, kind: 'api.read', identity }) });
+      await expect(Effect.runPromise(auth.verify('r2.ticket'))).rejects.toThrow('invalid response');
+    }
+    await expect(Effect.runPromise(makeReadSessionAuth({ fetch: async () => new Response('', { status: 401 }) }).verify('r2.bad'))).rejects.toThrow('expired or is invalid');
+    await expect(Effect.runPromise(makeReadSessionAuth({ fetch: async () => { throw Error('network'); } }).verify('r2.ticket'))).rejects.toThrow('temporarily unavailable');
   });
 });

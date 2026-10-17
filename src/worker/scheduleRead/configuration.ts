@@ -1,4 +1,4 @@
-import { makeReadTickets, type ReadTickets } from './tickets';
+import { makeReadTickets, makeReadSessionTickets, type ReadTickets } from './tickets';
 export interface ScheduleReadBindings {
   SCHEDULE_READ_MODE?: 'disabled' | 'prepare' | 'enabled';
   SCHEDULE_READ_KEY?: string;
@@ -13,14 +13,15 @@ export function scheduleReadMode(env: ScheduleReadBindings): 'disabled' | 'prepa
   if (!['disabled', 'prepare', 'enabled'].includes(mode)) throw new Error('Invalid schedule read mode');
   return mode;
 }
-let cached: { configuration: string; tickets: ReadTickets } | undefined;
-export function readTicketsFor(env: ScheduleReadBindings): ReadTickets | undefined {
+type ReadProtocol = 'schedule' | 'session';
+let cached: { configuration: string; tickets: Partial<Record<ReadProtocol, ReadTickets>> } | undefined;
+export function readTicketsFor(env: ScheduleReadBindings, protocol: ReadProtocol = 'schedule'): ReadTickets | undefined {
   if (scheduleReadMode(env) !== 'enabled') return undefined;
   if (!env.SCHEDULE_READ_AUDIENCE || !env.OAUTH_CLIENT_ID) throw new Error('Missing schedule audience');
   const options = { secret: env.SCHEDULE_READ_KEY ?? '', audience: `${env.SCHEDULE_READ_AUDIENCE}:${env.OAUTH_CLIENT_ID}`,
     ...(env.SCHEDULE_READ_PREVIOUS_KEY ? { previousSecret: env.SCHEDULE_READ_PREVIOUS_KEY,
       previousFrom: Number(env.SCHEDULE_READ_PREVIOUS_FROM), previousUntil: Number(env.SCHEDULE_READ_PREVIOUS_UNTIL) } : {}) };
   const configuration = JSON.stringify(options);
-  if (cached?.configuration !== configuration) cached = { configuration, tickets: makeReadTickets(options) };
-  return cached.tickets;
+  if (cached?.configuration !== configuration) cached = { configuration, tickets: {} };
+  return cached.tickets[protocol] ??= (protocol === 'session' ? makeReadSessionTickets(options) : makeReadTickets(options));
 }

@@ -1,3 +1,5 @@
+import { isMutation } from '../shared/api/operations';
+import { makeReadSessionAuth } from './services/ReadSessionAuth';
 import { scheduleReadMode } from './scheduleRead/configuration';
 import { Effect, Schema } from 'effect';
 import { decodeRequest, decodePayload, decodeResult } from './api/validation';
@@ -57,13 +59,24 @@ export default {
         catch { return failure('INVALID_REQUEST', 'Invalid sign-in request.', 400); }
         const target = new URL(request.url); target.pathname = '/internal/session';
         const exchanged = await env.SCHEDULE_READER.fetch(new Request(target, { method: 'POST',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) }));
+          headers: { 'Content-Type': 'application/json', 'X-Read-Session-Protocol': '2' }, body: JSON.stringify(envelope) }));
         const result = await exchanged.json() as { ok?: unknown; data?: unknown };
         if (result.ok === false) return Response.json(Schema.decodeUnknownSync(ErrorEnvelopeSchema)(result), { headers, status: exchanged.status });
         if (result.ok !== true) return failure('INTERNAL_ERROR', 'Sign-in is temporarily unavailable.', 500);
         return Response.json({ ok: true, data: decodeResult('session.me', result.data) }, { headers });
       }
-      const response = await Effect.runPromise(dispatchResponse(body, appConfig(env)).pipe(Effect.provide(liveServices(env))));
+      let authentication;
+      if (scheduleReadMode(env) === 'enabled') {
+        let envelope;
+        try { envelope = decodeRequest(body); }
+        catch { return failure('INVALID_REQUEST', 'Invalid request envelope or operation.', 400); }
+        if (!isMutation(envelope.operation) && envelope.operation !== 'session.me') {
+          if (!envelope.credential.startsWith('r2.')) return failure('INVALID_REQUEST', 'Reload this application to use a read session.', 400, { readSessionProtocol: 2 });
+          if (!env.SCHEDULE_READER) return failure('INTERNAL_ERROR', 'Read authentication is temporarily unavailable.', 500);
+          authentication = makeReadSessionAuth(env.SCHEDULE_READER);
+        } else if (envelope.credential.startsWith('r2.')) return failure('UNAUTHORIZED', 'Google sign-in is required for this operation.', 401);
+      }
+      const response = await Effect.runPromise(dispatchResponse(body, appConfig(env)).pipe(Effect.provide(liveServices(env, authentication))));
       return new Response(response, { headers });
     } catch {
       return failure('INTERNAL_ERROR', 'An unexpected error occurred.', 500);

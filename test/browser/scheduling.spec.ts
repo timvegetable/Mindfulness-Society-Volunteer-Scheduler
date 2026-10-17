@@ -161,7 +161,7 @@ test('a roster link changed during a refresh stays available for review', async 
   await expect(page.getByRole('alert')).toContainText('newer edits were kept');
 });
 
-test('schedule tickets renew only on explicit reads while the existing schedule stays visible', async ({ page }) => {
+test('read sessions renew only on explicit reads and navigation while the schedule stays visible', async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await page.clock.install();
   await page.goto('/__browser-check?read-session');
@@ -177,4 +177,14 @@ test('schedule tickets renew only on explicit reads while the existing schedule 
   await expect(page.locator('html')).toHaveAttribute('data-session-exchanges', '2');
   await expect(page.locator('html')).toHaveAttribute('data-schedule-reads', '3');
   await expect(page.getByRole('heading', { name: 'Session schedule', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Availability sync', exact: true })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-session-exchanges', '2');
+  await page.clock.fastForward(16 * 60 * 1000);
+  await expect(page.locator('html')).toHaveAttribute('data-session-exchanges', '2');
+  await page.getByRole('button', { name: 'Reload view', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-session-exchanges', '3');
+  await page.getByRole('button', { name: 'Schedule', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-schedule-reads', '4');
+  await expect(page.locator('html')).toHaveAttribute('data-session-exchanges', '3');
 });

@@ -48,12 +48,27 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     }
     const envelope = Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas['session.me'] });
     const session = Schema.decodeUnknownSync(envelope)((await call('session.me', admin)).body);
-    expect(session.data.scheduleRead?.expiresAt).toBeLessThanOrEqual(Date.now()+600000);
-    const ticket = session.data.scheduleRead!.credential;
+    expect(session.data).toHaveProperty('readSession');
+    expect(session.data.readSession?.expiresAt).toBeLessThanOrEqual(Date.now()+600000);
+    const ticket = session.data.readSession!.credential;
     const read = await call('admin.schedule.read', ticket, '/api/schedule');
     expect(read.response.status).toBe(200);
     expect(Schema.decodeUnknownSync(Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas['admin.schedule.read'] }))(read.body).data.run).toBeNull();
+    for (const operation of ['admin.sync.read', 'admin.insights.read', 'center.candidate.read'] as const) {
+      const result = await call(operation, ticket);
+      expect(result.body).toMatchObject({ ok: true });
+      Schema.decodeUnknownSync(Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas[operation] }))(result.body);
+    }
+    expect((await call('admin.sync.now', ticket)).response.status).toBe(401);
     expect(googleReads).toBe(1);
+    const privateWorker = await runtime.getWorker('private-reader');
+    const oldExchange = await privateWorker.fetch('https://local/internal/session', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'session.me', credential: admin, payload: {} }) });
+    const oldSession = Schema.decodeUnknownSync(envelope)(await oldExchange.json());
+    expect(oldSession.data.readSession).toBeUndefined();
+    expect(oldSession.data.scheduleRead?.credential).toMatch(/^r1\./);
+    expect((await call('admin.sync.read', oldSession.data.scheduleRead!.credential)).response.status).toBe(400);
+    expect((await call('admin.schedule.read', oldSession.data.scheduleRead!.credential, '/api/schedule')).response.status).toBe(200);
     expect((await call('admin.schedule.read', admin)).response.status).toBe(400);
     expect((await call('admin.schedule.read', admin, '/api/schedule')).response.status).toBe(401);
     expect((await call('admin.schedule.read', ticket, '/api/schedule', { extra: true })).response.status).toBe(400);
@@ -62,15 +77,31 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     expect(denied.body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
     const volunteer = Schema.decodeUnknownSync(envelope)((await call('session.me', await google('alex@example.test'))).body);
     expect(volunteer.data.scheduleRead).toBeUndefined();
+    expect(volunteer.data.readSession?.credential).toMatch(/^r2\./);
+    const volunteerTicket = volunteer.data.readSession!.credential;
+    expect((await call('volunteer.dashboard', volunteerTicket)).body).toMatchObject({ ok: true });
+    expect((await call('admin.sync.read', volunteerTicket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect((await call('volunteer.availability.recurring.update', volunteerTicket, '/api', { intervals: [] })).response.status).toBe(401);
     const contact = Schema.decodeUnknownSync(envelope)((await call('session.me', await google('contact@example.test'))).body);
     expect(contact.data.centers.map(center => center.id)).toEqual(['center-1']);
     expect(contact.data.scheduleRead).toBeUndefined();
+    const proposals = await call('center.candidate.read', contact.data.readSession!.credential);
+    expect(proposals.body).toMatchObject({ ok: true, data: { centers: [{ id: 'center-1' }] } });
+    await db.prepare("UPDATE users SET center_ids='\"center-1 center-2\"' WHERE id='user-contact'").run();
+    expect((await call('center.candidate.read', contact.data.readSession!.credential)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    await db.prepare("UPDATE users SET center_ids='[\"center-1\"]' WHERE id='user-contact'").run();
+    expect((await call('volunteer.dashboard', contact.data.readSession!.credential)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     expect((await call('session.me', await google('inactive@example.test'))).response.status).toBe(401);
     await db.prepare("UPDATE centers SET name='' WHERE id='center-1'").run();
     expect((await call('session.me', admin)).response.status).toBe(500);
     await db.prepare("UPDATE centers SET name='North Center' WHERE id='center-1'").run();
+    await db.prepare("UPDATE users SET roles='\"administrator\"' WHERE id='user-admin'").run();
+    expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
     await db.prepare("UPDATE users SET roles='[]' WHERE id='user-admin'").run();
     expect((await call('admin.schedule.read', ticket, '/api/schedule')).response.status).toBe(403);
+    expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    await db.prepare("UPDATE users SET roles='[\"administrator\"]',id='replacement-admin' WHERE id='user-admin'").run();
+    expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
     expect(googleReads).toBe(1);
   } finally { await runtime?.dispose(); await rm(work, { recursive: true, force: true }); }
 });

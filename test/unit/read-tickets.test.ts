@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { makeReadTickets } from '../../src/worker/scheduleRead/tickets';
+import { makeReadTickets, makeReadSessionTickets } from '../../src/worker/scheduleRead/tickets';
 
 const secret = '17'.repeat(32), now = Date.parse('2026-10-17T20:00:00Z');
 const options = { secret, audience: 'synthetic:client' };
@@ -44,4 +44,17 @@ describe('schedule read ticket boundary', () => {
     expect(() => makeReadTickets({ ...options, previousSecret: secret, previousFrom: now, previousUntil: now + 901000 })).toThrow();
     expect(() => makeReadTickets({ ...options, secret: 'short' })).toThrow();
   });
+});
+
+
+it('isolates general read sessions from legacy schedule tickets and binds expiry/environment', async () => {
+  const sessions = makeReadSessionTickets(options), schedules = makeReadTickets(options);
+  const session = await sessions.issue(user, now / 1000 + 60, now);
+  const schedule = await schedules.issue(user, now / 1000 + 600, now);
+  expect(session.credential).toMatch(/^r2\./);
+  expect(await sessions.verify(session.credential, now)).toMatchObject({ accountId: user.id, email: 'admin@example.test', expiresAt: now + 60000 });
+  await expect(sessions.verify(schedule.credential, now)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  await expect(schedules.verify(session.credential, now)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  await expect(sessions.verify(session.credential, now + 60000)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  await expect(makeReadSessionTickets({ ...options, audience: 'other:client' }).verify(session.credential, now)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
 });

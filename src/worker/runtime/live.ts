@@ -29,14 +29,14 @@ instantMilliseconds('2000-01-01', '12:00', applicationTimeZone);
 
 // Authentication caches only public signing keys. Users/roles always come from D1.
 const verifiers = new Map<string, ReturnType<typeof makeGoogleAuth>>();
-export function liveServices(env: Bindings) {
+export function liveServices(env: Bindings, authentication?: ReturnType<typeof makeGoogleAuth>) {
   let verifier = verifiers.get(env.OAUTH_CLIENT_ID);
-  if (!verifier) {
+  if (!verifier && !authentication) {
     verifier = makeGoogleAuth({ audience: env.OAUTH_CLIENT_ID, fetch, now: () => Date.now() });
     verifiers.set(env.OAUTH_CLIENT_ID, verifier);
   }
   return Context.mergeAll(
-    synchronizationServices(env), Context.make(SynchronizationJobs, synchronizationJobs(env)), Context.make(AuthService, verifier),
+    synchronizationServices(env), Context.make(SynchronizationJobs, synchronizationJobs(env)), Context.make(AuthService, authentication ?? verifier!),
     Context.make(EmailService, env.EMAIL_PROVIDER === 'gmail'
       ? makeGmailEmail({ clientId: env.GMAIL_CLIENT_ID ?? '', clientSecret: env.GMAIL_CLIENT_SECRET ?? '',
         refreshToken: env.GMAIL_REFRESH_TOKEN ?? '', from: env.EMAIL_FROM, fetch })

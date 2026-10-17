@@ -4,8 +4,7 @@ import type { User } from '../../shared/domain/models';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const lifetime = 15 * 60;
-const issuer = 'umd-scheduler-read-v1';
-const purpose = 'admin.schedule.read';
+interface Protocol { version: string; issuer: string; purpose: string }
 const keyPattern = /^[a-f0-9]{64}$/;
 export interface ReadIdentity { accountId: string; email: string; expiresAt: number }
 export interface ReadTicket { credential: string; expiresAt: number }
@@ -30,7 +29,9 @@ function key(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
 /** Caches cryptographic keys only. Identity and authorization are never cached. */
-export function makeReadTickets(options: TicketOptions): ReadTickets {
+export const makeReadTickets = (options: TicketOptions): ReadTickets => makeTickets(options, { version: 'r1', issuer: 'umd-scheduler-read-v1', purpose: 'admin.schedule.read' });
+export const makeReadSessionTickets = (options: TicketOptions): ReadTickets => makeTickets(options, { version: 'r2', issuer: 'umd-scheduler-read-v2', purpose: 'api.read' });
+function makeTickets(options: TicketOptions, protocol: Protocol): ReadTickets {
   if (!keyPattern.test(options.secret) || !options.audience.trim()
     || (options.previousSecret !== undefined && (!keyPattern.test(options.previousSecret)
       || !Number.isSafeInteger(options.previousFrom) || !Number.isSafeInteger(options.previousUntil)
@@ -43,20 +44,20 @@ export function makeReadTickets(options: TicketOptions): ReadTickets {
       const iat = Math.floor(now / 1000);
       if (!Number.isSafeInteger(googleExpiry) || googleExpiry <= iat || !user.id || !user.email.trim()) throw denied();
       const exp = Math.min(googleExpiry, iat + lifetime);
-      const payload = base64(encoder.encode(JSON.stringify({ iss: issuer, aud: options.audience, purpose,
+      const payload = base64(encoder.encode(JSON.stringify({ iss: protocol.issuer, aud: options.audience, purpose: protocol.purpose,
         sub: user.id, email: user.email.trim().toLowerCase(), iat, exp })));
-      const signature = await crypto.subtle.sign('HMAC', await currentKey(), encoder.encode(`r1.${payload}`));
-      return { credential: `r1.${payload}.${base64(new Uint8Array(signature))}`, expiresAt: exp * 1000 };
+      const signature = await crypto.subtle.sign('HMAC', await currentKey(), encoder.encode(`${protocol.version}.${payload}`));
+      return { credential: `${protocol.version}.${payload}.${base64(new Uint8Array(signature))}`, expiresAt: exp * 1000 };
     },
     async verify(credential, now) {
       try {
         if (!Number.isSafeInteger(now) || now < 0) throw denied();
         if (typeof credential !== 'string' || credential.length > 8192) throw denied();
         const [version, payload, signature, ...extra] = credential.split('.');
-        if (version !== 'r1' || !payload || !signature || extra.length) throw denied();
+        if (version !== protocol.version || !payload || !signature || extra.length) throw denied();
         const bytes = unbase64(signature);
         if (bytes.length !== 32) throw denied();
-        const signed = encoder.encode(`r1.${payload}`);
+        const signed = encoder.encode(`${protocol.version}.${payload}`);
         let valid = await crypto.subtle.verify('HMAC', await currentKey(), bytes, signed);
         if (!valid && options.previousSecret && options.previousFrom! <= now && options.previousUntil! > now) {
           previous ??= key(options.previousSecret);
@@ -67,7 +68,7 @@ export function makeReadTickets(options: TicketOptions): ReadTickets {
         if (typeof claims !== 'object' || claims === null || Array.isArray(claims)) throw denied();
         const c = claims as Record<string, unknown>;
         if (Object.keys(c).sort().join(',') !== 'aud,email,exp,iat,iss,purpose,sub'
-          || c.iss !== issuer || c.aud !== options.audience || c.purpose !== purpose
+          || c.iss !== protocol.issuer || c.aud !== options.audience || c.purpose !== protocol.purpose
           || typeof c.sub !== 'string' || !c.sub || typeof c.email !== 'string' || !c.email
           || c.email !== c.email.trim().toLowerCase() || !Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp)
           || (c.iat as number) > Math.floor(now / 1000) || (c.exp as number) <= now / 1000

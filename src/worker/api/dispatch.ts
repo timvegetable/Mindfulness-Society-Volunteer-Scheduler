@@ -1,4 +1,4 @@
-import { decodePayload, decodeRequest, decodeResult } from './validation';
+import { decodePayload, decodeRequest, decodeResult, decodeUser } from './validation';
 import { SynchronizationJobs } from '../synchronizationJobs';
 import { synchronize } from '../synchronization';
 import { Effect, Option } from 'effect';
@@ -63,8 +63,9 @@ export function dispatch(raw: unknown, config: AppConfig) {
     const identity = yield* auth.verify(envelope.credential);
     const database = yield* Database;
     const before = yield* (database.readForOperation?.(envelope.operation) ?? database.read);
-    const user = before.users.find((row) => row.active && row.email.trim().toLowerCase() === identity.email.toLowerCase());
+    const user = before.users.find((row) => row.active && (identity.accountId === undefined || row.id === identity.accountId) && row.email.trim().toLowerCase() === identity.email.toLowerCase());
     if (!user) return yield* Effect.fail(new AppError('UNAUTHORIZED', 'This account is not active.'));
+    yield* Effect.try({ try: () => decodeUser(user), catch: () => new AppError('INTERNAL_ERROR', 'Stored account data is invalid.') });
     const operation = envelope.operation;
     if (!canUseOperation(user, operation)) return yield* Effect.fail(new AppError('FORBIDDEN', 'Your account cannot perform this operation.'));
     const payload = yield* Effect.try({ try: () => normalizePayload(operation, envelope.payload), catch: () => new AppError('INVALID_REQUEST', 'Invalid operation payload.') });

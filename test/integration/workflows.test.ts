@@ -39,6 +39,15 @@ describe('every role against every public operation on local D1', () => {
 });
 
 describe('authorization, revisions and durable idempotency', () => {
+  it('rejects malformed stored authority without granting role or center access', async () => {
+    const app = await application();
+    await app.db.prepare("UPDATE users SET roles='\"administrator\"' WHERE id='user-admin'").run();
+    expect(await app.request('admin.sync.read')).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    await app.db.prepare("UPDATE users SET center_ids='\"center-1 center-2\"' WHERE id='user-contact'").run();
+    expect(await app.request('center.candidate.read', {}, 'contact')).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    expect(await app.request('volunteer.dashboard', {}, 'volunteer')).toMatchObject({ ok: true });
+  });
+
   it('rejects inactive, unknown and unverifiable identities', async () => {
     const app = await application();
     for (const credential of ['inactive', 'missing', 'invalid']) {
