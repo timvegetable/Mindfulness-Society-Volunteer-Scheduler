@@ -96,6 +96,8 @@ The final remote audit found two completed jobs, zero intermediate artifacts and
 
 ### Next optimization boundary
 
+The subsequent undeployed candidate is recorded in [Worker CPU hot paths](../performance/worker-cpu-hot-paths.md), with separate rollback commits on `codex/worker-cpu-hot-paths`, native local measurements and final functional/browser validation. Production remains the version recorded above; the follow-up does not establish the 10 ms production gate.
+
 Keep the experiment reversible on `codex/worker-cpu-budget`, with implementation checkpoint `5a6e188` and this measurement record in a separate commit. Preserve the recorded prior Worker version for deployment rollback; reverting source alone does not detach consumers or undo the additive migration.
 
 The measured priorities are fetch (11–12 ms), unchanged preparation (13 ms), reconciliation (15 ms) and initial authenticated reads (13–17 ms). Further stage splitting alone does not establish a solution: measure fixed setup, D1 decoding/serialization and shared runtime/response validation costs before choosing the next seam. A lighter dedicated consumer/runtime is a possible architectural change to propose and prototype, rather than silently replacing the application. Preserve final transactional authorization/revision fences and source deduplication. Do not close issue #6 or declare the 10 ms goal achieved.

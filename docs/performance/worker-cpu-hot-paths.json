@@ -1,0 +1,363 @@
+{
+  "measurement": "Local owned-workerd process CPU; includes local D1 and diagnostic HTTP wrapper; 10 ms OS ticks; not Cloudflare invocation CPU.",
+  "baseline": "373e8f6",
+  "queue_and_http_commits": [
+    "64f93dd",
+    "610b04f"
+  ],
+  "startup_profile": {
+    "localProfileWindowMs": 198.5,
+    "localSampledMs": 179.6,
+    "localActiveMs": 134.7,
+    "productionStartupMs": null
+  },
+  "runs": [
+    {
+      "label": "paired-baseline",
+      "count": 250,
+      "first": {
+        "session.me": 50,
+        "admin.schedule.read": 10,
+        "admin.sync.read": 10
+      },
+      "averages": {
+        "start": {
+          "meanMs": 1.952,
+          "n": 251
+        },
+        "fetch": {
+          "meanMs": 4.701,
+          "n": 251
+        },
+        "parse": {
+          "meanMs": 10,
+          "n": 1
+        },
+        "reconcile": {
+          "meanMs": 10,
+          "n": 1
+        },
+        "commit": {
+          "meanMs": 3.705,
+          "n": 251
+        },
+        "prepare": {
+          "meanMs": 4.6,
+          "n": 250
+        },
+        "session.me": {
+          "meanMs": 2.76,
+          "n": 250
+        },
+        "admin.schedule.read": {
+          "meanMs": 6.64,
+          "n": 250
+        },
+        "admin.sync.read": {
+          "meanMs": 6.08,
+          "n": 250
+        }
+      }
+    },
+    {
+      "label": "final-unchanged",
+      "count": 250,
+      "first": {
+        "session.me": 10,
+        "admin.schedule.read": 10,
+        "admin.sync.read": 10
+      },
+      "averages": {
+        "start": {
+          "meanMs": 1.992,
+          "n": 251
+        },
+        "fetch": {
+          "meanMs": 4.582,
+          "n": 251
+        },
+        "parse": {
+          "meanMs": 0,
+          "n": 1
+        },
+        "prepare": {
+          "meanMs": 3.984,
+          "n": 251
+        },
+        "commit": {
+          "meanMs": 3.825,
+          "n": 251
+        },
+        "session.me": {
+          "meanMs": 2.52,
+          "n": 250
+        },
+        "admin.schedule.read": {
+          "meanMs": 5.76,
+          "n": 250
+        },
+        "admin.sync.read": {
+          "meanMs": 6,
+          "n": 250
+        }
+      }
+    },
+    {
+      "label": "repair-baseline",
+      "count": 200,
+      "first": {},
+      "averages": {
+        "start": {
+          "meanMs": 1.542,
+          "n": 201
+        },
+        "fetch": {
+          "meanMs": 8.259,
+          "n": 201
+        },
+        "parse": {
+          "meanMs": 6.07,
+          "n": 201
+        },
+        "reconcile": {
+          "meanMs": 7.811,
+          "n": 201
+        },
+        "commit": {
+          "meanMs": 6.169,
+          "n": 201
+        }
+      }
+    },
+    {
+      "label": "final-repair",
+      "count": 200,
+      "first": {},
+      "averages": {
+        "start": {
+          "meanMs": 1.443,
+          "n": 201
+        },
+        "fetch": {
+          "meanMs": 7.96,
+          "n": 201
+        },
+        "parse": {
+          "meanMs": 5.323,
+          "n": 201
+        },
+        "prepare": {
+          "meanMs": 3.234,
+          "n": 201
+        },
+        "reconcile": {
+          "meanMs": 7.313,
+          "n": 201
+        },
+        "commit": {
+          "meanMs": 6.318,
+          "n": 201
+        }
+      }
+    },
+    {
+      "label": "final-http-baseline",
+      "count": 250,
+      "first": {
+        "session.me": 20,
+        "admin.schedule.read": 10,
+        "admin.sync.read": 20
+      },
+      "averages": {
+        "session.me": {
+          "meanMs": 2.92,
+          "n": 250
+        },
+        "admin.schedule.read": {
+          "meanMs": 7.08,
+          "n": 250
+        },
+        "admin.sync.read": {
+          "meanMs": 6.48,
+          "n": 250
+        }
+      }
+    },
+    {
+      "label": "final-http",
+      "count": 250,
+      "first": {
+        "session.me": 20,
+        "admin.schedule.read": 10,
+        "admin.sync.read": 0
+      },
+      "averages": {
+        "session.me": {
+          "meanMs": 2.88,
+          "n": 250
+        },
+        "admin.schedule.read": {
+          "meanMs": 6.2,
+          "n": 250
+        },
+        "admin.sync.read": {
+          "meanMs": 5.8,
+          "n": 250
+        }
+      }
+    },
+    {
+      "label": "all-reads",
+      "count": 120,
+      "first": {
+        "session.me": 10,
+        "admin.schedule.read": 0,
+        "admin.sync.read": 10,
+        "admin.insights.read": 10,
+        "center.candidate.read": 10,
+        "volunteer.dashboard": 50
+      },
+      "averages": {
+        "session.me": {
+          "meanMs": 2.667,
+          "n": 120
+        },
+        "admin.schedule.read": {
+          "meanMs": 6.167,
+          "n": 120
+        },
+        "admin.sync.read": {
+          "meanMs": 5.917,
+          "n": 120
+        },
+        "admin.insights.read": {
+          "meanMs": 7.417,
+          "n": 120
+        },
+        "center.candidate.read": {
+          "meanMs": 4.667,
+          "n": 120
+        },
+        "volunteer.dashboard": {
+          "meanMs": 5.583,
+          "n": 120
+        }
+      }
+    },
+    {
+      "label": "dashboard-candidate",
+      "count": 120,
+      "first": {
+        "session.me": 20,
+        "admin.schedule.read": 10,
+        "admin.sync.read": 10,
+        "admin.insights.read": 10,
+        "center.candidate.read": 0,
+        "volunteer.dashboard": 40
+      },
+      "averages": {
+        "session.me": {
+          "meanMs": 2.583,
+          "n": 120
+        },
+        "admin.schedule.read": {
+          "meanMs": 6,
+          "n": 120
+        },
+        "admin.sync.read": {
+          "meanMs": 5.667,
+          "n": 120
+        },
+        "admin.insights.read": {
+          "meanMs": 7.333,
+          "n": 120
+        },
+        "center.candidate.read": {
+          "meanMs": 4.667,
+          "n": 120
+        },
+        "volunteer.dashboard": {
+          "meanMs": 5.583,
+          "n": 120
+        }
+      }
+    },
+    {
+      "label": "startup-initialized",
+      "count": 120,
+      "first": {
+        "session.me": 20,
+        "admin.schedule.read": 10,
+        "admin.sync.read": 0,
+        "admin.insights.read": 10,
+        "center.candidate.read": 10,
+        "volunteer.dashboard": 10
+      },
+      "averages": {
+        "session.me": {
+          "meanMs": 2.583,
+          "n": 120
+        },
+        "admin.schedule.read": {
+          "meanMs": 6.083,
+          "n": 120
+        },
+        "admin.sync.read": {
+          "meanMs": 6.25,
+          "n": 120
+        },
+        "admin.insights.read": {
+          "meanMs": 6.667,
+          "n": 120
+        },
+        "center.candidate.read": {
+          "meanMs": 4.667,
+          "n": 120
+        },
+        "volunteer.dashboard": {
+          "meanMs": 5.583,
+          "n": 120
+        }
+      }
+    },
+    {
+      "label": "startup-repeat",
+      "count": 120,
+      "first": {
+        "session.me": 20,
+        "admin.schedule.read": 10,
+        "admin.sync.read": 10,
+        "admin.insights.read": 10,
+        "center.candidate.read": 10,
+        "volunteer.dashboard": 10
+      },
+      "averages": {
+        "session.me": {
+          "meanMs": 2.833,
+          "n": 120
+        },
+        "admin.schedule.read": {
+          "meanMs": 5.667,
+          "n": 120
+        },
+        "admin.sync.read": {
+          "meanMs": 5.333,
+          "n": 120
+        },
+        "admin.insights.read": {
+          "meanMs": 6.833,
+          "n": 120
+        },
+        "center.candidate.read": {
+          "meanMs": 4.833,
+          "n": 120
+        },
+        "volunteer.dashboard": {
+          "meanMs": 5.75,
+          "n": 120
+        }
+      }
+    }
+  ],
+  "finalApplicationCommit": "79c4c27"
+}
