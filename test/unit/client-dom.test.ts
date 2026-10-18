@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { startClient } from '../../src/client/app';
 import type { Role } from '../../src/shared/domain/models';
+import type { ResultOf } from '../../src/shared/api/schemas';
 const volunteer = { id: 'v1', name: 'Alice', email: 'alice@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 1 };
 const secondVolunteer = { id: 'v2', name: 'Bob', email: 'bob@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 2 };
 const thirdVolunteer = { id: 'v3', name: 'Cara', email: 'cara@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 3 };
@@ -18,6 +19,12 @@ let configId: string;
 let initialized: number;
 let dashboardRead: Promise<void> | undefined;
 let insightsGrid: { weekday: number; start: string; end: string; count: number; volunteers: typeof volunteer[] }[];
+let syncPending: ResultOf<'admin.sync.read'>['pending'];
+let syncVolunteers: ResultOf<'admin.sync.read'>['volunteers'];
+const pendingParticipant = (id: string, name: string): ResultOf<'admin.sync.read'>['pending'][number] => ({
+  id, name, email: `${id}@example.test`, intervals: [], reason: 'new', resolvable: true, present: true,
+  firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z',
+});
 const click = (label: string) => {
   const node = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === label);
   expect(node, `Missing button ${label}`).toBeDefined(); node!.click();
@@ -35,7 +42,7 @@ async function mount() {
     else if (body.operation === 'center.candidate.read') data = { ...base, centers: [center], candidates: [] };
     else if (body.operation === 'admin.sync.read' || body.operation === 'admin.sync.now') data = { ...base,
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
-      ...(body.operation === 'admin.sync.read' ? { pending: [], imports: [], volunteers: [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }] } : {}) };
+      ...(body.operation === 'admin.sync.read' ? { pending: syncPending, imports: [], volunteers: syncVolunteers } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
     else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));
@@ -44,6 +51,7 @@ async function mount() {
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
   requests = []; roles = ['volunteer']; confirmAnswer = false; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined;
+  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }];
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
 });
@@ -197,6 +205,32 @@ describe('client DOM behaviors', () => {
     expect(document.body.textContent).toContain('Availability is up to date.');
     expect(requests.some(item => item.operation === 'admin.sync.now')).toBe(true);
     expect(requests.some(item => item.operation.includes('promote') || item.operation.includes('whenIsGood.preview'))).toBe(false);
+  });
+
+  it('keeps roster link choices alphabetized with deterministic ties in every pending participant picker', async () => {
+    roles = ['administrator'];
+    syncVolunteers = [
+      { id: 'v-z', name: 'alex Morgan', email: 'z@example.test' },
+      { id: 'v-tie-z', name: 'Alex Morgan', email: 'a@example.test' },
+      { id: 'v-tie-a', name: 'ALEx Morgan', email: 'a@example.test' },
+      { id: 'v-last', name: 'zoe Example', email: 'zoe@example.test' },
+      { id: 'v-first', name: 'Ada Example', email: 'ada@example.test' },
+    ];
+    syncPending = [pendingParticipant('p-one', 'New participant one'), pendingParticipant('p-two', 'New participant two')];
+    await signIn(); click('Availability sync'); await settle();
+
+    const pickers = [...document.querySelectorAll<HTMLSelectElement>('select[data-participant-id]')];
+    expect(pickers).toHaveLength(2);
+    for (const picker of pickers) {
+      expect([...picker.options].map(option => option.value)).toEqual(['', 'v-first', 'v-tie-a', 'v-tie-z', 'v-z', 'v-last']);
+      expect([...picker.options].map(option => option.textContent)).toEqual([
+        'Choose a volunteer', 'Ada Example (ada@example.test)', 'ALEx Morgan (a@example.test)',
+        'Alex Morgan (a@example.test)', 'alex Morgan (z@example.test)', 'zoe Example (zoe@example.test)',
+      ]);
+    }
+    pickers[0]!.value = 'v-z';
+    pickers[0]!.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(pickers[0]!.value).toBe('v-z');
   });
 
   it('signs out and removes role views', async () => {

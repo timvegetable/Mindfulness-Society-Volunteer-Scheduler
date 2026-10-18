@@ -11,6 +11,7 @@ let clientFetch: typeof fetch;
 let confirmAction: (message: string) => boolean;
 let promptAction: (message: string) => string | null;
 const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const rosterOptionCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
 let zone = 'America/New_York';
 let me: ResultOf<'session.me'> | undefined;
 let activeTab = '';
@@ -77,6 +78,11 @@ const sessionTitle = (title: string) => title.replace(/^Center session:\s*/i, ''
 const sessionText = (session: Pick<Session, 'title' | 'date' | 'start' | 'end'>) => `${sessionTitle(session.title)} · ${session.date} · ${timeRange(session.start, session.end)}`;
 const unfilledPlaces = (session: Session, assignedCount: number) => session.status === 'cancelled' ? 0 : Math.max(0, session.requiredStaffCount - assignedCount);
 const names = (ids: string[], volunteers: readonly Volunteer[]) => ids.map(id => volunteers.find(volunteer => volunteer.id === id)?.name ?? 'Volunteer').join(', ') || '—';
+const sortedRosterOptions = (volunteers: ResultOf<'admin.sync.read'>['volunteers']) => [...volunteers]
+  .sort((left, right) => rosterOptionCollator.compare(left.name, right.name)
+    || rosterOptionCollator.compare(left.email, right.email)
+    || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+  .map(volunteer => [volunteer.id, `${volunteer.name} (${volunteer.email})`] as [string, string]);
 
 function shell() {
   app.replaceChildren();
@@ -355,7 +361,7 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
       if (!participant.present) action.append(el('p', 'No longer in the latest results. Saved roster availability is preserved.', 'muted'));
       else if (participant.identityStable === false || !participant.resolvable) action.append(el('p', 'Correct the source identity before linking this submission.', 'muted'));
       else {
-        const picker = select([['', 'Choose a volunteer'], ...data.volunteers.map(v => [v.id, `${v.name} (${v.email})`] as [string, string])]); picker.required = true; picker.setAttribute('aria-label', `Roster link for ${participant.name || 'unnamed participant'} (WhenIsGood ID: ${participant.id})`); picker.dataset.focusKey = `mapping-${participant.id}`; picker.dataset.participantId = participant.id;
+        const picker = select([['', 'Choose a volunteer'], ...sortedRosterOptions(data.volunteers)]); picker.required = true; picker.setAttribute('aria-label', `Roster link for ${participant.name || 'unnamed participant'} (WhenIsGood ID: ${participant.id})`); picker.dataset.focusKey = `mapping-${participant.id}`; picker.dataset.participantId = participant.id;
         const mappingForm = form(action, 'Link participant', async () => {
           await api.call('admin.import.mapping.upsert', { sourceParticipantId: participant.id, volunteerId: picker.value }, data.dataRevision);
           await refreshView('imports', 'Participant linked and the latest saved source availability applied.', '.content button', { consumedParticipantId: participant.id });
