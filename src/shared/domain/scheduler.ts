@@ -2,10 +2,12 @@ import { Temporal } from '@js-temporal/polyfill';
 import { availabilityForSessions, availableForSession, eligibleVolunteer, instantMilliseconds, sessionsOverlap } from './availability';
 import type { Assignment, Backup, ScheduleOutput, SchedulingRun, Session, Snapshot, Volunteer } from './models';
 
-export function currentRun(snapshot: Pick<Snapshot, 'schedulingRuns'>): SchedulingRun | null {
+export function currentRun<Run extends Pick<SchedulingRun, 'id' | 'status' | 'outputRevision'>>(snapshot: { schedulingRuns: readonly Run[] }): Run | null {
   return snapshot.schedulingRuns.filter((run) => run.status === 'completed').sort((a, b) => b.outputRevision - a.outputRevision || a.id.localeCompare(b.id))[0] ?? null;
 }
-export function currentAssignments(snapshot: Pick<Snapshot, 'schedulingRuns' | 'assignments'>): Assignment[] {
+export function currentAssignments<Row extends Pick<Assignment, 'scheduleRevision'>>(snapshot: {
+  schedulingRuns: readonly Pick<SchedulingRun, 'id' | 'status' | 'outputRevision'>[]; assignments: readonly Row[];
+}): Row[] {
   const run = currentRun(snapshot);
   return run ? snapshot.assignments.filter((assignment) => assignment.scheduleRevision === run.outputRevision) : [];
 }

@@ -110,6 +110,34 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     expect((await call('admin.sync.read', ticket, '/api', { extra: true })).body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
     const tamperedRead = ticket.slice(0, -4) + 'AAAA';
     expect((await call('admin.sync.read', tamperedRead)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
+    expect((await call('admin.insights.read', tamperedRead)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
+    expect((await call('admin.insights.read', ticket, '/api', { extra: true })).body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+    // The small read must preserve current completed-run selection, cancellation,
+    // historical assignments, ordering, escaping and every response field.
+    await db.batch([
+      db.prepare(`INSERT INTO scheduling_runs(id,input_revision,output_revision,status) VALUES
+        ('insights-old',0,1,'completed'),('insights-current',0,2,'completed'),
+        ('insights-staged',0,3,'staged'),('insights-failed',0,4,'failed')`),
+      db.prepare(`INSERT INTO assignments(id,session_id,volunteer_id,schedule_revision,status) VALUES
+        ('insights-old-assignment','session-1','volunteer-3',1,'assigned'),
+        ('insights-current-assignment','session-1','volunteer-1',2,'assigned'),
+        ('insights-cancelled','session-1','volunteer-2',2,'cancelled')`),
+      db.prepare("UPDATE volunteers SET name=? WHERE id='volunteer-1'").bind('Synthetic \"quoted\" \u2603'),
+      db.prepare("UPDATE volunteers SET lifecycle_status='active' WHERE id='volunteer-3'"),
+    ]);
+    const projectedInsights = await call('admin.insights.read', ticket);
+    const genericInsights = await generic.fetch('https://local/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'admin.insights.read', credential: admin, payload: {} }) });
+    expect(projectedInsights.body).toEqual(await genericInsights.json());
+    const insights = Schema.decodeUnknownSync(resultSchemas['admin.insights.read'])((projectedInsights.body as { data: unknown }).data);
+    expect(insights.leftoverVolunteers.map(row => row.id)).toEqual(['volunteer-2', 'volunteer-3']);
+    expect(insights.grid.some(cell => cell.volunteers.some(row => row.name === 'Synthetic \"quoted\" \u2603'))).toBe(true);
+    await db.batch([
+      db.prepare("DELETE FROM assignments WHERE id LIKE 'insights-%'"),
+      db.prepare("DELETE FROM scheduling_runs WHERE id LIKE 'insights-%'"),
+      db.prepare("UPDATE volunteers SET name='Alex Example' WHERE id='volunteer-1'"),
+      db.prepare("UPDATE volunteers SET lifecycle_status='newly-joined' WHERE id='volunteer-3'"),
+    ]);
     expect(googleReads).toBe(3);
     const checkedAt = '2026-10-17T20:00:00Z';
     const participant = { id: 'synthetic-quote"', name: 'Synthetic \"quote\" \u2603', email: null, intervals: [], identityStable: true };
@@ -145,6 +173,7 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     expect(richRead.body).toMatchObject({ ok: true, data: { pending: [pendingParticipant], imports: [{ id: 'synthetic-history' }], job: { id: 'synthetic-job', state: 'succeeded' } } });
     await db.prepare("UPDATE volunteers SET name='' WHERE id='volunteer-1'").run();
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    expect((await call('admin.insights.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
     await db.prepare("UPDATE volunteers SET name='Alex Example' WHERE id='volunteer-1'").run();
     // Direct fixture writes invalidate the prepared schedule, even when restoring a value.
     await executeCommit(db, await prepareScheduleBackfill(db));
@@ -171,6 +200,7 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     const volunteerTicket = volunteer.data.readSession!.credential;
     expect((await call('volunteer.dashboard', volunteerTicket)).body).toMatchObject({ ok: true });
     expect((await call('admin.sync.read', volunteerTicket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect((await call('admin.insights.read', volunteerTicket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     expect((await call('volunteer.availability.recurring.update', volunteerTicket, '/api', { intervals: [] })).response.status).toBe(401);
     const contact = Schema.decodeUnknownSync(envelope)((await signIn(await google('contact@example.test'))).body);
     expect(contact.data.centers.map(center => center.id)).toEqual(['center-1']);
@@ -187,11 +217,14 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     await db.prepare("UPDATE centers SET name='North Center' WHERE id='center-1'").run();
     await db.prepare("UPDATE users SET roles='\"administrator\"' WHERE id='user-admin'").run();
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    expect((await call('admin.insights.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
     await db.prepare("UPDATE users SET roles='[]' WHERE id='user-admin'").run();
     expect((await call('admin.schedule.read', ticket, '/api/schedule')).response.status).toBe(403);
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect((await call('admin.insights.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     await db.prepare("UPDATE users SET roles='[\"administrator\"]',id='replacement-admin' WHERE id='user-admin'").run();
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
+    expect((await call('admin.insights.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
     expect(googleReads).toBe(3);
   } finally { await runtime?.dispose(); await rm(work, { recursive: true, force: true }); }
 });

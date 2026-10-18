@@ -1,4 +1,5 @@
 import { readSyncStatus } from './reads/syncStatus';
+import { readInsights } from './reads/insights';
 import { isMutation } from '../shared/api/operations';
 import { makeReadSessionAuth } from './services/ReadSessionAuth';
 import { scheduleReadMode } from './scheduleRead/configuration';
@@ -85,6 +86,11 @@ export default {
           if (envelope.operation === 'admin.sync.read') {
             if (request.headers.get('X-Sync-Read-Protocol') !== '2') return failure('INVALID_REQUEST', 'Reload this application to read synchronization status.', 400, { syncReadProtocol: 2 });
             const response = await readSyncStatus(envelope, env.DB, env.SCHEDULE_READER).catch(error =>
+              publicFailure(error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'An unexpected error occurred.')));
+            return new Response(response, { headers });
+          }
+          if (envelope.operation === 'admin.insights.read') {
+            const response = await readInsights(envelope, env.DB, env.SCHEDULE_READER, appConfig(env)).catch(error =>
               publicFailure(error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'An unexpected error occurred.')));
             return new Response(response, { headers });
           }
