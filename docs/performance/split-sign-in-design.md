@@ -1,6 +1,14 @@
 # Split sign-in CPU experiment
 
-Status: local candidate on `codex/split-sign-in-cpu`; production remains the restored `2ecbe19` baseline. This is a bounded sign-in protocol change, not a scheduler rewrite.
+Status: candidate `7838e51` on `codex/split-sign-in-cpu` was trialled with explicit approval and rolled back after the first generic synchronization-status read failed the CPU gate. Production is restored to the `2ecbe19` baseline. This is a bounded sign-in protocol change, not a scheduler rewrite.
+
+## Production result
+
+The [sanitized trial record](split-sign-in-production-trial.json) reports combined main/private CPU of 1 ms for the expected typed protocol-negotiation response, 6 ms for Google verification, 5 ms for account lookup/session issuance, and 3 ms for the automatically following prepared schedule read. These are first observed samples after deployment, not proof of repeated cold-start headroom. Both sign-in stages and the schedule returned successful responses.
+
+The first explicit `admin.sync.read` then used 14 ms in main plus 0 ms in private R2 verification, with HTTP 200. The gate failed, so both Workers were immediately rolled back; Wrangler confirmed both baseline versions at 100% traffic. No further read or identical-redeploy samples were collected. No domain mutation or notification was performed.
+
+This narrows the next experiment: removing Google verification from generic reads is insufficient. Remaining hypotheses are generic runtime/dispatch first-use work, D1 snapshot conversion, synchronization-specific job/status assembly, and response validation/serialization. This sample does not distinguish them or establish warm-request CPU. A small read implementation that reuses the authoritative projections, view rules and policies is the next proposed experiment; do not independently reimplement policy or synchronization semantics. Preserve this candidate's two-stage exchange, which passed the initial sign-in samples, but do not describe it as fully production-qualified.
 
 The failed `55e53c1` trial measured first-observed sign-in at 12 ms private + 3 ms main. It establishes insufficient headroom but does not isolate Google verification, HMAC setup, D1 conversion or first-use imports. Splitting work is a falsifiable experiment, not a promised fix.
 
@@ -45,4 +53,4 @@ Native tests run the proof stage in a Worker with no D1 binding, use real synthe
 
 Deployment order is compatible private Worker first, then main/client. Rollback order is main `7bb1b7b4-daa4-4923-847a-3586c7e29cd6` first, then reader `d679ba8e-64d3-4546-8fdf-055960777e67`. No production action is part of this local implementation. Local success establishes functional behavior only; production CPU, largest inputs and the other endpoint costs remain unverified.
 
-Final application validation: 367 tests across 20 files, 48 browser tests, type checks, CSS formatting and both Worker/client builds pass. The native integration additionally passes explicit disabled-mode, invalid-method/content-type and previous-main R2 exchange checks. The initial browser attempt could not launch because the matching Chromium binary was absent; installing the official runtime into `/tmp/scheduler-playwright` allowed the complete suite to run. Both private production configurations pass dry runs. No production deployment was performed.
+Pretrial application validation: 367 tests across 20 files, 48 browser tests, type checks, CSS formatting and both Worker/client builds pass. The native integration additionally passes explicit disabled-mode, invalid-method/content-type and previous-main R2 exchange checks. The initial browser attempt could not launch because the matching Chromium binary was absent; installing the official runtime into `/tmp/scheduler-playwright` allowed the complete suite to run. Both private production configurations pass dry runs. The separately approved trial and rollback are recorded above.

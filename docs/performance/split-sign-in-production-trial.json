@@ -1,0 +1,126 @@
+{
+  "sourceCommit": "7838e51",
+  "metric": "Cloudflare live-tail cpuTime per invocation, ms; pair sequential caller/private requests by paths and timestamps and sum within each external request.",
+  "result": "rolled back: initial split sign-in passed; first generic sync-status read failed the 9 ms combined CPU gate",
+  "combinedCpuMs": {
+    "protocolNegotiation": 1,
+    "googleVerification": 6,
+    "sessionIssuance": 5,
+    "scheduleRead": 3,
+    "syncStatusRead": 14
+  },
+  "observations": [
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api",
+      "cpuMs": 1,
+      "wallMs": 1,
+      "outcome": "ok",
+      "status": 400,
+      "timestamp": 1792290733961,
+      "version": "2603c009-457c-4d0a-ad73-579214142726"
+    },
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api/identity",
+      "cpuMs": 0,
+      "wallMs": 61,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290734004,
+      "version": "2603c009-457c-4d0a-ad73-579214142726"
+    },
+    {
+      "worker": "reader",
+      "operation": "session.google.verify",
+      "path": "/internal/identity",
+      "cpuMs": 6,
+      "wallMs": 37,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290734007,
+      "version": "2c2d01da-fab5-4913-b94d-d19c2850996d"
+    },
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api",
+      "cpuMs": 1,
+      "wallMs": 35,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290734125,
+      "version": "2603c009-457c-4d0a-ad73-579214142726"
+    },
+    {
+      "worker": "reader",
+      "operation": "session.me",
+      "path": "/internal/session",
+      "cpuMs": 4,
+      "wallMs": 30,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290734127,
+      "version": "2c2d01da-fab5-4913-b94d-d19c2850996d"
+    },
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api/schedule",
+      "cpuMs": 0,
+      "wallMs": 27,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290734185,
+      "version": "2603c009-457c-4d0a-ad73-579214142726"
+    },
+    {
+      "worker": "reader",
+      "operation": "admin.schedule.read",
+      "path": "/api/schedule",
+      "cpuMs": 3,
+      "wallMs": 21,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290734190,
+      "version": "2c2d01da-fab5-4913-b94d-d19c2850996d"
+    },
+    {
+      "worker": "main",
+      "operation": "admin.sync.read",
+      "path": "/api",
+      "cpuMs": 14,
+      "wallMs": 56,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290751168,
+      "version": "2603c009-457c-4d0a-ad73-579214142726"
+    },
+    {
+      "worker": "reader",
+      "operation": "read.session.verify",
+      "path": "/internal/read-session",
+      "cpuMs": 0,
+      "wallMs": 1,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792290751174,
+      "version": "2c2d01da-fab5-4913-b94d-d19c2850996d"
+    }
+  ],
+  "rollback": {
+    "main": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6",
+    "reader": "d679ba8e-64d3-4546-8fdf-055960777e67"
+  },
+  "unmeasured": [
+    "identical redeploy first-observed samples",
+    "Insights",
+    "center proposals",
+    "schedule preview",
+    "larger inputs",
+    "writes",
+    "changed-source synchronization"
+  ]
+}
