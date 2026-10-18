@@ -44,8 +44,8 @@ const fixtureFetch: typeof fetch = async (input, init) => {
   let data: object;
   switch (operation) {
     case 'session.me':
-      data = { user: { id: 'synthetic-user', email: role === 'volunteer' ? volunteer.email : 'contact@example.test', roles: [role], volunteerId: role === 'volunteer' ? volunteer.id : null, centerIds: role === 'center-contact' ? [center.id] : [], active: true }, centers: [center] }; break;
-    case 'volunteer.dashboard': data = { ...dashboard, freshness }; break;
+      data = { user: { id: 'synthetic-user', email: role === 'volunteer' ? volunteer.email : 'contact@example.test', roles: [role], volunteerId: role === 'volunteer' ? volunteer.id : null, centerIds: role === 'center-contact' ? [center.id] : [], active: true }, centers: role === 'center-contact' ? [center] : [] }; break;
+    case 'volunteer.dashboard': data = { ...dashboard, centers: [{ id: center.id, name: center.name }], freshness }; break;
     case 'volunteer.availability.recurring.update': {
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
       dashboard.recurringAvailability = payload.intervals.map(interval => ({ ...interval, id: id(), volunteerId: volunteer.id }));
