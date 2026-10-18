@@ -1,6 +1,6 @@
 # Compact sync-status projection and production diagnosis
 
-Status: local implementation candidate `3ad9f87` on `codex/compact-sync-read`. Production remains the restored `2ecbe19` baseline. The latest strict trial measured sync status at 12 ms combined CPU and rolled back. The full nine-millisecond goal remains active. The [frozen diagnostic manifest](compact-sync-diagnostic-manifest.json) identifies exact source/bundle hashes, inserted early stops, native authorization checks and successful dry runs.
+Status: candidate `3ad9f87` on `codex/compact-sync-read` completed its specifically approved production diagnostic. Both production Workers were restored to the `2ecbe19` baseline afterward. The latest strict trial measured sync status at 12 ms combined CPU and rolled back. The full nine-millisecond goal remains active. The [frozen diagnostic manifest](compact-sync-diagnostic-manifest.json) identifies exact source/bundle hashes, inserted early stops, native authorization checks and successful dry runs.
 
 ## What changes
 
@@ -20,7 +20,7 @@ The native API contract test failed before the change because history still incl
 
 A private-backup size probe measured the response dropping from 36,353 to 7,469 bytes. Serialized D1 row data in the local adapter dropped from 82,806 to 8,140 bytes, with all three history rows, counts 0/6/8, and 74 roster choices retained. These are structural size measurements, **not CPU estimates**, native D1 wire measurements or production performance proof. No new local timing comparison is used to choose the next deployment.
 
-All 368 functional tests across 20 files, 51 browser tests, type checks, stylesheet formatting and both Worker/client builds pass. Browser coverage explicitly checks history counts and roster choices through the compact contract. The normal and diagnostic configurations pass deployment dry runs. No production change has been performed for this candidate.
+All 368 functional tests across 20 files, 51 browser tests, type checks, stylesheet formatting and both Worker/client builds pass. Browser coverage explicitly checks history counts and roster choices through the compact contract. The normal and diagnostic configurations pass deployment dry runs. The specifically approved production diagnostic below has now completed; the candidate is not left deployed.
 
 ## Is this fixing observed outages?
 
@@ -44,3 +44,26 @@ A diagnostic error is intentional, contains no data, and is distinguishable from
 This is a different approval from the previous release trials: collect up to five sequential explicit status reads per variant even if successful/intentional-error invocations exceed 9 ms. Allow one identical redeploy of the full variant for first-observed comparison: at most five main deployments and one compatible private reader deployment. Unexpected auth/application/resource errors stop the diagnostic. Restore **both baseline Workers at the end regardless of measurements**. No new resources, migration, secrets, domain writes, source edits, manual synchronization or notifications are included. Existing cron/Queue behavior stays in place. Keep credentials and raw tails private; preserve only operation/version/CPU/status aggregates. Remove temporary variants after evidence is saved.
 
 Deployment/diagnostic approval must name the committed candidate and frozen manifest. Roll back main to `7bb1b7b4-daa4-4923-847a-3586c7e29cd6`, then reader to `d679ba8e-64d3-4546-8fdf-055960777e67`. Production qualification is a later decision requiring repeated successful normal requests at <=9 ms and the remaining endpoint/input gates in `nine-ms-goal.md`; diagnostic tolerance never relaxes the release gate.
+
+
+## Production diagnostic result
+
+The [sanitized measurement record](compact-sync-production-diagnostic.json) contains all 25 paired status measurements and deployed version IDs. Main and private-reader CPU were summed for each explicit external request. All requests reported `ok` with HTTP 200; the 15 early-stop responses were the intended typed diagnostic errors.
+
+| Variant | Combined CPU in request order (ms) |
+| --- | --- |
+| Full compact response | 5, 3, 2, 1, 3 |
+| Snapshot stop | 4, 2, 2, 2, 2 |
+| View stop | 4, 3, 2, 2, 1 |
+| Validation stop | 6, 4, 4, 2, 4 |
+| Identical full redeploy | 5, 3, 3, 2, 2 |
+
+The two normal first-observed reads were both 5 ms, with all ten normal reads at 1–5 ms. Sign-in negotiation was 1 ms, Google verification 5 ms, session issuance 4 ms and initial schedule loading 3 ms combined. No unexpected authentication/application/resource failures occurred. Output validation remains enabled. Removing validation is not justified by these results: the normal validated path meets the gate on this dataset, and diagnostic error-path differences/noise prevent treating prefix differences as an exact decomposition.
+
+Compared with the prior thin-route trial's 12 ms first read, this supports the compact projection as an effective next candidate. It does not establish which individual conversion, parsing, validation or serialization routine caused the earlier overage: the projection intentionally reduces several costs together, and these are separate deployment samples. No local timing forecast is used as production proof.
+
+The private diagnostic configurations initially pointed to `dist`; predeployment inspection corrected them to the existing built client directory `dist/client`, then the full configuration passed another dry run. Frozen source/bundle hashes were unchanged. Temporary diagnostic source copies were removed after collecting the evidence. Raw tails and operator recovery files remain private.
+
+Main was restored first to `7bb1b7b4-daa4-4923-847a-3586c7e29cd6`, then reader to `d679ba8e-64d3-4546-8fdf-055960777e67`; Wrangler verified each at 100% traffic. The restored client was reloaded and showed the signed-out welcome screen. This diagnostic approval required restoration regardless of success and does not authorize leaving the compact candidate deployed.
+
+Remaining qualification includes other authenticated reads, largest supported inputs/growth bounds, renewal/error paths and the broader Queue/writer ledger. Two first-observed samples are not a guarantee about every cold isolate or future request. The overall <=9 ms goal stays active.

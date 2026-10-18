@@ -9,7 +9,7 @@ Use Cloudflare operation-attributed CPU for production gates, summing caller/pri
 | Static assets, client config and bounded invalid-request handling | Earlier observations include cheap unlabeled HTTP responses | Explicit route/error attribution and worst supported input bounds |
 | Sign-in and renewal | `7838e51` initial split stages 6 and 5 ms, negotiation 1 ms; rolled back after later read failure | Candidate first/repeat and first-observed after redeploy, renewal, rejection/error cases |
 | Prepared schedule | `2ecbe19` approved trial 3–5 ms, including first observed after redeploy; `7838e51` initial read 3 ms | Preserve gates after further changes; largest supported schedules |
-| Sync status | `7838e51` first read 14 ms; `bc8b315` small-route first read 12 ms, rolled back | Further reduce work; production first/repeat and redeploy evidence, populated history and growth bounds |
+| Sync status | Earlier first reads 14/12 ms; compact `3ad9f87` diagnostic: ten normal reads 1–5 ms, both first-observed reads 5 ms; restored baseline afterward | Qualify/release compact candidate with remaining reads; populated-history growth and largest-input bounds |
 | Insights and center proposals | Historical samples include 7–8 ms and proposal breaches 16–27 ms | Current candidate operation-attributed first/repeat measurements and bounded largest inputs |
 | Volunteer dashboard | Functional/schema/authorization coverage | Production CPU with an authorized volunteer; largest supported data |
 | Read-only schedule preview | Functional scheduling tests | Production first/repeat CPU; representative largest scheduling input; split/client-side computation proposal if needed |
