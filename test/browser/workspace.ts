@@ -60,6 +60,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
   if (input === '/client-config') return Response.json({ oauthClientId: 'synthetic.apps.googleusercontent.com', timeZone: 'America/New_York' });
   const latency = Math.min(1000, Math.max(0, Number(new URLSearchParams(location.search).get('latency')) || 0));
   if (latency) await new Promise(resolve => setTimeout(resolve, latency));
+  if (input === '/api/identity' && readSessions) return Response.json({ ok: true, data: { credential: 'g1.synthetic-proof', expiresAt: Date.now() + 60000 } });
   if (input !== '/api' && input !== '/api/schedule') throw new Error('Synthetic workspace blocks external requests');
   const request = JSON.parse(String(init?.body));
   const operation = String(request.operation);
@@ -84,6 +85,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       data = { ...revisions, mapping }; break;
     }
     case 'session.me': {
+      if (readSessions && request.credential !== 'g1.synthetic-proof') return Response.json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'Use split sign-in.', details: { signInProtocol: 3 } } }, { status: 400 });
       sessionExchanges++; document.documentElement.dataset.sessionExchanges = String(sessionExchanges);
       data = readSessions ? { ...identity, readSession: { credential: `read-${sessionExchanges}`, expiresAt: Date.now() + 900000 } } : identity; break;
     }

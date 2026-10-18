@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ApiClient } from '../../src/client/api';
 const success = () => new Response(JSON.stringify({ ok: true, data: { dataRevision: 2, schedulingInputRevision: 1, intervals: [] } }), { headers: { 'Content-Type': 'application/json' } });
 describe('client API intent and response handling', () => {
@@ -165,5 +165,58 @@ describe('general read sessions', () => {
     });
     api.signIn('google'); await api.call('center.candidate.read', {}); await api.call('center.candidate.read', {});
     expect(exchanges).toBe(2); expect(reads).toBe(4);
+  });
+});
+
+describe('split sign-in exchange', () => {
+  const upgrade = () => new Response(JSON.stringify({ ok: false, error: { code: 'INVALID_REQUEST', message: 'Use split sign-in.', details: { signInProtocol: 3 } } }), { status: 400 });
+  // The server validates proof times; browser clock skew must not reject a valid handoff.
+  const proof = () => reply({ credential: 'g1.proof', expiresAt: 1 });
+  it('learns the protocol, keeps the proof out of writes, and shares renewal across reads', async () => {
+    const calls: { path: string; credential: string }[] = []; let exchanges = 0;
+    const api = new ApiClient(async (input, init) => {
+      const body = JSON.parse(String(init?.body)); calls.push({ path: String(input), credential: body.credential });
+      if (input === '/api/identity') return proof();
+      if (body.operation === 'session.me') {
+        if (body.credential === 'google') return upgrade();
+        expect(body.credential).toBe('g1.proof');
+        const data = sessionData('unused'); const { scheduleRead: _, ...session } = data;
+        return reply({ ...session, readSession: { credential: 'r2.read', expiresAt: ++exchanges === 1 ? 0 : Date.now() + 900000 } });
+      }
+      if (body.operation === 'admin.schedule.read') return reply(scheduleData);
+      if (body.operation === 'admin.sync.read') return reply({ dataRevision: 1, schedulingInputRevision: 1, status: null, history: [], pending: [], mappings: [], volunteers: [], job: null });
+      return success();
+    });
+    api.signIn('google'); await api.call('session.me', {});
+    await Promise.all([api.call('admin.schedule.read', {}), api.call('admin.schedule.read', {})]);
+    await api.call('volunteer.availability.recurring.update', { intervals: [] }, 1);
+    expect(calls.map(call => [call.path, call.credential])).toEqual([
+      ['/api','google'], ['/api/identity','google'], ['/api','g1.proof'],
+      ['/api/identity','google'], ['/api','g1.proof'], ['/api/schedule','r2.read'], ['/api/schedule','r2.read'], ['/api','google'],
+    ]);
+  });
+  it('does not exchange a proof after sign-out races Google verification', async () => {
+    let done!: (response: Response) => void; let calls = 0;
+    const api = new ApiClient(async (input) => {
+      calls++; return input === '/api' ? upgrade() : new Promise<Response>(resolve => { done = resolve; });
+    });
+    api.signIn('google'); const pending = api.call('session.me', {});
+    await vi.waitFor(() => expect(done).toBeTypeOf('function'));
+    api.signOut(); done(proof());
+    await expect(pending).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(calls).toBe(2);
+  });
+  it('propagates verification failures and rejects invalid proofs without retrying', async () => {
+    for (const response of [
+      new Response(JSON.stringify({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Invalid Google sign-in.' } }), { status: 401 }),
+      reply({ credential: 'r2.wrong-purpose', expiresAt: Date.now() + 60000 }),
+      reply({ credential: 'g1.' + 'x'.repeat(8192), expiresAt: 1 }),
+      reply({ credential: 'g1.proof', expiresAt: -1 }),
+      new Response('invalid JSON'),
+    ]) {
+      let calls = 0;
+      const api = new ApiClient(async input => { calls++; return input === '/api' ? upgrade() : response; });
+      api.signIn('google'); await expect(api.call('session.me', {})).rejects.toThrow(); expect(calls).toBe(2);
+    }
   });
 });

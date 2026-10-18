@@ -35,7 +35,11 @@ it('exchanges real Google-style credentials and reads prepared schedules through
         DISPLAY_INCREMENT_MINUTES: '30', OPERATING_HOURS_START: '09:00', OPERATING_HOURS_END: '21:00' },
 
     }, { name: 'private-reader', modules: true, modulesRoot: work, scriptPath: join(work, 'reader.js'),
-      compatibilityDate: '2026-10-04', d1Databases: { DB: 'native-read-shared' }, bindings: readerBindings, outboundService }] }));
+      compatibilityDate: '2026-10-04', d1Databases: { DB: 'native-read-shared' }, bindings: readerBindings, outboundService },
+      { name: 'google-only', modules: true, modulesRoot: work, scriptPath: join(work, 'reader.js'),
+        compatibilityDate: '2026-10-04', bindings: readerBindings, outboundService },
+      { name: 'disabled-reader', modules: true, modulesRoot: work, scriptPath: join(work, 'reader.js'),
+        compatibilityDate: '2026-10-04', bindings: { ...readerBindings, SCHEDULE_READ_MODE: 'disabled' }, outboundService }] }));
     const db = await runtime.getD1Database('DB') as unknown as D1Database;
     await applySql(db, await readFile(new URL('../../schema.sql', import.meta.url), 'utf8'));
     await applySql(db, await readFile(new URL('../fixtures/seed.sql', import.meta.url), 'utf8'));
@@ -46,8 +50,38 @@ it('exchanges real Google-style credentials and reads prepared schedules through
         body: JSON.stringify({ operation, credential, payload }) });
       return { response, body: await response.json() };
     }
+    async function signIn(credential: string) {
+      const proof = await runtime!.dispatchFetch('https://local/api/identity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) });
+      const value = await proof.json() as { ok: boolean; data?: { credential: string; expiresAt: number } };
+      if (!value.ok) return { response: proof, body: value };
+      expect(value.data?.credential).toMatch(/^g1\./);
+      expect(value.data!.expiresAt).toBeLessThanOrEqual(Date.now() + 60000);
+      return call('session.me', value.data!.credential);
+    }
+    expect((await call('session.me', admin)).body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST', details: { signInProtocol: 3 } } });
+    const googleOnly = await runtime.getWorker('google-only');
+    const disabledReader = await runtime.getWorker('disabled-reader');
+    expect((await disabledReader.fetch('https://local/internal/identity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential: admin }) })).status).toBe(404);
+    expect((await googleOnly.fetch('https://local/internal/identity')).status).toBe(400);
+    expect((await googleOnly.fetch('https://local/internal/identity', { method: 'POST', body: JSON.stringify({ credential: admin }) })).status).toBe(400);
+    const proofResponse = await googleOnly.fetch('https://local/internal/identity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential: admin }) });
+    expect(proofResponse.status).toBe(200);
+    const proofValue = await proofResponse.json() as { data: { credential: string; expiresAt: number } };
+    const identityProof = proofValue.data.credential;
+    expect((await call('admin.schedule.read', identityProof, '/api/schedule')).response.status).toBe(401);
+    expect((await call('admin.sync.read', identityProof)).response.status).toBe(400);
+    expect((await call('admin.sync.now', identityProof)).response.status).toBe(401);
+    const tampered = identityProof.slice(0, -4) + 'AAAA';
+    expect((await call('session.me', tampered)).response.status).toBe(401);
+    await db.prepare("UPDATE users SET active=0 WHERE id='user-admin'").run();
+    expect((await call('session.me', identityProof)).response.status).toBe(401);
+    await db.prepare("UPDATE users SET active=1 WHERE id='user-admin'").run();
+    for (const body of [{ credential: admin, email: 'other@example.test' }, { credential: 'x'.repeat(65537) }]) {
+      const rejected = await runtime.dispatchFetch('https://local/api/identity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      expect(rejected.status).toBe(400);
+    }
     const envelope = Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas['session.me'] });
-    const session = Schema.decodeUnknownSync(envelope)((await call('session.me', admin)).body);
+    const session = Schema.decodeUnknownSync(envelope)((await signIn(admin)).body);
     expect(session.data).toHaveProperty('readSession');
     expect(session.data.readSession?.expiresAt).toBeLessThanOrEqual(Date.now()+600000);
     const ticket = session.data.readSession!.credential;
@@ -60,11 +94,14 @@ it('exchanges real Google-style credentials and reads prepared schedules through
       Schema.decodeUnknownSync(Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas[operation] }))(result.body);
     }
     expect((await call('admin.sync.now', ticket)).response.status).toBe(401);
-    expect(googleReads).toBe(1);
+    expect(googleReads).toBe(2);
     const privateWorker = await runtime.getWorker('private-reader');
     const oldExchange = await privateWorker.fetch('https://local/internal/session', { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'session.me', credential: admin, payload: {} }) });
     const oldSession = Schema.decodeUnknownSync(envelope)(await oldExchange.json());
+    const priorExchange = await privateWorker.fetch('https://local/internal/session', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Read-Session-Protocol': '2' }, body: JSON.stringify({ operation: 'session.me', credential: admin, payload: {} }) });
+    expect(Schema.decodeUnknownSync(envelope)(await priorExchange.json()).data.readSession?.credential).toMatch(/^r2\./);
     expect(oldSession.data.readSession).toBeUndefined();
     expect(oldSession.data.scheduleRead?.credential).toMatch(/^r1\./);
     expect((await call('admin.sync.read', oldSession.data.scheduleRead!.credential)).response.status).toBe(400);
@@ -73,16 +110,16 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     expect((await call('admin.schedule.read', admin, '/api/schedule')).response.status).toBe(401);
     expect((await call('admin.schedule.read', ticket, '/api/schedule', { extra: true })).response.status).toBe(400);
     expect((await call('session.me', admin, '/api', { extra: true })).response.status).toBe(400);
-    const denied = await call('session.me', await google('admin@example.test', false));
+    const denied = await signIn(await google('admin@example.test', false));
     expect(denied.body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
-    const volunteer = Schema.decodeUnknownSync(envelope)((await call('session.me', await google('alex@example.test'))).body);
+    const volunteer = Schema.decodeUnknownSync(envelope)((await signIn(await google('alex@example.test'))).body);
     expect(volunteer.data.scheduleRead).toBeUndefined();
     expect(volunteer.data.readSession?.credential).toMatch(/^r2\./);
     const volunteerTicket = volunteer.data.readSession!.credential;
     expect((await call('volunteer.dashboard', volunteerTicket)).body).toMatchObject({ ok: true });
     expect((await call('admin.sync.read', volunteerTicket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     expect((await call('volunteer.availability.recurring.update', volunteerTicket, '/api', { intervals: [] })).response.status).toBe(401);
-    const contact = Schema.decodeUnknownSync(envelope)((await call('session.me', await google('contact@example.test'))).body);
+    const contact = Schema.decodeUnknownSync(envelope)((await signIn(await google('contact@example.test'))).body);
     expect(contact.data.centers.map(center => center.id)).toEqual(['center-1']);
     expect(contact.data.scheduleRead).toBeUndefined();
     const proposals = await call('center.candidate.read', contact.data.readSession!.credential);
@@ -91,9 +128,9 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     expect((await call('center.candidate.read', contact.data.readSession!.credential)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
     await db.prepare("UPDATE users SET center_ids='[\"center-1\"]' WHERE id='user-contact'").run();
     expect((await call('volunteer.dashboard', contact.data.readSession!.credential)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
-    expect((await call('session.me', await google('inactive@example.test'))).response.status).toBe(401);
+    expect((await signIn(await google('inactive@example.test'))).response.status).toBe(401);
     await db.prepare("UPDATE centers SET name='' WHERE id='center-1'").run();
-    expect((await call('session.me', admin)).response.status).toBe(500);
+    expect((await signIn(admin)).response.status).toBe(500);
     await db.prepare("UPDATE centers SET name='North Center' WHERE id='center-1'").run();
     await db.prepare("UPDATE users SET roles='\"administrator\"' WHERE id='user-admin'").run();
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
@@ -102,6 +139,6 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     await db.prepare("UPDATE users SET roles='[\"administrator\"]',id='replacement-admin' WHERE id='user-admin'").run();
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
-    expect(googleReads).toBe(1);
+    expect(googleReads).toBe(2);
   } finally { await runtime?.dispose(); await rm(work, { recursive: true, force: true }); }
 });

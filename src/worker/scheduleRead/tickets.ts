@@ -1,11 +1,9 @@
+import { makeSignedTokens } from './signedTokens';
 import { AppError } from '../../shared/api/errors';
 import type { User } from '../../shared/domain/models';
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder('utf-8', { fatal: true });
 const lifetime = 15 * 60;
 interface Protocol { version: string; issuer: string; purpose: string }
-const keyPattern = /^[a-f0-9]{64}$/;
 export interface ReadIdentity { accountId: string; email: string; expiresAt: number }
 export interface ReadTicket { credential: string; expiresAt: number }
 export interface TicketOptions { secret: string; audience: string; previousSecret?: string; previousFrom?: number; previousUntil?: number }
@@ -14,57 +12,24 @@ export interface ReadTickets {
   verify: (credential: string, now: number) => Promise<ReadIdentity>;
 }
 const denied = () => new AppError('UNAUTHORIZED', 'Your schedule session expired or is invalid. Please sign in again.');
-function base64(bytes: Uint8Array): string {
-  let value = ''; for (const byte of bytes) value += String.fromCharCode(byte);
-  return btoa(value).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-}
-function unbase64(value: string): Uint8Array<ArrayBuffer> {
-  if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) throw denied();
-  const bytes = Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0));
-  if (base64(bytes) !== value) throw denied();
-  return bytes;
-}
-function key(secret: string): Promise<CryptoKey> {
-  const bytes = Uint8Array.from(secret.match(/../g)!, value => Number.parseInt(value, 16));
-  return crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
-}
 /** Caches cryptographic keys only. Identity and authorization are never cached. */
 export const makeReadTickets = (options: TicketOptions): ReadTickets => makeTickets(options, { version: 'r1', issuer: 'umd-scheduler-read-v1', purpose: 'admin.schedule.read' });
 export const makeReadSessionTickets = (options: TicketOptions): ReadTickets => makeTickets(options, { version: 'r2', issuer: 'umd-scheduler-read-v2', purpose: 'api.read' });
 function makeTickets(options: TicketOptions, protocol: Protocol): ReadTickets {
-  if (!keyPattern.test(options.secret) || !options.audience.trim()
-    || (options.previousSecret !== undefined && (!keyPattern.test(options.previousSecret)
-      || !Number.isSafeInteger(options.previousFrom) || !Number.isSafeInteger(options.previousUntil)
-      || options.previousUntil! <= options.previousFrom! || options.previousUntil! - options.previousFrom! > lifetime * 1000))) throw new Error('Invalid schedule read key configuration');
-  let current: Promise<CryptoKey> | undefined, previous: Promise<CryptoKey> | undefined;
-  const currentKey = () => current ??= key(options.secret);
+  const tokens = makeSignedTokens(options, protocol.version);
   return {
     async issue(user, googleExpiry, now) {
       if (!Number.isSafeInteger(now) || now < 0) throw denied();
       const iat = Math.floor(now / 1000);
       if (!Number.isSafeInteger(googleExpiry) || googleExpiry <= iat || !user.id || !user.email.trim()) throw denied();
       const exp = Math.min(googleExpiry, iat + lifetime);
-      const payload = base64(encoder.encode(JSON.stringify({ iss: protocol.issuer, aud: options.audience, purpose: protocol.purpose,
-        sub: user.id, email: user.email.trim().toLowerCase(), iat, exp })));
-      const signature = await crypto.subtle.sign('HMAC', await currentKey(), encoder.encode(`${protocol.version}.${payload}`));
-      return { credential: `${protocol.version}.${payload}.${base64(new Uint8Array(signature))}`, expiresAt: exp * 1000 };
+      const credential = await tokens.sign({ iss: protocol.issuer, aud: options.audience, purpose: protocol.purpose,
+        sub: user.id, email: user.email.trim().toLowerCase(), iat, exp });
+      return { credential, expiresAt: exp * 1000 };
     },
     async verify(credential, now) {
       try {
-        if (!Number.isSafeInteger(now) || now < 0) throw denied();
-        if (typeof credential !== 'string' || credential.length > 8192) throw denied();
-        const [version, payload, signature, ...extra] = credential.split('.');
-        if (version !== protocol.version || !payload || !signature || extra.length) throw denied();
-        const bytes = unbase64(signature);
-        if (bytes.length !== 32) throw denied();
-        const signed = encoder.encode(`${protocol.version}.${payload}`);
-        let valid = await crypto.subtle.verify('HMAC', await currentKey(), bytes, signed);
-        if (!valid && options.previousSecret && options.previousFrom! <= now && options.previousUntil! > now) {
-          previous ??= key(options.previousSecret);
-          valid = await crypto.subtle.verify('HMAC', await previous, bytes, signed);
-        }
-        if (!valid) throw denied();
-        const claims: unknown = JSON.parse(decoder.decode(unbase64(payload)));
+        const claims = await tokens.verify(credential, now);
         if (typeof claims !== 'object' || claims === null || Array.isArray(claims)) throw denied();
         const c = claims as Record<string, unknown>;
         if (Object.keys(c).sort().join(',') !== 'aud,email,exp,iat,iss,purpose,sub'

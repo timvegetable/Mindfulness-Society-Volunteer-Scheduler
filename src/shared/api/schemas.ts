@@ -10,6 +10,7 @@ const object = <F extends Schema.Struct.Fields>(fields: F) => strict(Schema.Stru
 const text = Schema.String.check(Schema.isMinLength(1));
 const integer = Schema.Number.check(Schema.isInt());
 const revision = integer.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }));
+export const IdentityProofSchema = object({ credential: text, expiresAt: revision });
 const readSession = object({ credential: text, expiresAt: revision });
 const count = integer.check(Schema.isBetween({ minimum: 0, maximum: 2 }));
 const weekday = Schema.Literals([1, 2, 3, 4, 5, 6, 7]);

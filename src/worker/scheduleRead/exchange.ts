@@ -1,11 +1,9 @@
 import { AppError } from '../../shared/api/errors';
 import { canUseCenter, canUseOperation } from '../api/policies';
-import { makeGoogleVerifier } from '../services/GoogleVerifier';
 import { readBoundedText } from '../services/http';
 import { accountColumns, storedAccount, storedRevision } from './accounts';
-import { readTicketsFor, type ScheduleReadBindings } from './configuration';
+import { identityProofsFor, readTicketsFor, type ScheduleReadBindings } from './configuration';
 
-let cached: { audience: string; verify: ReturnType<typeof makeGoogleVerifier> } | undefined;
 /** The public main Worker validates this result against the shared session schema. */
 export async function exchangeSession(request: Request, env: ScheduleReadBindings & { DB: D1Database }): Promise<Response> {
   const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -27,12 +25,13 @@ export async function exchangeSession(request: Request, env: ScheduleReadBinding
       throw new AppError('INVALID_REQUEST', 'Invalid sign-in request.');
     }
     console.info('Scheduling API operation:', 'session.me');
-    const useSession = request.headers.get('X-Read-Session-Protocol') === '2';
+    const protocol = request.headers.get('X-Read-Session-Protocol');
+    const useSession = protocol === '2' || protocol === '3';
     const tickets = readTicketsFor(env, useSession ? 'session' : 'schedule');
     if (!tickets) throw new AppError('NOT_FOUND', 'This endpoint is unavailable.');
-    if (cached?.audience !== env.OAUTH_CLIENT_ID) cached = { audience: env.OAUTH_CLIENT_ID,
-      verify: makeGoogleVerifier({ audience: env.OAUTH_CLIENT_ID, fetch, now: () => Date.now() }) };
-    const identity = await cached.verify(body.credential);
+    const proofs = protocol === '3' ? identityProofsFor(env) : undefined;
+    if (protocol === '3' && !proofs) throw new AppError('NOT_FOUND', 'This endpoint is unavailable.');
+    const identity = proofs ? await proofs.verify(body.credential, Date.now()) : await (await import('./google')).verifyGoogle(body.credential, env.OAUTH_CLIENT_ID);
     const [accounts, centers, metadata] = await env.DB.batch<Record<string, unknown>>([
       env.DB.prepare(`SELECT ${accountColumns} FROM users WHERE lower(trim(email))=? ORDER BY id`).bind(identity.email),
       env.DB.prepare('SELECT id,name,active,created_at,updated_at FROM centers ORDER BY id'),
