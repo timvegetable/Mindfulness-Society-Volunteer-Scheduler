@@ -62,3 +62,10 @@ Final local validation for this candidate: all 368 tests across 20 files pass, i
 ### Approved measurement deferred by the operator
 
 The operator approved the controlled production measurement of application commit `a9f4710`, but explicitly deferred execution because account usage was low. Do not deploy until the operator resumes the work. Approval persists for this exact scope: compatible reader once, main/client candidate, five explicit Insights reads, one identical main redeploy and five more reads, plus normal sign-in/schedule loading. CPU over nine milliseconds is permitted for this diagnostic, including recording sign-in variation; unexpected authentication/application/resource failures stop it. Always restore both baseline Workers afterward. No migration, new secret/resource, domain mutation, manual synchronization or notification is authorized. Production remains the verified baseline versions above. The application candidate and completed local checks are unchanged.
+
+
+### Operator ended further CPU optimization — 2026-10-18
+
+On resuming, the operator explicitly said to move on from further CPU optimization because the free-plan constraint was less restrictive than initially assumed. This supersedes the deferred measurement instruction above: do not run the `a9f4710` diagnostic merely because its earlier approval persists. No deployment or trial was performed on this resume. Preserve the validated candidate and all measurements in Git; do not represent the historical nine-millisecond objective as achieved. Future release decisions should use actual correctness, invocation failures and quota evidence, without the withdrawn blanket nine-millisecond gate. The last verified production state is the restored baseline; this note does not assert a fresh production deployment inspection.
+
+The remaining issue #6 checklist concerns deployed role-specific/browser behavior, representative errors and quota evidence, and the final release record. Existing production-write/deployment approval boundaries still apply. Removing a CPU gate does not authorize a different deployment or live mutation.

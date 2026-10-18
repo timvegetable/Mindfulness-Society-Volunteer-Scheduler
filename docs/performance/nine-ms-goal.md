@@ -1,6 +1,6 @@
 # Nine-millisecond Worker goal: completion ledger
 
-Objective: ensure that no single Worker request exceeds 9 ms while preserving correct application behavior. Status: active and unachieved. A successful narrow read or test suite cannot close this ledger.
+Historical objective: ensure that no single Worker request exceeds 9 ms while preserving correct application behavior. Status: discontinued at the operator’s request on 2026-10-18, not achieved. The operator removed the blanket nine-millisecond optimization gate and asked to move on. This ledger preserves measurements and unresolved coverage; it is not an active requirement to continue optimization or block release solely on these CPU samples.
 
 Use Cloudflare operation-attributed CPU for production gates, summing caller/private CPU within an external HTTP request. Keep separate external requests separate. Check scheduled and Queue invocations individually. Integer zero means less than reported precision, not no work. Record deployment versions and input scope. Local Node, Inspector, wall time and native Tail zeros are not production CPU proofs.
 
