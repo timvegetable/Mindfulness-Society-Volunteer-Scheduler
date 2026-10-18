@@ -9,9 +9,10 @@ const thirdVolunteer: Volunteer = { id: 'v3', name: 'Cara', email: 'cara@example
 const center = { id: 'c1', name: 'Opal Senior Center', active: true };
 const sessionCenter = { id: center.id, name: center.name };
 const session: Session = { id: 's1', kind: 'center', centerId: 'c1', title: 'opal-senior-center', date: '2099-10-06', start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' };
-const univSession = { ...session, id: 'univ100', kind: 'univ100', centerId: null, title: 'UNIV100: Professor Ada Example (Department: Biology, Room 110, Section 0123)' };
+const univSession: Session = { ...session, id: 'univ100', kind: 'univ100', centerId: null, title: 'UNIV100: Professor Ada Example (Department: Biology, Room 110, Section 0123)' };
 const legacySession = { ...session, id: 'legacy', centerId: null, title: 'Center session: Historical name' };
-const assignment = { id: 'a1', sessionId: 's1', volunteerId: 'v1', scheduleRevision: 1, status: 'assigned' };
+const assignment: ResultOf<'volunteer.dashboard'>['assignments'][number] = { id: 'a1', sessionId: 's1', volunteerId: 'v1', scheduleRevision: 1, status: 'assigned' };
+const univAssignment = { ...assignment, id: 'a2', sessionId: univSession.id };
 const base = { dataRevision: 7, schedulingInputRevision: 2 };
 let callback: (response: { credential: string }) => void;
 let requests: { operation: string; expectedRevision?: number }[];
@@ -22,6 +23,7 @@ let previewRevision: number;
 let configId: string;
 let initialized: number;
 let dashboardRead: Promise<void> | undefined;
+let volunteerDashboardOverride: Partial<Pick<ResultOf<'volunteer.dashboard'>, 'assignments' | 'assignmentSessions' | 'sessions' | 'centers'>> | undefined;
 let insightsGrid: { weekday: number; start: string; end: string; count: number; volunteers: typeof volunteer[] }[];
 let syncPending: ResultOf<'admin.sync.read'>['pending'];
 let syncVolunteers: ResultOf<'admin.sync.read'>['volunteers'];
@@ -42,7 +44,7 @@ async function mount() {
     const body = JSON.parse(String(init?.body)) as { operation: string; expectedRevision?: number }; requests.push(body);
     let data: unknown;
     if (body.operation === 'session.me') data = { ...base, user: { id: 'u1', email: volunteer.email, roles, volunteerId: 'v1', centerIds: ['c1'], active: true }, centers: roles.includes('administrator') || roles.includes('center-contact') ? [center] : [] };
-    else if (body.operation === 'volunteer.dashboard') { await dashboardRead; data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session, univSession], centers: [sessionCenter] }; }
+    else if (body.operation === 'volunteer.dashboard') { await dashboardRead; data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session, univSession], assignmentSessions: [session], centers: [sessionCenter], ...volunteerDashboardOverride }; }
     else if (body.operation === 'admin.schedule.read' || body.operation === 'admin.schedule.rerun') data = adminSchedule ?? { ...base, run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [legacySession, univSession, session, { ...session, id: 's2', title: 'An older readable label', requiredStaffCount: 2 }], volunteers: [volunteer], centers: [sessionCenter], stale: false };
     else if (body.operation === 'admin.schedule.preview') data = { ...base, dataRevision: previewRevision, output: previewOutput ?? { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } };
     else if (body.operation === 'center.candidate.read') data = { ...base, centers: [center], candidates: [] };
@@ -56,7 +58,7 @@ async function mount() {
 }
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
-  requests = []; roles = ['volunteer']; confirmAnswer = false; confirmMessage = ''; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined;
+  requests = []; roles = ['volunteer']; confirmAnswer = false; confirmMessage = ''; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined; volunteerDashboardOverride = undefined;
   syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminSchedule = undefined; previewOutput = undefined;
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
@@ -132,6 +134,29 @@ describe('client DOM behaviors', () => {
     expect(upcoming?.parentElement?.querySelector('tbody')?.textContent).toContain('Opal Senior Center');
     expect(upcoming?.parentElement?.querySelector('tbody')?.textContent).toContain('UNIV100-0123: Professor Ada Example');
     expect(document.body.textContent).not.toContain('opal-senior-center');
+  });
+  it('shows started assignments from their assignment details while Upcoming stays future-only', async () => {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const startedCenter: Session = { ...session, id: 'started-center', title: 'opal-senior-center', date: today, start: '07:00', end: '08:00' };
+    const startedUniv: Session = { ...univSession, id: 'started-univ', date: today, start: '07:00', end: '08:00' };
+    const futureSession: Session = { ...session, id: 'future-center', date: '2099-10-06' };
+    volunteerDashboardOverride = {
+      assignments: [{ ...assignment, sessionId: startedCenter.id }, { ...univAssignment, sessionId: startedUniv.id }],
+      assignmentSessions: [startedCenter, startedUniv], sessions: [futureSession], centers: [sessionCenter],
+    };
+    await signIn();
+
+    const assignmentRows = [...document.querySelectorAll<HTMLTableRowElement>('.assignments-panel tbody tr')];
+    expect(assignmentRows).toHaveLength(2);
+    expect(assignmentRows[0]?.textContent).toContain('Opal Senior Center');
+    expect(assignmentRows[1]?.textContent).toContain('UNIV100-0123: Professor Ada Example');
+    expect(assignmentRows.map(row => row.cells[0]?.textContent)).not.toContain('Session');
+
+    const upcoming = [...document.querySelectorAll('h2')].find(node => node.textContent === 'Upcoming sessions');
+    const upcomingRows = upcoming?.parentElement?.querySelectorAll('tbody tr');
+    expect(upcomingRows).toHaveLength(1);
+    expect(upcoming?.parentElement?.querySelector('tbody')?.textContent).toContain('2099-10-06');
+    expect(upcoming?.parentElement?.querySelector('tbody')?.textContent).not.toContain('UNIV100-0123: Professor Ada Example');
   });
   it('publishes with the reviewed preview revision after explicit confirmation', async () => {
     roles = ['administrator']; confirmAnswer = true; await signIn();

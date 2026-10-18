@@ -16,14 +16,18 @@ export function dashboard(ctx: HandlerContext) {
   return Effect.gen(function* () {
     const volunteer = yield* ownVolunteer(ctx);
     const startsLater = futureStartCheck(ctx.now.getTime());
+    const assignments = currentAssignments(ctx.state).filter((row) => row.volunteerId === volunteer.id);
+    const assignedSessionIds = new Set(assignments.filter((row) => row.status === 'assigned').map((row) => row.sessionId));
+    const assignmentSessions = ctx.state.sessions.filter((session) => assignedSessionIds.has(session.id));
     const sessions = ctx.state.sessions.filter((session) => session.status !== 'cancelled' && startsLater(session.date, session.start, session.timeZone));
     return {
       volunteer,
-      assignments: currentAssignments(ctx.state).filter((row) => row.volunteerId === volunteer.id),
+      assignments,
       recurringAvailability: ctx.state.recurringAvailability.filter((row) => row.volunteerId === volunteer.id),
       availabilityExceptions: ctx.state.availabilityExceptions.filter((row) => row.volunteerId === volunteer.id),
       sessions,
-      centers: sessionCenters(sessions, ctx.state.centers),
+      assignmentSessions,
+      centers: sessionCenters([...sessions, ...assignmentSessions], ctx.state.centers),
     };
   });
 }

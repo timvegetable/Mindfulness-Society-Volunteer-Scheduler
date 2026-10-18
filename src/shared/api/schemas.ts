@@ -86,7 +86,7 @@ const syncResult = object({ ...revisions, ...jobResult, status: SyncStatusSchema
 export const resultSchemas = {
   'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, ...jobResult, status: SyncStatusSchema }),
   'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema), scheduleRead: Schema.optionalKey(readSession), readSession: Schema.optionalKey(readSession) }),
-  'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), centers: Schema.Array(SessionCenterSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
+  'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), assignmentSessions: Schema.optionalKey(Schema.Array(SessionSchema)), centers: Schema.Array(SessionCenterSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
   'volunteer.availability.recurring.update': object({ ...revisions, intervals: Schema.Array(RecurringIntervalSchema) }),
   'volunteer.availability.exception.create': object({ ...revisions, exception: AvailabilityExceptionSchema }),
   'volunteer.assignment.cancel': object({ ...revisions, assignment: AssignmentSchema, exception: AvailabilityExceptionSchema, promotedAssignment: Schema.NullOr(AssignmentSchema), shortfall: Schema.NullOr(ShortfallSchema) }),

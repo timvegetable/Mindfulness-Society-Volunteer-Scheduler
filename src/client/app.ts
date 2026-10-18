@@ -219,8 +219,9 @@ async function refreshView(tab: string, message = '', focusSelector?: string, pr
 function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   content.className = 'content volunteer-workspace';
   const assignments = card('Your assignments'); assignments.classList.add('assignments-panel'); content.append(assignments);
+  const assignmentSessions = data.assignmentSessions ?? data.sessions;
   const rows = data.assignments.filter(item => item.status === 'assigned').map(assignment => {
-    const session = data.sessions.find(item => item.id === assignment.sessionId);
+    const session = assignmentSessions.find(item => item.id === assignment.sessionId);
     const cancel = button('Cancel assignment', async () => {
       if (!confirmAction(`Cancel your assignment for ${session ? sessionText(session, data.centers) : 'this session'}? This will mark you unavailable for the session and notify the coordinator.`)) return;
       const reason = promptAction('Reason for cancellation (optional):') ?? '';
