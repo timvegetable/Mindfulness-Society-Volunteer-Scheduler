@@ -24,6 +24,7 @@ const interval = { start: time, end: time };
 const validInterval = Schema.makeFilter((value: { readonly start: string; readonly end: string }) => value.start < value.end, { parseOptions: { onExcessProperty: 'error' } });
 export const WeeklyIntervalSchema = object({ ...interval, weekday, timeZone: zone }).check(validInterval);
 export const CenterSchema = object({ id: text, name: text, active: Schema.Boolean, ...timestamps });
+export const SessionCenterSchema = object({ id: text, name: text });
 export const VolunteerSchema = object({
   id: text, name: text, email: text, lifecycleStatus: Schema.Literals(['active', 'newly-joined', 'inactive', 'graduated']),
   interviewStatus: Schema.Literals(['complete', 'incomplete']), readinessRank: Schema.NullOr(integer), source: maybeText, ...timestamps,
@@ -79,13 +80,13 @@ export const payloadSchemas = {
   'admin.center.candidate.confirm': object({ candidateId: text }),
 } satisfies Record<Operation, Schema.Top>;
 const revisions = { dataRevision: revision, schedulingInputRevision: revision };
-const scheduleResult = object({ ...revisions, run: Schema.NullOr(SchedulingRunSchema), assignments: Schema.Array(AssignmentSchema), backups: Schema.Array(BackupSchema), shortfalls: Schema.Array(ShortfallSchema), sessions: Schema.Array(SessionSchema), volunteers: Schema.Array(VolunteerSchema), stale: Schema.Boolean });
+const scheduleResult = object({ ...revisions, run: Schema.NullOr(SchedulingRunSchema), assignments: Schema.Array(AssignmentSchema), backups: Schema.Array(BackupSchema), shortfalls: Schema.Array(ShortfallSchema), sessions: Schema.Array(SessionSchema), volunteers: Schema.Array(VolunteerSchema), centers: Schema.Array(SessionCenterSchema), stale: Schema.Boolean });
 const syncResult = object({ ...revisions, ...jobResult, status: SyncStatusSchema, pending: Schema.Array(PendingParticipantSchema),
   imports: Schema.Array(ImportHistorySummarySchema), volunteers: Schema.Array(RosterOptionSchema) });
 export const resultSchemas = {
   'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, ...jobResult, status: SyncStatusSchema }),
   'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema), scheduleRead: Schema.optionalKey(readSession), readSession: Schema.optionalKey(readSession) }),
-  'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
+  'volunteer.dashboard': object({ ...revisions, volunteer: VolunteerSchema, assignments: Schema.Array(AssignmentSchema), recurringAvailability: Schema.Array(RecurringIntervalSchema), availabilityExceptions: Schema.Array(AvailabilityExceptionSchema), sessions: Schema.Array(SessionSchema), centers: Schema.Array(SessionCenterSchema), freshness: Schema.optionalKey(FreshnessSchema) }),
   'volunteer.availability.recurring.update': object({ ...revisions, intervals: Schema.Array(RecurringIntervalSchema) }),
   'volunteer.availability.exception.create': object({ ...revisions, exception: AvailabilityExceptionSchema }),
   'volunteer.assignment.cancel': object({ ...revisions, assignment: AssignmentSchema, exception: AvailabilityExceptionSchema, promotedAssignment: Schema.NullOr(AssignmentSchema), shortfall: Schema.NullOr(ShortfallSchema) }),

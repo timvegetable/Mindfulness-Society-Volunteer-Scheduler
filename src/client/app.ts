@@ -1,5 +1,6 @@
 import { ApiClient, ApiError } from './api';
 import type { Candidate, Session, Volunteer } from '../shared/domain/models';
+import { formatSessionTitle } from '../shared/domain/session-label';
 import type { ResultOf } from '../shared/api/schemas';
 
 declare global {
@@ -74,8 +75,7 @@ const timeText = (time: string) => {
   return `${hour % 12 || 12}:${minutes} ${hour < 12 ? 'AM' : 'PM'}`;
 };
 const timeRange = (start: string, end: string) => `${timeText(start)}–${timeText(end)}`;
-const sessionTitle = (title: string) => title.replace(/^Center session:\s*/i, '');
-const sessionText = (session: Pick<Session, 'title' | 'date' | 'start' | 'end'>) => `${sessionTitle(session.title)} · ${session.date} · ${timeRange(session.start, session.end)}`;
+const sessionText = (session: Session, centers: ResultOf<'volunteer.dashboard'>['centers']) => `${formatSessionTitle(session, centers)} · ${session.date} · ${timeRange(session.start, session.end)}`;
 const unfilledPlaces = (session: Session, assignedCount: number) => session.status === 'cancelled' ? 0 : Math.max(0, session.requiredStaffCount - assignedCount);
 const names = (ids: string[], volunteers: readonly Volunteer[]) => ids.map(id => volunteers.find(volunteer => volunteer.id === id)?.name ?? 'Volunteer').join(', ') || '—';
 const sortedRosterOptions = (volunteers: ResultOf<'admin.sync.read'>['volunteers']) => [...volunteers]
@@ -221,11 +221,11 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   const rows = data.assignments.filter(item => item.status === 'assigned').map(assignment => {
     const session = data.sessions.find(item => item.id === assignment.sessionId);
     const cancel = button('Cancel assignment', async () => {
-      if (!confirmAction(`Cancel your assignment for ${session ? sessionText(session) : 'this session'}? This will mark you unavailable for the session and notify the coordinator.`)) return;
+      if (!confirmAction(`Cancel your assignment for ${session ? sessionText(session, data.centers) : 'this session'}? This will mark you unavailable for the session and notify the coordinator.`)) return;
       const reason = promptAction('Reason for cancellation (optional):') ?? '';
       await api.call('volunteer.assignment.cancel', { assignmentId: assignment.id, reason }, data.dataRevision); await refreshView('volunteer', 'Assignment cancelled.', '.assignments-panel h2');
     }, 'danger quiet');
-    return [session ? scheduleSession(session) : 'Session', cancel];
+    return [session ? scheduleSession(session, data.centers) : 'Session', cancel];
   });
   if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No assignments.');
   const recurring = card('Weekly availability', 'Update in WhenIsGood. Availability is checked automatically every 30 minutes.'); recurring.append(el('p', `Last successful sync: ${syncTime(data.freshness?.lastSuccessAt ?? null)}.${data.freshness?.problem ? ' The latest check failed; your saved availability is preserved.' : ''}`, 'muted sync-freshness')); content.append(recurring);
@@ -247,12 +247,12 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   else empty(exceptions, 'No exceptions.');
   const upcoming = card('Upcoming sessions'); content.append(upcoming); const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const sessions = data.sessions.filter(session => session.date >= today && session.status !== 'cancelled').sort((a, b) => `${a.date}${a.start}`.localeCompare(`${b.date}${b.start}`));
-  sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [sessionTitle(session.title), session.date, timeRange(session.start, session.end), session.status]))) : empty(upcoming, 'No upcoming sessions.');
+  sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [formatSessionTitle(session, data.centers), session.date, timeRange(session.start, session.end), session.status]))) : empty(upcoming, 'No upcoming sessions.');
 }
 
-function scheduleSession(session: Session) {
+function scheduleSession(session: Session, centers: ResultOf<'admin.schedule.read'>['centers']) {
   const cell = el('div', '', 'schedule-session');
-  append(cell, el('span', sessionTitle(session.title), 'session-name'), el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
+  append(cell, el('span', formatSessionTitle(session, centers), 'session-name'), el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
   return cell;
 }
 function scheduleShortfall(count: number) {
@@ -279,7 +279,7 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     description.textContent = 'Preview · Unpublished changes';
     staleNotice.hidden = true; previewButton.textContent = 'Refresh preview'; previewButton.classList.add('quiet'); back.hidden = false;
     scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.filter(session => session.status !== 'cancelled').map(session => [
-      scheduleSession(session), names(preview.output.assignments.filter(item => item.sessionId === session.id).map(item => item.volunteerId), data.volunteers), names(preview.output.backups.filter(item => item.sessionId === session.id).sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, preview.output.assignments.filter(item => item.sessionId === session.id).length)),
+      scheduleSession(session, data.centers), names(preview.output.assignments.filter(item => item.sessionId === session.id).map(item => item.volunteerId), data.volunteers), names(preview.output.backups.filter(item => item.sessionId === session.id).sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, preview.output.assignments.filter(item => item.sessionId === session.id).length)),
     ])));
     publish.disabled = false; publish.hidden = false;
   });
@@ -291,7 +291,7 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     description.textContent = publishedDescription; staleNotice.hidden = false; scheduleArea.replaceChildren();
     if (!data.sessions.length) empty(scheduleArea, 'No sessions have been created. Confirm a center proposal to add one.');
     else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.map(session => [
-      scheduleSession(session), session.status, names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
+      scheduleSession(session, data.centers), session.status, names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
     ])));
   }
   renderPublished();

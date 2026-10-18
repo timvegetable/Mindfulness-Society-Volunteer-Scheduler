@@ -7,6 +7,7 @@ import { ErrorEnvelopeSchema, payloadSchemas, RequestEnvelopeSchema, resultSchem
 const weekly = { weekday: 1, start: '09:00', end: '12:00', timeZone: 'America/New_York' };
 const volunteer = { id: 'v1', name: 'Volunteer', email: 'v@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 1 };
 const center = { id: 'c1', name: 'Center', active: true };
+const sessionCenter = { id: center.id, name: center.name };
 const user = { id: 'u1', email: 'v@example.test', roles: ['volunteer'], volunteerId: 'v1', centerIds: [], active: true };
 const candidate = { id: 'c1', centerId: 'center1', ...weekly, requestedStaffCount: 1, status: 'candidate' };
 const session = { id: 's1', kind: 'center', centerId: 'c1', title: 'Center', date: '2026-10-05', start: '10:00', end: '11:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' };
@@ -15,7 +16,7 @@ const exception = { id: 'e1', volunteerId: 'v1', date: '2026-10-05', kind: 'unav
 const recurring = { id: 'r1', volunteerId: 'v1', ...weekly };
 const coverage = { volunteers: [volunteer], requestedCount: 1, shortfall: 0 };
 const importRun = { id: 'i1', source: 'whenIsGood', contentHash: 'hash', status: 'staged', unmatched: [], stagedAvailability: [{ id: 'participant1', name: 'Volunteer', email: 'v@example.test', volunteerId: 'v1', intervals: [weekly] }] };
-const schedule = { run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [session], volunteers: [volunteer], stale: true };
+const schedule = { run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [session], volunteers: [volunteer], centers: [sessionCenter], stale: true };
 const payloads: Record<string, unknown> = {
   'admin.sync.read': {}, 'admin.sync.now': {},
   'session.me': {}, 'volunteer.dashboard': {}, 'volunteer.availability.recurring.update': { intervals: [weekly] },
@@ -30,7 +31,7 @@ const syncView = { status: { lastAttemptAt: null, lastSuccessAt: null, effective
 const results: Record<string, object> = {
   'admin.sync.read': syncView, 'admin.sync.now': { status: syncView.status },
   'session.me': { user, centers: [center] },
-  'volunteer.dashboard': { volunteer, assignments: [assignment], recurringAvailability: [recurring], availabilityExceptions: [exception], sessions: [session] },
+  'volunteer.dashboard': { volunteer, assignments: [assignment], recurringAvailability: [recurring], availabilityExceptions: [exception], sessions: [session], centers: [sessionCenter] },
   'volunteer.availability.recurring.update': { intervals: [recurring] }, 'volunteer.availability.exception.create': { exception },
   'volunteer.assignment.cancel': { assignment, exception, promotedAssignment: null, shortfall: { sessionId: 's1', required: 1, assigned: 0, missing: 1 } },
   'admin.schedule.read': schedule, 'admin.schedule.rerun': schedule, 'admin.schedule.preview': { output: { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } },

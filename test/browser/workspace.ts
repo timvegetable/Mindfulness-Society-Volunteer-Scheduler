@@ -6,6 +6,7 @@ import type { ResultOf } from '../../src/shared/api/schemas';
 
 const revisions = { dataRevision: 1, schedulingInputRevision: 1 };
 const center = { id: 'synthetic-center', name: 'Synthetic Center', active: true };
+const sessionCenter = { id: center.id, name: center.name };
 const volunteers = Array.from({ length: 40 }, (_, i) => ({
   id: `synthetic-v${i}`, name: `Synthetic Volunteer ${String(i + 1).padStart(2, '0')}`,
   email: `volunteer${i}@example.test`, lifecycleStatus: 'active' as const,
@@ -17,7 +18,7 @@ const sessions = volunteers.map((_, i) => ({
   timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
 }));
 const schedule: ResultOf<'admin.schedule.read'> = {
-  ...revisions, run: null, sessions, volunteers, assignments: [], backups: [], shortfalls: [], stale: false,
+  ...revisions, run: null, sessions, volunteers, centers: [sessionCenter], assignments: [], backups: [], shortfalls: [], stale: false,
 };
 const insights: ResultOf<'admin.insights.read'> = {
   ...revisions, leftoverVolunteers: volunteers,

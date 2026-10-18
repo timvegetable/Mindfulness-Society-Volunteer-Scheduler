@@ -14,7 +14,7 @@ export async function prepareSchedule(state: Snapshot): Promise<PreparedSchedule
   }
   const view = decodeResult('admin.schedule.read', { ...scheduleView(stored), dataRevision: state.dataRevision,
     schedulingInputRevision: state.schedulingInputRevision });
-  const { stale: _stale, dataRevision: _data, schedulingInputRevision: _input, ...core } = view;
+  const { stale: _stale, dataRevision: _data, schedulingInputRevision: _input, centers: _centers, ...core } = view;
   const body = JSON.stringify(core);
   const parts: string[] = [];
   for (let offset = 0; offset < body.length;) {

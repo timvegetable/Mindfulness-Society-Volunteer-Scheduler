@@ -50,7 +50,7 @@ describe('client API intent and response handling', () => {
   });
 });
 
-const scheduleData = { dataRevision: 1, schedulingInputRevision: 1, run: null, assignments: [], backups: [], shortfalls: [], sessions: [], volunteers: [], stale: true };
+const scheduleData = { dataRevision: 1, schedulingInputRevision: 1, run: null, assignments: [], backups: [], shortfalls: [], sessions: [], volunteers: [], centers: [], stale: true };
 const reply = (data: unknown) => new Response(JSON.stringify({ ok: true, data }));
 const sessionData = (credential: string, expiresAt = Date.now() + 600000) => ({ dataRevision: 1, schedulingInputRevision: 1,
   user: { id: 'admin', email: 'admin@example.test', roles: ['administrator'], volunteerId: null, centerIds: [], active: true },

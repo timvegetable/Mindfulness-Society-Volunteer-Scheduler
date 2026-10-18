@@ -48,6 +48,8 @@ test('volunteer UI shows saved weekly availability and saves date exceptions', a
 
 test('volunteer UI confirms cancellation and removes the assignment in memory', async ({ page }) => {
   await page.goto('/__role-check');
+  await expect(page.locator('.assignments-panel tbody')).toContainText('North Example Center');
+  await expect(page.locator('.assignments-panel tbody')).not.toContainText('Example mindfulness session');
   await expect(page.getByRole('button', { name: 'Cancel assignment', exact: true })).toBeVisible();
   page.on('dialog', dialog => dialog.type() === 'prompt' ? dialog.accept('UI test cancellation') : dialog.accept());
   await page.getByRole('button', { name: 'Cancel assignment', exact: true }).click();

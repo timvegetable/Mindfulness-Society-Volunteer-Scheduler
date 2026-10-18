@@ -65,8 +65,8 @@ const operationTableKeys: Partial<Record<Operation, readonly (typeof tables[numb
   'admin.sync.read': ['users', 'volunteers', 'imports', 'synchronizations'],
   'admin.sync.now': synchronizationHeadKeys,
   'admin.schedule.preview': ['users', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'recurringAvailability', 'availabilityExceptions'],
-  'admin.schedule.read': ['users', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'backups'],
-  'volunteer.dashboard': ['users', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'recurringAvailability', 'availabilityExceptions', 'synchronizations'],
+  'admin.schedule.read': ['users', 'centers', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'backups'],
+  'volunteer.dashboard': ['users', 'centers', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'recurringAvailability', 'availabilityExceptions', 'synchronizations'],
   'center.candidate.read': ['users', 'centers', 'candidateSchedules', 'volunteers', 'recurringAvailability'],
   'admin.insights.read': ['users', 'volunteers', 'recurringAvailability', 'schedulingRuns', 'assignments'],
 };
