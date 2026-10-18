@@ -140,6 +140,9 @@ describe('authorization, revisions and durable idempotency', () => {
     const before = await app.read();
     expect(await app.rawRequest({ ...raw, payload: { intervals: [interval] } })).toBe(first);
     expect(await app.read()).toEqual(before); expect(app.notifications).toHaveLength(1);
+    expect(app.notifications[0]).toMatchObject({ subject: 'Weekly availability updated: Alex Example' });
+    expect(app.notifications[0]!.text).toContain('Monday: 9:00 AM–5:00 PM (Eastern Time)');
+    expect(app.notifications[0]!.text).not.toMatch(/volunteer\.availability|Data revision/);
     expect(JSON.parse(await app.rawRequest({ ...raw, payload: { intervals: [] } }))).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
   });
   it('allows only one different request to commit at a competing revision', async () => {
@@ -226,6 +229,12 @@ describe('schedule publication and cancellation', () => {
     expect(result.promotedAssignment?.volunteerId).toBe('volunteer-2'); expect(result.shortfall).toBeNull();
     const state = await app.read(); expect(state.backups.find(row => row.id === 'backup-2')?.status).toBe('promoted'); expect(state.backups.find(row => row.id === 'backup-3')?.position).toBe(1);
     expect(state.schedulingInputRevision).toBe(1); expect(state.dataRevision).toBe(1); expect(app.notifications).toHaveLength(1);
+    expect(app.notifications[0]).toMatchObject({ subject: 'Assignment cancelled: Alex Example' });
+    expect(app.notifications[0]!.text).toContain('Session: North Center');
+    expect(app.notifications[0]!.text).toContain('Monday, October 5, 2026');
+    expect(app.notifications[0]!.text).toContain('10:00 AM–11:00 AM (Eastern Time)');
+    expect(app.notifications[0]!.text).toContain('Reason: Away');
+    expect(app.notifications[0]!.text).toContain('Review the schedule for current staffing and backup coverage.');
   });
   it.each(['lifecycle', 'availability', 'exception', 'overlap'] as const)('rechecks backup %s eligibility at cancellation time', async reason => {
     const app = await application(); await addPublishedFixture(app);
@@ -252,6 +261,22 @@ describe('schedule publication and cancellation', () => {
     const result = success(await app.request('volunteer.availability.recurring.update', { intervals: [] }, 'volunteer', metadata));
     expect(result.dataRevision).toBe(1); expect((await app.read()).recurringAvailability.some(row => row.volunteerId === 'volunteer-1')).toBe(false);
     expect(await app.request('volunteer.availability.recurring.update', { intervals: [] }, 'volunteer', metadata)).toEqual({ ok: true, data: result }); expect(app.notifications).toHaveLength(1);
+    expect(app.notifications[0]!.text).toContain('No weekly availability is currently saved.');
+  });
+  it.each(['available', 'unavailable'] as const)('notifies coordinators of an %s date exception in readable local terms', async kind => {
+    const app = await application();
+    const metadata = { expectedRevision: 0, idempotencyKey: `notification-${kind}` };
+    const payload = { date: '2026-11-02', kind, start: '00:00', end: '12:30', timeZone: interval.timeZone, reason: 'Travel plans' };
+    const result = success(await app.request('volunteer.availability.exception.create', payload, 'volunteer', metadata));
+    expect(app.notifications).toHaveLength(1);
+    expect(app.notifications[0]).toMatchObject({ to: ['admin@example.invalid'], subject: 'Availability updated: Alex Example' });
+    expect(app.notifications[0]!.text).toContain(`${kind === 'available' ? 'Available' : 'Unavailable'}: Monday, November 2, 2026`);
+    expect(app.notifications[0]!.text).toContain('12:00 AM–12:30 PM (Eastern Time)');
+    expect(app.notifications[0]!.text).toContain('Reason: Travel plans');
+    expect(app.notifications[0]!.text).toContain('Submitted by: alex@example.test');
+    expect(app.notifications[0]!.text).not.toMatch(/volunteer\.availability|Data revision/);
+    expect(await app.request('volunteer.availability.exception.create', payload, 'volunteer', metadata)).toEqual({ ok: true, data: result });
+    expect(app.notifications).toHaveLength(1);
   });
 });
 
