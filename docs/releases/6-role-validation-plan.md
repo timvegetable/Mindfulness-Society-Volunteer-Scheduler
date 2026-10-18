@@ -1,6 +1,6 @@
 # Issue 6: temporary live role validation
 
-Status: prepared for operator approval on 2026-10-18. No accounts or fixture records have been created. This plan grants temporary production access and therefore requires explicit approval under README's production-write procedure. It requires no deployment, migration, new Google account, notification or WhenIsGood change.
+Status: approved and executed on 2026-10-18; both live role checks passed and all six fixture records were removed. A missed prepared-schedule refresh required an additional, separately approved fenced backfill; see the execution record below. No deployment, migration, new Google account, notification or WhenIsGood change occurred.
 
 ## Account mapping and access
 
@@ -35,3 +35,15 @@ If a fixture cannot be created and removed safely under the deployed schema/curr
 ## Approval scope
 
 Approve temporary enrollment of the two specified Gmail accounts with the roles above, insertion and removal of the six fictional records, the two monotonic revision advances, Google sign-ins and read-only UI checks, private backup/read-only comparisons, and guarded cleanup. This approval does not cover another deployment, source changes, real roster/proposal/assignment edits, notifications, a billing change or continuing account access after validation.
+
+## Execution and cleanup
+
+The operator explicitly approved the plan. A fresh owner-only backup passed integrity/foreign-key checks. Setup and cleanup passed offline and native disposable D1 round-trip checks, including failed-batch rollback and duplicate-setup rejection. Guarded production setup created exactly the six specified records; a private during-test export confirmed every pre-existing application row was preserved.
+
+The operator completed Google sign-in for each account. The volunteer-only UI exposed My availability, its single Monday 00:00–00:30 marker interval and sync freshness, with no administrator or source-participant surfaces. The contact-only UI exposed only its own cancelled marker proposal, no real-center proposals or administrator surfaces, and disabled proposal creation because its center was inactive. Navigation and Reload view passed for both roles. No form was submitted. After exact-row/reference/revision-guarded cleanup, the still-open contact session was deliberately reloaded to verify current-account revocation; it returned “This account is not active” and signed out. Both Gmail user records and all other fixtures are absent.
+
+The fixture plan missed the prepared-schedule cache invalidation caused by inserting/deleting a volunteer through direct SQL. The schedule-view trigger advanced from 0 to 2 while the stored representation remained at source version 0, causing the final administrator schedule read to return HTTP 500. Domain rows and prepared response bytes were intact. An exact offline reader replay returned 200/70 rows before setup and the same observed 500 after cleanup. The existing `prepareScheduleBackfill` owner produced a four-statement repair that restored 200/70 rows on disposable SQLite and native D1, retaining response bytes/digest and passing stale-revision and failure-rollback checks.
+
+The operator separately approved that additional backfill and verification. Its fenced production batch succeeded; the administrator schedule and Reload view again displayed 70 rows. Compared with the original private backup, all 19 other application tables are identical, including users, roster, assignments, exceptions, imports/provenance, schedule response parts and synchronization records. The only differences are the expected domain/scheduling-input/schedule-view revision advances (each +2) and `schedule_read_manifest.source_version` advancing to 2. Integrity and foreign-key checks pass. The administrator account remains unchanged. No backup restore or code deployment was performed.
+
+Future direct roster maintenance must include prepared-schedule refresh in the same reviewed maintenance scope. A data-only insert/delete round trip does not establish reader readiness when trigger-maintained projection versions advance.
