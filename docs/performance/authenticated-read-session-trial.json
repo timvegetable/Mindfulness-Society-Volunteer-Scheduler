@@ -1,0 +1,57 @@
+{
+  "sourceCommit": "55e53c1",
+  "metric": "Cloudflare live-tail cpuTime per invocation in milliseconds. Sequential main/private requests paired by path and timestamps.",
+  "result": "rolled back: first observed sign-in exceeded 9 ms combined gate",
+  "signInCombinedCpuMs": 15,
+  "scheduleCombinedCpuMs": 6,
+  "observations": [
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api",
+      "cpuMs": 3,
+      "wallMs": 359,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792289989681,
+      "version": "a1377b73-30be-41ac-a33a-7a73e475933e"
+    },
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api/schedule",
+      "cpuMs": 1,
+      "wallMs": 37,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792289990068,
+      "version": "a1377b73-30be-41ac-a33a-7a73e475933e"
+    },
+    {
+      "worker": "reader",
+      "operation": "session.me",
+      "path": "/internal/session",
+      "cpuMs": 12,
+      "wallMs": 110,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792289989908,
+      "version": "9950b448-0a2b-4816-b170-82e43975754a"
+    },
+    {
+      "worker": "reader",
+      "operation": "admin.schedule.read",
+      "path": "/api/schedule",
+      "cpuMs": 5,
+      "wallMs": 32,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792289990071,
+      "version": "9950b448-0a2b-4816-b170-82e43975754a"
+    }
+  ],
+  "rollback": {
+    "main": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6",
+    "reader": "d679ba8e-64d3-4546-8fdf-055960777e67"
+  }
+}

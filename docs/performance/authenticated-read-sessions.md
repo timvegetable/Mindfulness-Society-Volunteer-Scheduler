@@ -1,6 +1,12 @@
 # Remaining authenticated CPU work
 
-Status: candidate implementation on `codex/authenticated-cpu-budget`; production remains application source `2ecbe19`. No new deployment or domain mutation has been performed for this candidate.
+Status: candidate `55e53c1` on `codex/authenticated-cpu-budget` was trialled with explicit approval and rolled back after its first observed sign-in failed the CPU gate. Production is restored to application source `2ecbe19`. No domain mutation was performed.
+
+## Production trial result
+
+The [sanitized trial record](authenticated-read-session-trial.json) records successful HTTP responses but sign-in CPU of 12 ms in the private reader and 3 ms in main (15 ms combined). Its immediately following prepared schedule read used 5 + 1 = 6 ms. The private invocation alone exceeded the Free request limit, so this is not merely a stricter combined-budget failure. Both Workers were rolled back to the versions below; Wrangler confirmed each at 100% of traffic. No identical redeploy or further endpoint sampling was performed after the failure, and the other R2 reads remain unverified in production.
+
+This single sign-in sample establishes insufficient headroom, not the exact cause of the increase over the earlier 8 ms private baseline. R2 still performs one ticket signature; it does not remove the Google verifier, D1 account/center read, or first-use module work from sign-in. The next bounded experiment should separate Google credential verification from account lookup and session-ticket issuance into different external requests, using a short-lived, audience-bound signed identity handoff and a fresh current-account authorization check at issuance. That design requires review before implementation; do not cache permissions or weaken Google verification to meet the budget. Remaining generic-read CPU benefits cannot be claimed from this aborted trial.
 
 ## Baseline and diagnosis
 
