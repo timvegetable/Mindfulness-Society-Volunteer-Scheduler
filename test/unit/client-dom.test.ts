@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { startClient } from '../../src/client/app';
-import type { Role } from '../../src/shared/domain/models';
+import type { Role, Session, Volunteer } from '../../src/shared/domain/models';
 import type { ResultOf } from '../../src/shared/api/schemas';
-const volunteer = { id: 'v1', name: 'Alice', email: 'alice@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 1 };
-const secondVolunteer = { id: 'v2', name: 'Bob', email: 'bob@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 2 };
-const thirdVolunteer = { id: 'v3', name: 'Cara', email: 'cara@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 3 };
+const volunteer: Volunteer = { id: 'v1', name: 'Alice', email: 'alice@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 1 };
+const secondVolunteer: Volunteer = { id: 'v2', name: 'Bob', email: 'bob@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 2 };
+const thirdVolunteer: Volunteer = { id: 'v3', name: 'Cara', email: 'cara@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 3 };
 const center = { id: 'c1', name: 'Opal Senior Center', active: true };
 const sessionCenter = { id: center.id, name: center.name };
-const session = { id: 's1', kind: 'center', centerId: 'c1', title: 'opal-senior-center', date: '2099-10-06', start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' };
+const session: Session = { id: 's1', kind: 'center', centerId: 'c1', title: 'opal-senior-center', date: '2099-10-06', start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' };
 const univSession = { ...session, id: 'univ100', kind: 'univ100', centerId: null, title: 'UNIV100: Professor Ada Example (Department: Biology, Room 110, Section 0123)' };
 const legacySession = { ...session, id: 'legacy', centerId: null, title: 'Center session: Historical name' };
 const assignment = { id: 'a1', sessionId: 's1', volunteerId: 'v1', scheduleRevision: 1, status: 'assigned' };
@@ -25,6 +25,8 @@ let dashboardRead: Promise<void> | undefined;
 let insightsGrid: { weekday: number; start: string; end: string; count: number; volunteers: typeof volunteer[] }[];
 let syncPending: ResultOf<'admin.sync.read'>['pending'];
 let syncVolunteers: ResultOf<'admin.sync.read'>['volunteers'];
+let adminSchedule: ResultOf<'admin.schedule.read'> | undefined;
+let previewOutput: ResultOf<'admin.schedule.preview'>['output'] | undefined;
 const pendingParticipant = (id: string, name: string): ResultOf<'admin.sync.read'>['pending'][number] => ({
   id, name, email: `${id}@example.test`, intervals: [], reason: 'new', resolvable: true, present: true,
   firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z',
@@ -41,8 +43,8 @@ async function mount() {
     let data: unknown;
     if (body.operation === 'session.me') data = { ...base, user: { id: 'u1', email: volunteer.email, roles, volunteerId: 'v1', centerIds: ['c1'], active: true }, centers: roles.includes('administrator') || roles.includes('center-contact') ? [center] : [] };
     else if (body.operation === 'volunteer.dashboard') { await dashboardRead; data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session, univSession], centers: [sessionCenter] }; }
-    else if (body.operation === 'admin.schedule.read' || body.operation === 'admin.schedule.rerun') data = { ...base, run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [legacySession, univSession, session, { ...session, id: 's2', title: 'An older readable label', requiredStaffCount: 2 }], volunteers: [volunteer], centers: [sessionCenter], stale: false };
-    else if (body.operation === 'admin.schedule.preview') data = { ...base, dataRevision: previewRevision, output: { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } };
+    else if (body.operation === 'admin.schedule.read' || body.operation === 'admin.schedule.rerun') data = adminSchedule ?? { ...base, run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [legacySession, univSession, session, { ...session, id: 's2', title: 'An older readable label', requiredStaffCount: 2 }], volunteers: [volunteer], centers: [sessionCenter], stale: false };
+    else if (body.operation === 'admin.schedule.preview') data = { ...base, dataRevision: previewRevision, output: previewOutput ?? { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } };
     else if (body.operation === 'center.candidate.read') data = { ...base, centers: [center], candidates: [] };
     else if (body.operation === 'admin.sync.read' || body.operation === 'admin.sync.now') data = { ...base,
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
@@ -55,7 +57,7 @@ async function mount() {
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
   requests = []; roles = ['volunteer']; confirmAnswer = false; confirmMessage = ''; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined;
-  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }];
+  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminSchedule = undefined; previewOutput = undefined;
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
 });
@@ -155,6 +157,39 @@ describe('client DOM behaviors', () => {
     expect(document.querySelector('h2')?.textContent).toBe('Session schedule');
     click('Preview schedule'); await settle(); click('Publish schedule'); await settle();
     expect(requests.find(item => item.operation === 'admin.schedule.rerun')?.expectedRevision).toBe(7);
+  });
+  it('groups published rows from published staffing and rebuilds preview groups from preview staffing', async () => {
+    roles = ['administrator'];
+    const sessions: ResultOf<'admin.schedule.read'>['sessions'] = ['2026-10-02', '2026-10-09', '2026-10-16'].map((date, index) => ({ ...session, id: `weekly-${index}`, date }));
+    const publishedBackups = sessions.flatMap(item => [
+      { id: `backup-a-${item.id}`, sessionId: item.id, volunteerId: 'v2', scheduleRevision: 1, position: 1, status: 'available' as const },
+      { id: `backup-b-${item.id}`, sessionId: item.id, volunteerId: 'v3', scheduleRevision: 1, position: 2, status: 'available' as const },
+    ]);
+    adminSchedule = { ...base, run: null, sessions, assignments: sessions.map(item => ({ id: `assignment-${item.id}`, sessionId: item.id, volunteerId: 'v1', scheduleRevision: 1, status: 'assigned' as const })), backups: publishedBackups, shortfalls: [], volunteers: [volunteer, secondVolunteer, thirdVolunteer], centers: [sessionCenter], stale: false };
+    previewOutput = { assignments: sessions.map((item, index) => ({ sessionId: item.id, volunteerId: index === 1 ? 'v2' : 'v1' })), backups: publishedBackups.map(({ sessionId, volunteerId, position }) => ({ sessionId, volunteerId, position })), shortfalls: [] };
+    await signIn();
+
+    const scheduleRows = () => [...document.querySelectorAll('.schedule-panel tbody tr')];
+    expect(scheduleRows()).toHaveLength(1);
+    expect(scheduleRows()[0]?.textContent).toContain('Friday');
+    expect(scheduleRows()[0]?.querySelector('details summary')?.textContent).toContain('3 dates');
+
+    click('Preview schedule'); await settle();
+    expect(scheduleRows()).toHaveLength(3);
+    expect(document.querySelector('.schedule-panel tbody')?.textContent).toContain('2026-10-09');
+    click('Back to published schedule'); await settle();
+    expect(scheduleRows()).toHaveLength(1);
+    expect(scheduleRows()[0]?.querySelector('details summary')?.textContent).toContain('3 dates');
+
+    previewOutput = {
+      assignments: sessions.map(item => ({ sessionId: item.id, volunteerId: 'v1' })),
+      backups: sessions.flatMap((item, index) => (index === 1 ? ['v3', 'v2'] : ['v2', 'v3']).map((volunteerId, position) => ({ sessionId: item.id, volunteerId, position: position + 1 }))),
+      shortfalls: [],
+    };
+    click('Preview schedule'); await settle();
+    expect(scheduleRows()).toHaveLength(3);
+    click('Back to published schedule'); await settle();
+    expect(scheduleRows()).toHaveLength(1);
   });
   it('blocks publication if preview and displayed session revisions differ', async () => {
     roles = ['administrator']; previewRevision = 8; confirmAnswer = true; await signIn(); click('Preview schedule'); await settle();

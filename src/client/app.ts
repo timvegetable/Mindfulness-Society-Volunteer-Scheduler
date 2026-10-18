@@ -1,6 +1,7 @@
 import { ApiClient, ApiError } from './api';
 import type { Candidate, Session, Volunteer } from '../shared/domain/models';
 import { formatSessionTitle } from '../shared/domain/session-label';
+import { groupWeeklyScheduleRows, type GroupedScheduleRow, type ScheduleOccurrence } from '../shared/domain/schedule-presentation';
 import type { ResultOf } from '../shared/api/schemas';
 
 declare global {
@@ -77,7 +78,7 @@ const timeText = (time: string) => {
 const timeRange = (start: string, end: string) => `${timeText(start)}–${timeText(end)}`;
 const sessionText = (session: Session, centers: ResultOf<'volunteer.dashboard'>['centers']) => `${formatSessionTitle(session, centers)} · ${session.date} · ${timeRange(session.start, session.end)}`;
 const unfilledPlaces = (session: Session, assignedCount: number) => session.status === 'cancelled' ? 0 : Math.max(0, session.requiredStaffCount - assignedCount);
-const names = (ids: string[], volunteers: readonly Volunteer[]) => ids.map(id => volunteers.find(volunteer => volunteer.id === id)?.name ?? 'Volunteer').join(', ') || '—';
+const names = (ids: readonly string[], volunteers: readonly Volunteer[]) => ids.map(id => volunteers.find(volunteer => volunteer.id === id)?.name ?? 'Volunteer').join(', ') || '—';
 const sortedRosterOptions = (volunteers: ResultOf<'admin.sync.read'>['volunteers']) => [...volunteers]
   .sort((left, right) => rosterOptionCollator.compare(left.name, right.name)
     || rosterOptionCollator.compare(left.email, right.email)
@@ -225,7 +226,7 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
       const reason = promptAction('Reason for cancellation (optional):') ?? '';
       await api.call('volunteer.assignment.cancel', { assignmentId: assignment.id, reason }, data.dataRevision); await refreshView('volunteer', 'Assignment cancelled.', '.assignments-panel h2');
     }, 'danger quiet');
-    return [session ? scheduleSession(session, data.centers) : 'Session', cancel];
+    return [session ? assignmentSession(session, data.centers) : 'Session', cancel];
   });
   if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No assignments.');
   const recurring = card('Weekly availability', 'Update in WhenIsGood. Availability is checked automatically every 30 minutes.'); recurring.append(el('p', `Last successful sync: ${syncTime(data.freshness?.lastSuccessAt ?? null)}.${data.freshness?.problem ? ' The latest check failed; your saved availability is preserved.' : ''}`, 'muted sync-freshness')); content.append(recurring);
@@ -250,13 +251,57 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [formatSessionTitle(session, data.centers), session.date, timeRange(session.start, session.end), session.status]))) : empty(upcoming, 'No upcoming sessions.');
 }
 
-function scheduleSession(session: Session, centers: ResultOf<'admin.schedule.read'>['centers']) {
+const shortScheduleDate = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+const fullScheduleDate = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+function assignmentSession(session: Session, centers: ResultOf<'admin.schedule.read'>['centers']) {
   const cell = el('div', '', 'schedule-session');
   append(cell, el('span', formatSessionTitle(session, centers), 'session-name'), el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
   return cell;
 }
+
+function scheduleSession(group: GroupedScheduleRow, centers: ResultOf<'admin.schedule.read'>['centers']) {
+  const session = group.occurrences[0]!.session;
+  const cell = el('div', '', 'schedule-session');
+  append(cell, el('span', formatSessionTitle(session, centers), 'session-name'));
+  if (group.weekly) {
+    append(cell, el('span', `${days[group.weekday - 1]} · ${timeRange(session.start, session.end)}`, 'session-time'));
+    const first = group.occurrences[0]!.session.date;
+    const last = group.occurrences[group.occurrences.length - 1]!.session.date;
+    const details = el('details', '', 'schedule-dates');
+    details.append(el('summary', `View ${group.occurrences.length} dates · ${shortScheduleDate.format(new Date(`${first}T12:00:00Z`))} to ${shortScheduleDate.format(new Date(`${last}T12:00:00Z`))}`));
+    const dateList = el('ol');
+    for (const occurrence of group.occurrences) {
+      const actualDate = el('time', fullScheduleDate.format(new Date(`${occurrence.session.date}T12:00:00Z`)));
+      actualDate.dateTime = occurrence.session.date;
+      const item = el('li'); item.append(actualDate); dateList.append(item);
+    }
+    details.append(dateList); cell.append(details);
+  } else append(cell, el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
+  return cell;
+}
 function scheduleShortfall(count: number) {
   return el('span', String(count), count > 0 ? 'shortfall has-shortfall' : 'shortfall');
+}
+
+type ScheduleAssignmentDisplay = { sessionId: string; volunteerId: string; status?: 'assigned' | 'cancelled' };
+type ScheduleBackupDisplay = { sessionId: string; volunteerId: string; position: number; status?: 'available' | 'promoted' | 'skipped' };
+
+function scheduleOccurrences(
+  sessions: readonly Session[],
+  assignments: readonly ScheduleAssignmentDisplay[],
+  backups: readonly ScheduleBackupDisplay[],
+): ScheduleOccurrence[] {
+  return sessions.map(session => {
+    const assignedVolunteerIds = assignments.filter(item => item.sessionId === session.id && (item.status === undefined || item.status === 'assigned')).map(item => item.volunteerId);
+    const orderedBackupVolunteerIds = backups.filter(item => item.sessionId === session.id && (item.status === undefined || item.status === 'available'))
+      .sort((left, right) => left.position - right.position).map(item => item.volunteerId);
+    return { session, assignedVolunteerIds, orderedBackupVolunteerIds, unfilledCount: unfilledPlaces(session, assignedVolunteerIds.length) };
+  });
+}
+
+function scheduleGroups(sessions: readonly Session[], assignments: readonly ScheduleAssignmentDisplay[], backups: readonly ScheduleBackupDisplay[]) {
+  return groupWeeklyScheduleRows(scheduleOccurrences(sessions, assignments, backups));
 }
 
 function scheduleView(data: ResultOf<'admin.schedule.read'>) {
@@ -278,9 +323,11 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     schedule.querySelector('h2')!.textContent = 'Schedule preview';
     description.textContent = 'Preview · Unpublished changes';
     staleNotice.hidden = true; previewButton.textContent = 'Refresh preview'; previewButton.classList.add('quiet'); back.hidden = false;
-    scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.filter(session => session.status !== 'cancelled').map(session => [
-      scheduleSession(session, data.centers), names(preview.output.assignments.filter(item => item.sessionId === session.id).map(item => item.volunteerId), data.volunteers), names(preview.output.backups.filter(item => item.sessionId === session.id).sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, preview.output.assignments.filter(item => item.sessionId === session.id).length)),
-    ])));
+    const previewSessions = data.sessions.filter(session => session.status !== 'cancelled');
+    scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(previewSessions, preview.output.assignments, preview.output.backups).map(group => {
+      const occurrence = group.occurrences[0]!;
+      return [scheduleSession(group, data.centers), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
+    })));
     publish.disabled = false; publish.hidden = false;
   });
   toolbar.append(append(el('div', '', 'actions'), previewButton, publish, back)); schedule.append(scheduleArea);
@@ -290,9 +337,10 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     previewButton.textContent = 'Preview schedule'; previewButton.classList.remove('quiet'); schedule.querySelector('h2')!.textContent = 'Session schedule';
     description.textContent = publishedDescription; staleNotice.hidden = false; scheduleArea.replaceChildren();
     if (!data.sessions.length) empty(scheduleArea, 'No sessions have been created. Confirm a center proposal to add one.');
-    else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.map(session => [
-      scheduleSession(session, data.centers), session.status, names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
-    ])));
+    else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(data.sessions, data.assignments, data.backups).map(group => {
+      const occurrence = group.occurrences[0]!;
+      return [scheduleSession(group, data.centers), occurrence.session.status, names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
+    })));
   }
   renderPublished();
 }

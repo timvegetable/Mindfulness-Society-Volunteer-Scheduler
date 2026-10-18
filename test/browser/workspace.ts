@@ -7,18 +7,36 @@ import type { ResultOf } from '../../src/shared/api/schemas';
 const revisions = { dataRevision: 1, schedulingInputRevision: 1 };
 const center = { id: 'synthetic-center', name: 'Synthetic Center', active: true };
 const sessionCenter = { id: center.id, name: center.name };
+const weeklySchedule = new URLSearchParams(location.search).has('weekly-schedule');
 const volunteers = Array.from({ length: 40 }, (_, i) => ({
   id: `synthetic-v${i}`, name: `Synthetic Volunteer ${String(i + 1).padStart(2, '0')}`,
   email: `volunteer${i}@example.test`, lifecycleStatus: 'active' as const,
   interviewStatus: 'complete' as const, readinessRank: i,
 }));
-const sessions = volunteers.map((_, i) => ({
-  id: `synthetic-s${i}`, kind: 'center' as const, centerId: center.id,
-  title: `Synthetic session ${i + 1}`, date: '2026-10-06', start: '09:00', end: '10:00',
-  timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
-}));
+const sessions = weeklySchedule
+  ? [
+    ...['2026-10-02', '2026-10-09', '2026-10-16'].map((date, i) => ({
+      id: `synthetic-weekly-${i}`, kind: 'center' as const, centerId: center.id, title: `Synthetic weekly ${i + 1}`, date,
+      start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+    })),
+    ...volunteers.slice(3).map((_, i) => ({
+      id: `synthetic-supplement-${i}`, kind: 'center' as const, centerId: center.id, title: `Synthetic session ${i + 4}`, date: '2026-11-03',
+      start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+    })),
+  ]
+  : volunteers.map((_, i) => ({
+    id: `synthetic-s${i}`, kind: 'center' as const, centerId: center.id,
+    title: `Synthetic session ${i + 1}`, date: '2026-10-06', start: '09:00', end: '10:00',
+    timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+  }));
+const scheduleAssignments = weeklySchedule ? sessions.slice(0, 3).map((session, i) => ({
+  id: `synthetic-assignment-${i}`, sessionId: session.id, volunteerId: 'synthetic-v0', scheduleRevision: 1, status: 'assigned' as const,
+})) : [];
+const scheduleBackups = weeklySchedule ? sessions.slice(0, 3).map((session, i) => ({
+  id: `synthetic-backup-${i}`, sessionId: session.id, volunteerId: 'synthetic-v1', scheduleRevision: 1, position: 1, status: 'available' as const,
+})) : [];
 const schedule: ResultOf<'admin.schedule.read'> = {
-  ...revisions, run: null, sessions, volunteers, centers: [sessionCenter], assignments: [], backups: [], shortfalls: [], stale: false,
+  ...revisions, run: null, sessions, volunteers, centers: [sessionCenter], assignments: scheduleAssignments, backups: scheduleBackups, shortfalls: [], stale: false,
 };
 const insights: ResultOf<'admin.insights.read'> = {
   ...revisions, leftoverVolunteers: volunteers,
@@ -104,7 +122,11 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       document.documentElement.dataset.scheduleReads = String(++scheduleReads);
       data = schedule; break;
     }
-    case 'admin.schedule.preview': data = { ...revisions, output: { assignments: [], backups: [], shortfalls: [] } }; break;
+    case 'admin.schedule.preview': data = { ...revisions, output: {
+      assignments: scheduleAssignments.map(({ sessionId, volunteerId }) => ({ sessionId, volunteerId })),
+      backups: scheduleBackups.map(({ sessionId, volunteerId, position }) => ({ sessionId, volunteerId, position })),
+      shortfalls: [],
+    } }; break;
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;
 
@@ -145,7 +167,9 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     region.scrollTop = region.scrollHeight;
     const sticky = Math.abs(header.getBoundingClientRect().top - before) < 2;
     const style = getComputedStyle(region);
-    const expectedRows = document.querySelector('[aria-current="page"]')?.textContent === 'Availability sync' ? synchronization.pending.length : 40;
+    const expectedRows = document.querySelector('[aria-current="page"]')?.textContent === 'Availability sync'
+      ? synchronization.pending.length
+      : document.querySelector('.schedule-panel') && weeklySchedule ? 38 : 40;
     check(rows === expectedRows, 'Synthetic row count does not match the current records');
     check(style.overflowY === 'auto' && style.maxHeight !== 'none', 'Bounded scroll CSS is missing or stale');
     check(region.clientHeight <= Math.min(28 * parseFloat(getComputedStyle(document.documentElement).fontSize), innerHeight * .55) + 1, 'Table exceeds height cap');
