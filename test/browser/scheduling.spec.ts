@@ -45,11 +45,9 @@ test('workspace tables stay contained and schedule preview returns to published 
   const region = page.getByRole('region');
   await region.focus();
   await expect(region).toBeFocused();
-  const header = region.locator('th').first();
-  const headerTop = await header.evaluate(element => element.getBoundingClientRect().top);
-  await region.press('End');
-  await expect.poll(() => region.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
-  expect(Math.abs(await header.evaluate(element => element.getBoundingClientRect().top) - headerTop)).toBeLessThan(2);
+  await expect.poll(() => region.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+  await expect(page.locator('.session-status')).toHaveCount(40);
+  await expect(page.locator('.brand-badge .brand-logo')).toBeVisible();
   if (viewport.width < 1000) {
     await region.press('ArrowRight');
     await expect.poll(() => region.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
@@ -60,6 +58,13 @@ test('workspace tables stay contained and schedule preview returns to published 
   await page.getByRole('button', { name: 'Sync now', exact: true }).click();
   await expect(page.locator('.table-scroll')).toHaveCount(1);
   await checkLayout(page);
+  const syncRegion = page.getByRole('region');
+  await syncRegion.focus();
+  const header = syncRegion.locator('th').first();
+  const headerTop = await header.evaluate(element => element.getBoundingClientRect().top);
+  await syncRegion.press('End');
+  await expect.poll(() => syncRegion.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  expect(Math.abs(await header.evaluate(element => element.getBoundingClientRect().top) - headerTop)).toBeLessThan(2);
   await page.getByRole('button', { name: 'Insights', exact: true }).click();
   await expect(page.locator('.table-scroll')).toHaveCount(2);
   await checkLayout(page);
@@ -202,4 +207,23 @@ test('compact synchronization data preserves displayed history counts and roster
   await expect(cells.nth(2)).toHaveText('40');
   await expect(cells.nth(3)).toHaveText('0');
   await expect(page.getByRole('combobox').first().getByRole('option')).toHaveCount(41);
+});
+
+
+test('published status and cancelled sessions survive a preview round trip without clipped rows', async ({ page }) => {
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?reference&width=${viewport.width}&height=${viewport.height}`);
+  await expect(page.locator('.publication-pill')).toHaveText('Published');
+  await expect(page.locator('.publication-state')).toContainText('Version 1');
+  await expect(page.locator('.session-status-cancelled')).toHaveText('cancelled');
+  await expect(page.locator('tbody tr').nth(2).locator('.shortfall')).toHaveText('0');
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await expect(page.locator('.publication-pill')).toHaveCount(0);
+  await expect(page.locator('.publication-state')).toHaveText('Preview · Unpublished changes');
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Back to published schedule', exact: true }).click();
+  await expect(page.locator('.publication-pill')).toHaveText('Published');
+  await expect(page.locator('.session-status-cancelled')).toHaveText('cancelled');
+  await checkLayout(page);
 });

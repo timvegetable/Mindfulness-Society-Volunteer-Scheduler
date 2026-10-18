@@ -2,18 +2,21 @@
 
 :root {
   font-family: "DM Sans", system-ui, sans-serif;
-  color: #222222;
-  background: #f6f6f6;
+  color: var(--ink);
+  background: #f7f6f2;
   font-synthesis: none;
   font-size: 15px;
   line-height: 1.55;
-  --accent: #e21833;
-  --accent-hover: #b51229;
-  --border: #dedede;
-  --muted: #606060;
+  --accent: #2f604b;
+  --accent-hover: #244c3a;
+  --border: #dedbd2;
+  --muted: #657069;
   --surface: #fff;
-  --surface-subtle: #f0f0f0;
-  --focus: #454545;
+  --surface-subtle: #eeece5;
+  --focus: #936118;
+  --ink: #242e28;
+  --amber: #f4b64f;
+  --leaf: #81d254;
 }
 * {
   box-sizing: border-box;
@@ -29,8 +32,8 @@ textarea {
 }
 button {
   border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 0.66rem 1rem;
+  border-radius: 10px;
+  padding: 0.7rem 1.1rem;
   background: var(--accent);
   color: white;
   cursor: pointer;
@@ -45,12 +48,12 @@ button:disabled {
   cursor: default;
 }
 button.quiet {
-  background: #f4f4f4;
-  color: #333333;
+  background: #fff;
+  color: var(--ink);
   border-color: var(--border);
 }
 button.quiet:hover {
-  background: #e9e9e9;
+  background: #f0eee8;
 }
 .danger.quiet {
   color: #a24132;
@@ -60,28 +63,27 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid #454545;
+  outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
 .header {
-  padding: 1.2rem max(4vw, 1rem);
+  padding: 0.8rem max(1.5vw, 1rem);
   display: flex;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--border);
   background: #fff;
-  border-top: 4px solid var(--accent);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 1rem;
 }
 .brand-name {
-  font-size: 1.15rem;
+  font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: -0.025em;
-  max-width: 22ch;
+  max-width: none;
   line-height: 1.25;
 }
 .identity {
@@ -91,15 +93,16 @@ textarea:focus-visible {
   font-size: 0.85rem;
 }
 main {
-  max-width: 1300px;
+  max-width: 1800px;
   margin: auto;
-  padding: 1.6rem max(3vw, 1rem) 4rem;
+  padding: 1.8rem max(3vw, 1rem) 4rem;
 }
 .intro {
   max-width: 780px;
-  margin-bottom: 2rem;
+  margin-bottom: 1.8rem;
 }
 h1 {
+  color: var(--ink);
   font-size: clamp(1.8rem, 3vw, 2.6rem);
   font-weight: 600;
   letter-spacing: -0.03em;
@@ -107,8 +110,10 @@ h1 {
   margin: 0.8rem 0;
 }
 h2 {
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
   margin: 0 0 0.35rem;
 }
 h3 {
@@ -132,7 +137,7 @@ h3 {
   padding: 0.7rem 0.9rem;
 }
 .tab:hover {
-  background: #eeeeee;
+  background: #eeece5;
   color: var(--accent);
 }
 .tab[aria-current="page"] {
@@ -153,9 +158,63 @@ h3 {
   min-width: 0;
   background: #fff;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1.6rem;
+  border-radius: 18px;
+  padding: 1.8rem;
   box-shadow: none;
+}
+.panel-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin-bottom: 1.25rem;
+}
+.panel-heading {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+.panel-heading p {
+  margin: 0.45rem 0 0;
+  max-width: 72ch;
+}
+.panel-toolbar > .field {
+  flex: 0 1 20rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.card > .field {
+  margin-top: 1rem;
+}
+.card > summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+summary:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+tr:last-child td {
+  border-bottom: 0;
+}
+tbody tr:hover {
+  background: #faf9f6;
+}
+.pending-participants table {
+  min-width: 76rem;
+}
+.pending-participants td:first-child p:first-child {
+  font-weight: 600;
+}
+.pending-participants td p {
+  margin: 0 0 0.35rem;
+}
+.pending-participants form {
+  margin: 0;
+}
+.session-status.session-status-success {
+  color: var(--accent);
+  background: #e3eee7;
 }
 .muted {
   color: var(--muted);
@@ -205,16 +264,16 @@ h3 {
   font-weight: 500;
 }
 .field span {
-  color: #454545;
+  color: var(--muted);
 }
 input,
 select,
 textarea {
-  border: 1px solid #cccccc;
+  border: 1px solid #c9c8be;
   background: #fff;
   padding: 0.6rem 0.7rem;
-  border-radius: 6px;
-  color: #222222;
+  border-radius: 10px;
+  color: var(--ink);
   min-height: 42px;
   max-width: 100%;
 }
@@ -230,12 +289,14 @@ textarea {
   max-width: 100%;
   max-height: min(28rem, 55vh);
   overflow: auto;
-  margin-top: 1rem;
-  scrollbar-color: #a3a3a3 var(--surface-subtle);
+  margin-top: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  scrollbar-color: #a6a69d var(--surface-subtle);
   scrollbar-width: thin;
 }
 .table-scroll:focus-visible {
-  outline: 3px solid #454545;
+  outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
 .overlap-table {
@@ -245,23 +306,23 @@ table {
   border-collapse: collapse;
   text-align: left;
   width: 100%;
-  font-size: 0.87rem;
+  font-size: 0.94rem;
 }
 th {
   position: sticky;
   top: 0;
   z-index: 1;
   font-weight: 600;
-  color: #555555;
-  font-size: 0.74rem;
+  color: #47534b;
+  font-size: 0.75rem;
   letter-spacing: 0.035em;
   text-transform: uppercase;
-  background: #f0f0f0;
+  background: var(--surface-subtle);
 }
 th,
 td {
-  padding: 0.85rem 0.75rem;
-  border-bottom: 1px solid #e7e7e7;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
 td .actions {
@@ -292,24 +353,45 @@ td button {
   font-size: 0.8rem;
   text-align: left;
   color: #23482f;
-  border-color: #d8e1d4;
-  border-radius: 5px;
+  border-color: #d6dfd7;
+  border-radius: 10px;
+  min-height: 44px;
 }
 .heatmap-cell:hover {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.heatmap-cell[aria-pressed="true"] {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .cell-details:not(:empty) {
   margin-top: 1rem;
   padding: 1rem;
-  background: #f5f5f5;
-  border-radius: 7px;
+  background: #f7f6f2;
+  border-radius: 12px;
+}
+.signin-workspace {
+  max-width: 560px;
+}
+.signin-panel {
+  padding: 2rem;
+}
+.content[aria-busy="true"] {
+  cursor: progress;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tab {
+    transition:
+      background-color 180ms ease-out,
+      border-color 180ms ease-out;
+  }
 }
 .google-signin {
   margin: 1.4rem 0;
 }
 ::selection {
-  background: #ffd200;
+  background: #f8d99e;
   color: #1b1b1b;
 }
 input,
@@ -328,7 +410,7 @@ textarea {
   border: 0;
 }
 .schedule-panel {
-  padding: 1.4rem;
+  padding: 1.8rem;
 }
 .schedule-toolbar {
   display: flex;
@@ -338,7 +420,7 @@ textarea {
   flex-wrap: wrap;
 }
 .schedule-heading h2 {
-  font-size: 1.5rem;
+  font-size: 1.8rem;
   letter-spacing: -0.025em;
   line-height: 1.3;
   margin: 0;
@@ -350,26 +432,79 @@ textarea {
   margin: 0;
 }
 .schedule-panel table {
+  table-layout: fixed;
+  font-size: 0.94rem;
   min-width: 48rem;
 }
 .schedule-panel th {
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 .schedule-panel td {
-  vertical-align: middle;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  padding: 1.2rem 1.25rem;
+}
+.schedule-panel th:first-child {
+  width: 35%;
+}
+.schedule-panel th:last-child {
+  width: 10%;
+}
+.schedule-panel table:has(th:nth-child(5)) th:nth-child(2) {
+  width: 14%;
+}
+.schedule-panel th {
+  padding: 0.85rem 1.25rem;
+}
+.schedule-panel .table-scroll {
+  max-height: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-top: 1.5rem;
+}
+.schedule-panel tr:last-child td {
+  border-bottom: 0;
+}
+.publication-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+.publication-pill,
+.session-status {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.12rem 0.65rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.publication-pill {
+  color: #2f604b;
+  background: #e3eee7;
+}
+.session-status {
+  background: #eeece5;
+  color: #50594f;
+}
+.session-status-cancelled {
+  background: #f5e0da;
+  color: #943e2c;
 }
 .schedule-panel tbody tr:hover {
-  background: #fafafa;
+  background: #faf9f6;
 }
 .schedule-panel th:last-child,
 .schedule-panel td:last-child {
   text-align: right;
 }
 .schedule-session {
-  min-width: 16rem;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -379,9 +514,9 @@ textarea {
 }
 .session-time {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  white-space: normal;
 }
 .shortfall {
   color: var(--muted);
@@ -389,18 +524,30 @@ textarea {
 }
 .has-shortfall {
   display: inline-block;
-  min-width: 1.8rem;
-  padding: 0.15rem 0.4rem;
-  border-radius: 4px;
-  background: #fff3b3;
-  color: #664c00;
+  min-width: 2.4rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 9px;
+  background: #fbe7bd;
+  color: #775014;
   text-align: center;
   font-weight: 600;
 }
-.brand-logo {
-  display: block;
+.brand-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 48px;
   height: 48px;
+  flex: 0 0 auto;
+  border: 1px solid #e5ddc4;
+  border-radius: 50%;
+  background: #fbf8ef;
+}
+.brand-logo {
+  display: block;
+  width: 40px;
+  height: 25px;
+  object-fit: contain;
   flex: 0 0 auto;
 }
 /* Role workspaces keep related fields together and save actions on their own row. */
@@ -447,6 +594,16 @@ textarea {
 }
 .proposals-panel table {
   min-width: 62rem;
+}
+.proposals-panel th:last-child,
+.proposals-panel td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+.proposals-panel td .actions {
+  flex-wrap: nowrap;
+  min-width: max-content;
+  gap: 0.4rem;
 }
 .volunteer-workspace table {
   min-width: 32rem;
@@ -498,9 +655,15 @@ textarea {
     flex-direction: column;
     align-items: end;
     gap: 0.35rem;
-    overflow-wrap: anywhere;
-    max-width: 46%;
+    min-width: 0;
+    max-width: 42%;
     font-size: 0.75rem;
+  }
+  .identity span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .card {
     padding: 1rem;
@@ -510,6 +673,19 @@ textarea {
   }
   main {
     padding-top: 1.5rem;
+  }
+  .panel-toolbar {
+    align-items: flex-start;
+  }
+  .panel-toolbar > .field {
+    flex-basis: 100%;
+  }
+  h2 {
+    font-size: 1.3rem;
+  }
+  th,
+  td {
+    padding: 0.85rem 1rem;
   }
   .proposal-form {
     display: grid;
@@ -536,7 +712,7 @@ textarea {
   }
   .brand-name {
     font-size: 1rem;
-    max-width: 13ch;
+    max-width: 16ch;
   }
   .tabs {
     gap: 0.15rem;
@@ -564,8 +740,12 @@ textarea {
     gap: 0.5rem;
     min-width: 0;
   }
+  .brand-badge {
+    width: 52px;
+    height: 52px;
+  }
   .brand-logo {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 28px;
   }
 }

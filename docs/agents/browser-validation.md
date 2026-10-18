@@ -10,7 +10,7 @@ Before navigating after a turn boundary, run `npm run dev:browser:status` with l
 
 This opt-in Vite configuration serves the harness interactively or builds it for browser tests; the production build uses the normal entry point. Both modes use the same HTML entries and synthetic responses. The harness replaces fetch with synthetic responses, simulates reads, previews, synchronization and participant links entirely in browser memory. Other operations are rejected. No database or private configuration is required.
 
-Resize the harness tab to the intended dimensions. Enter those dimensions in its expected width and height fields, or use `?width=390&height=844` in the URL. Click **Check current view**. The report verifies the target path, actual viewport, completed rendering, page containment, bounded table styles, sticky headers, row count, and keyboard focus attributes. A mismatch is a failed check; record the actual dimensions. This catches a resize applied to another tab and stale stylesheet state.
+Resize the harness tab to the intended dimensions. Enter those dimensions in its expected width and height fields, or use `?width=390&height=844` in the URL. Click **Check current view**. The report verifies the target path, actual viewport, completed rendering, page containment, table containment, full-height schedule rows, bounded scroll regions on other views, sticky headers, row count, and keyboard focus attributes. A mismatch is a failed check; record the actual dimensions. This catches a resize applied to another tab and stale stylesheet state.
 
 ## Exercise each workflow
 
@@ -22,7 +22,7 @@ At desktop and mobile sizes:
 2. Open Availability sync. Check the status and pending-participant table, then use **Sync now** and link a synthetic participant to a roster record. These are browser-memory simulations, with no external fetch or database write.
 3. Open Insights and check both tables. Change overlap sorting between weekday/time and descending count. Inspect count ties and select a heatmap interval to compare its names and count with the table.
 4. Open Center proposals and check its table.
-5. Focus each scroll region with Tab, press End, and confirm rows scroll while the header stays pinned. Scroll horizontally to reveal trailing columns. These native keyboard checks supplement the report's programmatic scroll measurement.
+5. On Schedule, confirm every row is reachable by page scrolling, without a vertically clipped inner table. On other views, focus each scroll region with Tab, press End, and confirm rows scroll while the header stays pinned. Scroll horizontally to reveal trailing columns. These native keyboard checks supplement the report's programmatic scroll measurement.
 
 Capture screenshots only after the report passes. Include its URL, dimensions, page, and table measurements with the evidence. Restore the normal viewport when finished. Reloading this harness signs in synthetically again; real-preview checks still require the user's Google sign-in.
 

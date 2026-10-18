@@ -47,6 +47,17 @@ function notify(message: string) { status.className = 'status success'; status.t
 function card(title: string, description?: string) {
   const node = el('section', '', 'card'); append(node, el('h2', title)); if (description) node.append(el('p', description, 'muted')); return node;
 }
+function panelToolbar(panel: HTMLElement, control: HTMLElement) {
+  const toolbar = el('div', '', 'panel-toolbar'); const heading = el('div', '', 'panel-heading');
+  const title = panel.querySelector(':scope > h2'); const description = panel.querySelector(':scope > .muted');
+  if (title) heading.append(title); if (description) heading.append(description);
+  append(toolbar, heading, control); panel.prepend(toolbar);
+}
+function statusPill(value: string) {
+  const tone = ['cancelled', 'failed'].includes(value) ? ' session-status-cancelled'
+    : ['confirmed', 'completed', 'available'].includes(value) ? ' session-status-success' : '';
+  return el('span', value, `session-status${tone}`);
+}
 function empty(parent: HTMLElement, message: string) { parent.append(el('p', message, 'empty')); }
 function field(label: string, control: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement) {
   const wrapper = el('label', '', 'field'); append(wrapper, el('span', label), control); return wrapper;
@@ -81,8 +92,9 @@ const names = (ids: string[], volunteers: readonly Volunteer[]) => ids.map(id =>
 function shell() {
   app.replaceChildren();
   const header = el('header', '', 'header'); const brand = el('div', '', 'brand');
-  const logo = el('img', '', 'brand-logo'); logo.src = '/umd-mindfulness-icon.svg'; logo.alt = ''; logo.width = 48; logo.height = 48;
-  append(brand, logo, el('div', 'UMD Mindfulness Society', 'brand-name'));
+  const logo = el('img', '', 'brand-logo'); logo.src = '/umd-mindfulness-icon.svg'; logo.alt = ''; logo.width = 96; logo.height = 60;
+  const badge = el('div', '', 'brand-badge'); badge.append(logo);
+  append(brand, badge, el('div', 'UMD Mindfulness Society', 'brand-name'));
   const identity = el('div', '', 'identity'); if (me) append(identity, el('span', me.user.email), button('Sign out', signOut, 'quiet'));
   append(header, brand, identity); app.append(header);
   const main = el('main');
@@ -93,7 +105,8 @@ function shell() {
 }
 function signOut() { pageGeneration++; api.signOut(); me = undefined; activeTab = ''; window.google?.accounts.id.disableAutoSelect(); shell(); void signInView(); }
 async function signInView() {
-  const panel = card('Welcome back', 'Use your society-approved Google account to continue.'); content.append(panel);
+  content.classList.add('signin-workspace');
+  const panel = card('Welcome back', 'Use your society-approved Google account to continue.'); panel.classList.add('signin-panel'); content.append(panel);
   const target = el('div', '', 'google-signin'); panel.append(target);
   let clientId = '';
   try {
@@ -237,11 +250,11 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   exceptionForm.node.classList.add('exception-form');
   append(exceptionForm.node, field('Date', date), field('Availability', kind), field('From', start), field('Until', end), field('Reason (optional)', reason), exceptionForm.submit);
   [start, end].forEach(control => control.addEventListener('input', () => end.setCustomValidity('')));
-  if (data.availabilityExceptions.length) exceptions.append(table(['Date', 'Availability', 'Time', 'Reason'], data.availabilityExceptions.map(item => [item.date, item.kind, timeRange(item.start, item.end), item.reason ?? '—'])));
+  if (data.availabilityExceptions.length) exceptions.append(table(['Date', 'Availability', 'Time', 'Reason'], data.availabilityExceptions.map(item => [item.date, statusPill(item.kind), timeRange(item.start, item.end), item.reason ?? '—'])));
   else empty(exceptions, 'No exceptions.');
   const upcoming = card('Upcoming sessions'); content.append(upcoming); const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const sessions = data.sessions.filter(session => session.date >= today && session.status !== 'cancelled').sort((a, b) => `${a.date}${a.start}`.localeCompare(`${b.date}${b.start}`));
-  sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [sessionTitle(session.title), session.date, timeRange(session.start, session.end), session.status]))) : empty(upcoming, 'No upcoming sessions.');
+  sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [sessionTitle(session.title), session.date, timeRange(session.start, session.end), statusPill(session.status)]))) : empty(upcoming, 'No upcoming sessions.');
 }
 
 function scheduleSession(session: Session) {
@@ -254,10 +267,14 @@ function scheduleShortfall(count: number) {
 }
 
 function scheduleView(data: ResultOf<'admin.schedule.read'>) {
-  const publishedDescription = data.run ? `Published · Version ${data.run.outputRevision}` : 'Not yet published';
   const schedule = card('Session schedule'); schedule.classList.add('schedule-panel'); content.append(schedule);
   const heading = el('div', '', 'schedule-heading'); heading.append(schedule.querySelector('h2')!);
-  const description = el('p', publishedDescription, 'muted'); heading.append(description);
+  const description = el('p', '', 'muted publication-state'); heading.append(description);
+  function publishedState() {
+    description.replaceChildren();
+    if (data.run) append(description, el('span', 'Published', 'publication-pill'), el('span', `Version ${data.run.outputRevision}`));
+    else description.textContent = 'Not yet published';
+  }
   const toolbar = el('div', '', 'schedule-toolbar'); toolbar.append(heading); schedule.append(toolbar);
   const staleNotice = el('p', 'Sessions or availability changed. Preview the updated schedule before publishing.', 'notice');
   if (data.stale) schedule.append(staleNotice);
@@ -282,10 +299,10 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     delete content.dataset.reviewing;
     previewRevision = undefined; publish.disabled = true; publish.hidden = true; back.hidden = true;
     previewButton.textContent = 'Preview schedule'; previewButton.classList.remove('quiet'); schedule.querySelector('h2')!.textContent = 'Session schedule';
-    description.textContent = publishedDescription; staleNotice.hidden = false; scheduleArea.replaceChildren();
+    publishedState(); staleNotice.hidden = false; scheduleArea.replaceChildren();
     if (!data.sessions.length) empty(scheduleArea, 'No sessions have been created. Confirm a center proposal to add one.');
     else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.map(session => [
-      scheduleSession(session), session.status, names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
+      scheduleSession(session), statusPill(session.status), names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
     ])));
   }
   renderPublished();
@@ -314,7 +331,7 @@ function candidatesView(data: ResultOf<'center.candidate.read'>) {
       actions.append(button('Withdraw', async () => { if (!confirmAction('Withdraw this unconfirmed proposal?')) return; await api.call('center.candidate.update', { candidateId: candidate.id, status: 'cancelled' }, data.dataRevision); await refreshView('candidates', 'Proposal withdrawn.', '.proposal-list-heading'); }, 'quiet danger'));
       if (administrator) actions.append(button('Confirm', async () => { if (!confirmAction(`Confirm ${data.centers.find(item => item.id === candidate.centerId)?.name ?? 'this center'} on the next ${days[candidate.weekday - 1]} at ${timeRange(candidate.start, candidate.end)}? This creates the next dated session.`)) return; await api.call('admin.center.candidate.confirm', { candidateId: candidate.id }, data.dataRevision); await refreshView('candidates', 'Proposal confirmed and its next dated session created.', '.proposal-list-heading'); }));
     }
-    return [data.centers.find(item => item.id === candidate.centerId)?.name ?? 'Center', `${days[candidate.weekday - 1]} · ${timeRange(candidate.start, candidate.end)}`, String(candidate.requestedStaffCount), `${coverage.volunteers.length} available · ${coverage.shortfall} unfilled`, names(coverage.volunteers.map(item => item.id), coverage.volunteers), candidate.status, actions];
+    return [data.centers.find(item => item.id === candidate.centerId)?.name ?? 'Center', `${days[candidate.weekday - 1]} · ${timeRange(candidate.start, candidate.end)}`, String(candidate.requestedStaffCount), `${coverage.volunteers.length} available · ${coverage.shortfall} unfilled`, names(coverage.volunteers.map(item => item.id), coverage.volunteers), statusPill(candidate.status), actions];
   });
   panel.append(el('h2', 'Submitted proposals', 'proposal-list-heading'));
   if (rows.length) panel.append(table(['Center', 'Time', 'Staff requested', 'Advisory coverage', 'Volunteers', 'Status', 'Actions'], rows)); else empty(panel, 'No proposals.');
@@ -334,7 +351,7 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
       : 'The latest availability check completed.';
     panel.append(el('p', jobMessage, data.job.state === 'failed' ? 'status error' : 'notice'));
   }
-  panel.append(button('Sync now', async () => {
+  panelToolbar(panel, button('Sync now', async () => {
     const checked = await api.call('admin.sync.now', {}, data.dataRevision);
     await refreshView('imports', checked.job ? 'Availability check queued. Use Reload view to see its result.' : checked.status.outcome === 'failed' ? 'Sync failed. Saved availability is preserved; see the status for details.' : checked.status.outcome === 'unchanged' ? 'Availability is up to date.' : 'Availability synchronized.', '.content button', {});
   }));
@@ -367,7 +384,7 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
     const region = table(['Participant', 'Email', 'Submitted availability', 'Needs attention', 'Roster link'], rows); region.classList.add('pending-participants'); pending.append(region);
   }
   const history = el('details', '', 'card'); history.append(el('summary', `Import history (${data.imports.length})`)); content.append(history);
-  if (data.imports.length) history.append(table(['Checked', 'Status', 'Participants', 'Matched'], [...data.imports].reverse().map(run => [syncTime(run.startedAt ?? null), run.status, String(run.participantCount), String(run.matchedCount ?? 0)])));
+  if (data.imports.length) history.append(table(['Checked', 'Status', 'Participants', 'Matched'], [...data.imports].reverse().map(run => [syncTime(run.startedAt ?? null), statusPill(run.status), String(run.participantCount), String(run.matchedCount ?? 0)])));
   else empty(history, 'No import history yet.');
 }
 
@@ -375,7 +392,7 @@ function insightsView(data: ResultOf<'admin.insights.read'>) {
   const list = card('Volunteers with time to give', 'Eligible volunteers without a current center assignment.'); content.append(list);
   const sorted = [...data.leftoverVolunteers];
   const order = select([['rank', 'Readiness rank'], ['name', 'Name'], ['email', 'Email']]);
-  const rows = el('div'); append(list, field('Sort volunteers by', order), rows);
+  const rows = el('div'); panelToolbar(list, field('Sort volunteers by', order)); list.append(rows);
   function renderRows() {
     sorted.sort((a, b) => order.value === 'rank' ? (a.readinessRank ?? 99) - (b.readinessRank ?? 99) || a.name.localeCompare(b.name) : order.value === 'email' ? a.email.localeCompare(b.email) : a.name.localeCompare(b.name));
     rows.replaceChildren(); sorted.length ? rows.append(table(['Name', 'Email', 'Readiness rank'], sorted.map(item => [item.name, item.email, item.readinessRank === null ? 'Not ranked' : String(item.readinessRank)]))) : empty(rows, 'All eligible volunteers have a center assignment.');
@@ -387,8 +404,8 @@ function insightsView(data: ResultOf<'admin.insights.read'>) {
   for (let day = 1; day <= 5; day++) {
     const column = el('section', '', 'heatmap-column'); column.append(el('h3', days[day - 1]!));
     for (const cell of data.grid.filter(item => item.weekday === day).sort((a, b) => a.start.localeCompare(b.start))) {
-      const control = button(`${timeRange(cell.start, cell.end)} · ${cell.count}`, () => { details.replaceChildren(el('h3', `${days[day - 1]} · ${timeRange(cell.start, cell.end)}`), el('p', `${cell.count} volunteers available`)); if (cell.volunteers.length) { const namesList = el('ul'); cell.volunteers.forEach(volunteer => namesList.append(el('li', volunteer.name))); details.append(namesList); } else empty(details, 'No volunteers are available in this interval.'); });
-      control.className = 'heatmap-cell'; control.style.backgroundColor = `hsl(145 35% ${96 - (cell.count / maximum) * 34}%)`; control.setAttribute('aria-label', `${days[day - 1]} ${timeText(cell.start)} to ${timeText(cell.end)}, ${cell.count} available volunteers`); column.append(control);
+      const control = button(`${timeRange(cell.start, cell.end)} · ${cell.count}`, () => { grid.querySelectorAll('.heatmap-cell').forEach(cell => cell.setAttribute('aria-pressed', 'false')); control.setAttribute('aria-pressed', 'true'); details.replaceChildren(el('h3', `${days[day - 1]} · ${timeRange(cell.start, cell.end)}`), el('p', `${cell.count} volunteers available`)); if (cell.volunteers.length) { const namesList = el('ul'); cell.volunteers.forEach(volunteer => namesList.append(el('li', volunteer.name))); details.append(namesList); } else empty(details, 'No volunteers are available in this interval.'); });
+      control.className = 'heatmap-cell'; control.setAttribute('aria-pressed', 'false'); control.style.backgroundColor = `hsl(145 22% ${97 - (cell.count / maximum) * 20}%)`; control.setAttribute('aria-label', `${days[day - 1]} ${timeText(cell.start)} to ${timeText(cell.end)}, ${cell.count} available volunteers`); column.append(control);
     }
     grid.append(column);
   }
@@ -398,7 +415,7 @@ function insightsView(data: ResultOf<'admin.insights.read'>) {
   const overlapTable = card('Availability overlap table', 'Each row shows a merged weekday and time interval with its available volunteers.'); content.append(overlapTable);
   if (data.grid.length) {
     const order = select([['weekday', 'Weekday and time'], ['count', 'Available volunteer count (high to low)']], 'weekday');
-    const rows = el('div'); append(overlapTable, field('Sort overlap intervals by', order), rows);
+    const rows = el('div'); panelToolbar(overlapTable, field('Sort overlap intervals by', order)); overlapTable.append(rows);
     const compareText = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
     const byWeekdayTime = (a: (typeof data.grid)[number], b: (typeof data.grid)[number]) => a.weekday - b.weekday || compareText(a.start, b.start) || compareText(a.end, b.end);
     const volunteerKey = (cell: (typeof data.grid)[number]) => cell.volunteers.map(volunteer => volunteer.id).sort().join('\0');

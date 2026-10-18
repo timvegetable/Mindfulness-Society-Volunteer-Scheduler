@@ -36,7 +36,7 @@ The configured defaults are America/New_York for time zone, 30 minutes for displ
 - Mutations require the current data revision and an idempotency key. A stale revision requires the user to reload, review current information, and submit again. Unchanged synchronization checks preserve domain and scheduling revisions; their timestamps update independently.
 - Relevant successful changes trigger administrative email notifications after commit; a notification failure does not undo the saved change. Gmail sending is authorized separately, and volunteers do not grant Gmail access.
 - The client and API share one origin. D1 is the system of record. Private roster data and credentials must stay out of source control; automated tests use synthetic data.
-- The organization is the UMD Mindfulness Society. Use the supplied `public/umd-mindfulness-icon.svg` logo with UMD red (#e21833), gold (#ffd200), white, and neutral gray. Keep workspace copy direct and concise.
+- The organization is the UMD Mindfulness Society. Use the official supplied `public/umd-mindfulness-icon.svg` lotus and seated-figure icon, preserved from `mindfulness_society_icon.svg`. Its amber (#f4b64f) and fresh green (#81d254) establish the identity; deep forest green supports accessible text and controls over neutral warm off-white and white surfaces. Follow the supplied schedule-page reference: cream circular logo badge, green actions and publication state, neutral session-status pills, muted red cancelled status, gold shortfall badges, and a schedule table that grows vertically. Keep workspace copy direct and concise.
 
 ## Evidence on Hand
 

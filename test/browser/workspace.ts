@@ -16,9 +16,15 @@ const sessions = volunteers.map((_, i) => ({
   title: `Synthetic session ${i + 1}`, date: '2026-10-06', start: '09:00', end: '10:00',
   timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
 }));
-const schedule: ResultOf<'admin.schedule.read'> = {
+let schedule: ResultOf<'admin.schedule.read'> = {
   ...revisions, run: null, sessions, volunteers, assignments: [], backups: [], shortfalls: [], stale: false,
 };
+// Small, explicitly synthetic schedule for visual comparison and publication-state checks.
+if (new URLSearchParams(location.search).has('reference')) {
+  const referenceSessions = sessions.slice(0, 5).map((session, i) => ({ ...session, status: i === 2 ? 'cancelled' as const : 'locked' as const }));
+  const referenceAssignments = [1, 4].flatMap(i => [0, 1].map(j => ({ id: `synthetic-a${i}-${j}`, sessionId: sessions[i]!.id, volunteerId: volunteers[j]!.id, scheduleRevision: 1, status: 'assigned' as const })));
+  schedule = { ...schedule, sessions: referenceSessions, assignments: referenceAssignments, run: { id: 'synthetic-run', inputRevision: 1, outputRevision: 1, status: 'completed', assignmentIds: referenceAssignments.map(item => item.id), backupIds: [], shortfalls: [] } };
+}
 const insights: ResultOf<'admin.insights.read'> = {
   ...revisions, leftoverVolunteers: volunteers,
   grid: Array.from({ length: 40 }, (_, i) => {
@@ -135,11 +141,16 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     region.scrollTop = region.scrollHeight;
     const sticky = Math.abs(header.getBoundingClientRect().top - before) < 2;
     const style = getComputedStyle(region);
-    const expectedRows = document.querySelector('[aria-current="page"]')?.textContent === 'Availability sync' ? synchronization.pending.length : 40;
+    const page = document.querySelector('[aria-current="page"]')?.textContent;
+    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : 40;
     check(rows === expectedRows, 'Synthetic row count does not match the current records');
-    check(style.overflowY === 'auto' && style.maxHeight !== 'none', 'Bounded scroll CSS is missing or stale');
-    check(region.clientHeight <= Math.min(28 * parseFloat(getComputedStyle(document.documentElement).fontSize), innerHeight * .55) + 1, 'Table exceeds height cap');
-    check(region.scrollTop > 0 && sticky && getComputedStyle(header).position === 'sticky', 'Table does not scroll with a pinned header');
+    if (region.closest('.schedule-panel')) {
+      check(style.maxHeight === 'none' && region.scrollHeight <= region.clientHeight + 1, 'Schedule rows are vertically clipped');
+    } else {
+      check(style.overflowY === 'auto' && style.maxHeight !== 'none', 'Bounded scroll CSS is missing or stale');
+      check(region.clientHeight <= Math.min(28 * parseFloat(getComputedStyle(document.documentElement).fontSize), innerHeight * .55) + 1, 'Table exceeds height cap');
+      check(region.scrollTop > 0 && sticky && getComputedStyle(header).position === 'sticky', 'Table does not scroll with a pinned header');
+    }
     check(region.tabIndex === 0 && !!region.getAttribute('aria-label'), 'Scroll region lacks keyboard access or name');
     const evidence = { rows, height: region.clientHeight, contentHeight: region.scrollHeight, width: region.clientWidth, contentWidth: region.scrollWidth, sticky };
     region.scrollTop = original;
