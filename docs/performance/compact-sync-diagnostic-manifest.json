@@ -1,0 +1,90 @@
+{
+  "sourceCommit": "3ad9f8779aa91d4d4d0b85f8275145a814cf1b61",
+  "variants": [
+    {
+      "stage": "full",
+      "nativeBundleSha256": "ef1e55abe5ead9d4a9dd78426d5b1a7803bd5676ffb293be04e5f420c3b96edc",
+      "changedSourceFile": null,
+      "injectedCode": null,
+      "wranglerBundleSha256": "6ca634aa0908d67f09ed8b2df6dd1d881bea73266e4a161f002df1d2a288ad06",
+      "injectedImports": [],
+      "dryRunPassed": true
+    },
+    {
+      "stage": "snapshot",
+      "nativeBundleSha256": "1fe02fef49b86214a6c377892af255345e1acd81bc985f469dc14bdce7377947",
+      "changedSourceFile": "src/worker/repositories/syncStatusRead.ts",
+      "injectedCode": "authorizedAccount(results[0]!.results.map(storedAccount), identity, 'admin.sync.read');\n  // [DEBUG-sync-cpu] temporary diagnostic variant only\n  throw new AppError('INTERNAL_ERROR', 'Temporary CPU diagnostic complete: snapshot.');",
+      "wranglerBundleSha256": "4fd319476ecab2e7d70a80a21a1f4a08a51f87dfddc2829ecc01efef218fa2cc",
+      "injectedImports": [
+        "import { authorizedAccount } from '../api/authorization';"
+      ],
+      "dryRunPassed": true
+    },
+    {
+      "stage": "view",
+      "nativeBundleSha256": "fc7851d792708dbb1ced0b3c57cf1dc30bf4f73b5cbee7b4687db1b0eea02448",
+      "changedSourceFile": "src/worker/reads/syncStatus.ts",
+      "injectedCode": "// [DEBUG-sync-cpu] temporary diagnostic variant only\n  throw new AppError('INTERNAL_ERROR', 'Temporary CPU diagnostic complete: view.');",
+      "wranglerBundleSha256": "616ec61194bc612f0b04c8e1d1603294bd5ec28217ac80c6361e07e67f7535b4",
+      "injectedImports": [],
+      "dryRunPassed": true
+    },
+    {
+      "stage": "validation",
+      "nativeBundleSha256": "ad4fe094a3326666dcea5dff21bb9b3cb6c458fa06ec45d75279cf47155bfe46",
+      "changedSourceFile": "src/worker/reads/syncStatus.ts",
+      "injectedCode": "// [DEBUG-sync-cpu] temporary diagnostic variant only\n  throw new AppError('INTERNAL_ERROR', 'Temporary CPU diagnostic complete: validation.');",
+      "wranglerBundleSha256": "cf09eb4ca6b987a4d8788e9a5c9ca59f0b941427bd0bdf5f2b6428e194ae2877",
+      "injectedImports": [],
+      "dryRunPassed": true
+    }
+  ],
+  "sourceTreeSha256": "08e9dc5c36f354d8202c88aa848f9e48dd09d3935ddfc26f71f790f1b9d0ba05",
+  "nativeProof": {
+    "checks": [
+      {
+        "stage": "full",
+        "actor": "admin",
+        "result": "complete"
+      },
+      {
+        "stage": "full",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      },
+      {
+        "stage": "snapshot",
+        "actor": "admin",
+        "result": "INTERNAL_ERROR"
+      },
+      {
+        "stage": "snapshot",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      },
+      {
+        "stage": "view",
+        "actor": "admin",
+        "result": "INTERNAL_ERROR"
+      },
+      {
+        "stage": "view",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      },
+      {
+        "stage": "validation",
+        "actor": "admin",
+        "result": "INTERNAL_ERROR"
+      },
+      {
+        "stage": "validation",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      }
+    ],
+    "metadataUnchanged": true
+  },
+  "note": "Frozen diagnostic copies only; production source contains no diagnostic switch or early stop. Private deployment configs are excluded."
+}

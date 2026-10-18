@@ -1,6 +1,6 @@
 # Compact sync-status projection and production diagnosis
 
-Status: local candidate on `codex/compact-sync-read`. Production remains the restored `2ecbe19` baseline. The latest strict trial measured sync status at 12 ms combined CPU and rolled back. The full nine-millisecond goal remains active.
+Status: local implementation candidate `3ad9f87` on `codex/compact-sync-read`. Production remains the restored `2ecbe19` baseline. The latest strict trial measured sync status at 12 ms combined CPU and rolled back. The full nine-millisecond goal remains active. The [frozen diagnostic manifest](compact-sync-diagnostic-manifest.json) identifies exact source/bundle hashes, inserted early stops, native authorization checks and successful dry runs.
 
 ## What changes
 
