@@ -72,6 +72,44 @@ test('workspace tables stay contained and schedule preview returns to published 
   expect(errors).toEqual([]);
 });
 
+test('weekly schedule groups disclose their finite dates in published and preview views', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?weekly-schedule=1&width=${viewport.width}&height=${viewport.height}`);
+  const panel = page.locator('.schedule-panel');
+  const firstGroup = () => panel.locator('tbody tr').first().locator('.schedule-session');
+  const tableRegion = () => panel.locator('.table-scroll');
+  const inspectDates = async () => {
+    await expect(panel.locator('tbody tr')).toHaveCount(38);
+    await expect(firstGroup().locator('.session-name')).toHaveText('Synthetic Center');
+    await expect(firstGroup().locator('.session-time')).toHaveText('Friday · 9:00 AM–10:00 AM');
+    const details = firstGroup().locator('details.schedule-dates');
+    const summary = details.locator('summary');
+    await expect(summary).toHaveText('View 3 dates · Oct 2, 2026 to Oct 16, 2026');
+    await expect(details.locator('li')).toHaveCount(3);
+    await expect(details.locator('li').first()).toBeHidden();
+    await tableRegion().focus();
+    await page.keyboard.press('Tab');
+    await expect(summary).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(details).toHaveAttribute('open', '');
+    await expect(details.getByText('Friday, October 2, 2026', { exact: true })).toBeVisible();
+    await expect(details.getByText('Friday, October 9, 2026', { exact: true })).toBeVisible();
+    await expect(details.getByText('Friday, October 16, 2026', { exact: true })).toBeVisible();
+  };
+
+  await inspectDates();
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Schedule preview', exact: true })).toBeVisible();
+  await inspectDates();
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Back to published schedule', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Session schedule', exact: true })).toBeVisible();
+  await inspectDates();
+  await checkLayout(page);
+});
+
 
 test('admin reload keeps the current reading position', async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
