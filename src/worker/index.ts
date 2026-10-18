@@ -83,6 +83,7 @@ export default {
           if (!envelope.credential.startsWith('r2.')) return failure('INVALID_REQUEST', 'Reload this application to use a read session.', 400, { readSessionProtocol: 2 });
           if (!env.SCHEDULE_READER) return failure('INTERNAL_ERROR', 'Read authentication is temporarily unavailable.', 500);
           if (envelope.operation === 'admin.sync.read') {
+            if (request.headers.get('X-Sync-Read-Protocol') !== '2') return failure('INVALID_REQUEST', 'Reload this application to read synchronization status.', 400, { syncReadProtocol: 2 });
             const response = await readSyncStatus(envelope, env.DB, env.SCHEDULE_READER).catch(error =>
               publicFailure(error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'An unexpected error occurred.')));
             return new Response(response, { headers });

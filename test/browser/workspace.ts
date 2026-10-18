@@ -37,7 +37,7 @@ let synchronization: ResultOf<'admin.sync.read'> = {
   ...revisions, status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: '2026-10-13T12:00:00Z',
     outcome: 'changed', diagnostic: null, participantCount: 40, matchedCount: 0, pendingCount: 40 },
   pending: volunteers.map(v => ({ id: `p-${v.id}`, name: v.name, email: v.email, intervals: [{ weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' }],
-    reason: 'new', resolvable: true, present: true, firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z' })), imports: [], volunteers, mappings: [],
+    reason: 'new', resolvable: true, present: true, firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z' })), imports: new URLSearchParams(location.search).has('history') ? [{ id: 'synthetic-import', status: 'completed', startedAt: '2026-10-13T12:00:00Z', actorId: 'synthetic-admin', participantCount: 40, matchedCount: 0 }] : [], volunteers: volunteers.map(({ id, name, email }) => ({ id, name, email })),
 };
 
 if (new URLSearchParams(location.search).has('collision')) {
@@ -79,7 +79,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
       const mapping = { id: `mapping-${payload.sourceParticipantId}`, source: 'whenIsGood', ...payload };
       const pending = synchronization.pending.filter(row => row.id !== payload.sourceParticipantId);
-      synchronization = { ...synchronization, pending, mappings: [...synchronization.mappings, mapping],
+      synchronization = { ...synchronization, pending,
         status: { ...synchronization.status, pendingCount: pending.length, matchedCount: 40 - pending.length } };
       revisions.dataRevision++;
       data = { ...revisions, mapping }; break;

@@ -52,7 +52,7 @@ function restoreLegacyShortfalls(rows: unknown[]): unknown[] {
   });
 }
 
-function restoreLegacyParticipants(rows: unknown[]): unknown[] {
+export function restoreLegacyParticipants(rows: unknown[]): unknown[] {
   const participants = new Map<string, Omit<StagedParticipant, 'intervals'> & { intervals: unknown[] }>();
   const restored: unknown[] = [];
   for (const row of rows) {

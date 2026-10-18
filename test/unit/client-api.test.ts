@@ -220,3 +220,15 @@ describe('split sign-in exchange', () => {
     }
   });
 });
+
+
+it('requests the compact synchronization response contract explicitly', async () => {
+  const api = new ApiClient(async (_input, init) => {
+    expect(new Headers(init?.headers).get('X-Sync-Read-Protocol')).toBe('2');
+    return reply({ dataRevision: 1, schedulingInputRevision: 1,
+      status: { lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null, outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 },
+      pending: [], imports: [], volunteers: [] });
+  });
+  api.signIn('google');
+  expect((await api.call('admin.sync.read', {})).imports).toEqual([]);
+});

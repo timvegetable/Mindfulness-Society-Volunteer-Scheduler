@@ -367,7 +367,7 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
     const region = table(['Participant', 'Email', 'Submitted availability', 'Needs attention', 'Roster link'], rows); region.classList.add('pending-participants'); pending.append(region);
   }
   const history = el('details', '', 'card'); history.append(el('summary', `Import history (${data.imports.length})`)); content.append(history);
-  if (data.imports.length) history.append(table(['Checked', 'Status', 'Participants', 'Matched'], [...data.imports].reverse().map(run => [syncTime(run.startedAt ?? null), run.status, String(run.participantCount ?? run.stagedAvailability.length), String(run.matchedCount ?? 0)])));
+  if (data.imports.length) history.append(table(['Checked', 'Status', 'Participants', 'Matched'], [...data.imports].reverse().map(run => [syncTime(run.startedAt ?? null), run.status, String(run.participantCount), String(run.matchedCount ?? 0)])));
   else empty(history, 'No import history yet.');
 }
 

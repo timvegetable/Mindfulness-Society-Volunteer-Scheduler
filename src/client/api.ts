@@ -45,7 +45,7 @@ export class ApiClient {
     let response: Response;
     // Native browser fetch rejects an unrelated object as its receiver.
     const fetcher = this.fetcher;
-    try { response = await fetcher(schedule ? '/api/schedule' : '/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+    try { response = await fetcher(schedule ? '/api/schedule' : '/api', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(operation === 'admin.sync.read' ? { 'X-Sync-Read-Protocol': '2' } : {}) }, body: JSON.stringify(body) }); }
     catch { throw new ApiError('NETWORK_ERROR', 'Could not reach the server. Your changes have not been confirmed. You can retry.'); }
     let envelope: unknown;
     try { envelope = await response.json(); } catch { throw new ApiError('INVALID_RESPONSE', 'The server returned an unreadable response. Please try again.'); }

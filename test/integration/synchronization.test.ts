@@ -30,13 +30,14 @@ describe('automatic availability synchronization through local D1', () => {
     ];
     await app.db.prepare("INSERT INTO imports (id,source,content_hash,status,result_id,unmatched,staged_availability) VALUES ('old-run','whenIsGood','old-hash','completed','mx8t23j','[]',?)").bind(JSON.stringify(legacy)).run();
     const before = success(await app.request('admin.sync.read'));
-    expect(before.imports[0]?.stagedAvailability).toEqual([
+    expect((await app.read()).imports[0]?.stagedAvailability).toEqual([
       { id: 'alex-source', name: '', email: null, volunteerId: 'volunteer-1', intervals: [
         { weekday: 1, start: '10:00', end: '11:00', timeZone: 'America/New_York' },
         { weekday: 1, start: '11:00', end: '12:00', timeZone: 'America/New_York' },
       ] },
       { id: 'other-source', name: '', email: null, volunteerId: 'volunteer-1', intervals: [{ weekday: 2, start: '13:00', end: '14:00', timeZone: 'America/New_York' }] },
     ]);
+    expect(before.imports[0]?.participantCount).toBe(2);
     await Effect.runPromise(synchronize(testConfig, synchronizationSystemActor).pipe(Effect.provide(app.layer)));
     const after = success(await app.request('admin.sync.read'));
     expect(after.status.outcome).toBe('changed');

@@ -35,7 +35,7 @@ async function mount() {
     else if (body.operation === 'center.candidate.read') data = { ...base, centers: [center], candidates: [] };
     else if (body.operation === 'admin.sync.read' || body.operation === 'admin.sync.now') data = { ...base,
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
-      ...(body.operation === 'admin.sync.read' ? { pending: [], imports: [], volunteers: [volunteer], mappings: [] } : {}) };
+      ...(body.operation === 'admin.sync.read' ? { pending: [], imports: [], volunteers: [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }] } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
     else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));

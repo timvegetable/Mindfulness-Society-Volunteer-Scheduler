@@ -188,3 +188,18 @@ test('read sessions renew only on explicit reads and navigation while the schedu
   await expect(page.locator('html')).toHaveAttribute('data-schedule-reads', '4');
   await expect(page.locator('html')).toHaveAttribute('data-session-exchanges', '3');
 });
+
+
+test('compact synchronization data preserves displayed history counts and roster choices', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  await page.goto('/__browser-check?history=1&read-session');
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  const history = page.locator('details').filter({ hasText: 'Import history (1)' });
+  await history.locator('summary').click();
+  await expect(history.getByRole('row')).toHaveCount(2);
+  const cells = history.locator('tbody td');
+  await expect(cells.nth(1)).toHaveText('completed');
+  await expect(cells.nth(2)).toHaveText('40');
+  await expect(cells.nth(3)).toHaveText('0');
+  await expect(page.getByRole('combobox').first().getByRole('option')).toHaveCount(41);
+});

@@ -83,9 +83,9 @@ it('delivers native queued checks and authorizes manual requests through the bun
     expect(Schema.decodeUnknownSync(resultSchemas['volunteer.dashboard'])(dashboard.data).recurringAvailability.length).toBeGreaterThan(0);
     // Native HTTP validation still rejects corrupt records and re-reads current
     // authority even when the exact same verified JWT is used again.
-    await db.prepare("UPDATE volunteers SET lifecycle_status='invalid' WHERE id='volunteer-1'").run();
+    await db.prepare("UPDATE volunteers SET name='' WHERE id='volunteer-1'").run();
     expect(await api('admin.sync.read', admin)).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
-    await db.prepare("UPDATE volunteers SET lifecycle_status='active' WHERE id='volunteer-1'").run();
+    await db.prepare("UPDATE volunteers SET name='Alice' WHERE id='volunteer-1'").run();
     await db.prepare("UPDATE users SET roles='[]' WHERE email='admin@example.test'").run();
     expect(await api('admin.sync.read', admin)).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     await db.prepare("UPDATE users SET active=0 WHERE email='alex@example.test'").run();

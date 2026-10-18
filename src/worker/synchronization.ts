@@ -1,3 +1,5 @@
+import { syncStatus } from '../shared/domain/synchronizationView';
+export { syncStatus, synchronizationView } from '../shared/domain/synchronizationView';
 import { Effect } from 'effect';
 import { AppError } from '../shared/api/errors';
 import { decodeResult } from './api/validation';
@@ -14,19 +16,9 @@ import { WhenIsGoodClient } from './services/WhenIsGoodClient';
 
 export type SyncActor = { kind: 'system'; id: 'system:whenIsGood' } | { kind: 'administrator'; id: string };
 export const synchronizationSystemActor: SyncActor = { kind: 'system', id: 'system:whenIsGood' };
-export function syncStatus(state: Snapshot) {
-  const row = state.synchronizations[0];
-  if (!row) return emptySyncStatus();
-  const { id: _id, generation: _generation, checkId: _checkId, participants: _participants, pending: _pending, ...status } = row;
-  return status;
-}
 export function freshness(state: Snapshot) {
   const status = syncStatus(state);
   return { lastSuccessAt: status.lastSuccessAt, problem: status.outcome === 'failed' };
-}
-export function synchronizationView(state: Snapshot) {
-  return { status: syncStatus(state), pending: state.synchronizations[0]?.pending ?? [],
-    imports: state.imports, volunteers: state.volunteers, mappings: state.importMappings };
 }
 const content = (participants: StagedParticipant[]) => '[' + participants.map(row => JSON.stringify({
   id: row.id, name: normalizeImportName(row.name), email: normalizeImportEmail(row.email),

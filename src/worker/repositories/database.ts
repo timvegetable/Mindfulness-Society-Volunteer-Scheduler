@@ -62,7 +62,7 @@ export function readSynchronizationCheck(db: D1Database, key: IdempotencyKey, no
 // snapshot except synchronization, whose commit only touches its loaded tables.
 const operationTableKeys: Partial<Record<Operation, readonly (typeof tables[number]['key'])[]>> = {
   'session.me': ['users', 'centers'],
-  'admin.sync.read': ['users', 'volunteers', 'imports', 'importMappings', 'synchronizations'],
+  'admin.sync.read': ['users', 'volunteers', 'imports', 'synchronizations'],
   'admin.sync.now': synchronizationHeadKeys,
   'admin.schedule.preview': ['users', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'recurringAvailability', 'availabilityExceptions'],
   'admin.schedule.read': ['users', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'backups'],

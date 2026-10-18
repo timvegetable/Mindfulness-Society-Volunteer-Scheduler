@@ -40,6 +40,9 @@ export const SchedulingRunSchema = object({ id: text, inputRevision: revision, o
 export const ImportParticipantSchema = object({ id: text, name: Schema.String, email: Schema.NullOr(Schema.String), intervals: Schema.Array(WeeklyIntervalSchema), identityStable: Schema.optionalKey(Schema.Boolean) });
 export const StagedParticipantSchema = object({ ...ImportParticipantSchema.fields, volunteerId: Schema.NullOr(text), pendingReason: Schema.optionalKey(Schema.Literals(['new', 'ambiguous', 'missing-identity', 'unstable-identity'])) });
 export const ImportRunSchema = object({ id: text, source: text, contentHash: Schema.String, status: Schema.Literals(['staged', 'completed', 'failed']), startedAt: maybeText, completedAt: maybeText, actorId: maybeText, resultId: maybeText, participantCount: Schema.optionalKey(Schema.NullOr(revision)), matchedCount: Schema.optionalKey(Schema.NullOr(revision)), unmatched: Schema.Array(ImportParticipantSchema), stagedAvailability: Schema.Array(StagedParticipantSchema), diagnostic: maybeText, promotedAt: maybeText, promotedBy: maybeText });
+export const ImportHistorySummarySchema = object({ id: ImportRunSchema.fields.id, status: ImportRunSchema.fields.status,
+  startedAt: Schema.NullOr(Schema.String), actorId: Schema.NullOr(Schema.String), participantCount: revision, matchedCount: revision });
+export const RosterOptionSchema = object({ id: VolunteerSchema.fields.id, name: VolunteerSchema.fields.name, email: VolunteerSchema.fields.email });
 export const ImportMappingSchema = object({ id: text, source: text, sourceParticipantId: maybeText, sourceEmail: maybeText, sourceName: maybeText, volunteerId: text, ...timestamps, updatedBy: maybeText });
 export const SyncStatusSchema = object({ lastAttemptAt: Schema.NullOr(Schema.String), lastSuccessAt: Schema.NullOr(Schema.String),
   effectiveChangeAt: Schema.NullOr(Schema.String), outcome: Schema.Literals(['never', 'changed', 'unchanged', 'failed']),
@@ -78,7 +81,7 @@ export const payloadSchemas = {
 const revisions = { dataRevision: revision, schedulingInputRevision: revision };
 const scheduleResult = object({ ...revisions, run: Schema.NullOr(SchedulingRunSchema), assignments: Schema.Array(AssignmentSchema), backups: Schema.Array(BackupSchema), shortfalls: Schema.Array(ShortfallSchema), sessions: Schema.Array(SessionSchema), volunteers: Schema.Array(VolunteerSchema), stale: Schema.Boolean });
 const syncResult = object({ ...revisions, ...jobResult, status: SyncStatusSchema, pending: Schema.Array(PendingParticipantSchema),
-  imports: Schema.Array(ImportRunSchema), volunteers: Schema.Array(VolunteerSchema), mappings: Schema.Array(ImportMappingSchema) });
+  imports: Schema.Array(ImportHistorySummarySchema), volunteers: Schema.Array(RosterOptionSchema) });
 export const resultSchemas = {
   'admin.sync.read': syncResult, 'admin.sync.now': object({ ...revisions, ...jobResult, status: SyncStatusSchema }),
   'session.me': object({ ...revisions, user: UserSchema, centers: Schema.Array(CenterSchema), scheduleRead: Schema.optionalKey(readSession), readSession: Schema.optionalKey(readSession) }),

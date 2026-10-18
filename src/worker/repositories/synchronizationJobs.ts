@@ -20,8 +20,11 @@ export function jobSummary(job: SyncJob): SyncJobSummary {
 export async function readJob(db: D1Database, id: string): Promise<SyncJob | null> {
   return db.prepare('SELECT * FROM synchronization_jobs WHERE id=?').bind(id).first<SyncJob>();
 }
+export function latestJobStatement(db: D1Database): D1PreparedStatement {
+  return db.prepare('SELECT * FROM synchronization_jobs ORDER BY created_at DESC, rowid DESC LIMIT 1');
+}
 export async function latestJob(db: D1Database): Promise<SyncJobSummary | null> {
-  const job = await db.prepare('SELECT * FROM synchronization_jobs ORDER BY created_at DESC, rowid DESC LIMIT 1').first<SyncJob>();
+  const job = await latestJobStatement(db).first<SyncJob>();
   return job ? jobSummary(job) : null;
 }
 export async function insertJob(db: D1Database, input: CommitInput, job: SyncJob): Promise<void> {

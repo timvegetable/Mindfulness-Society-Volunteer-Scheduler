@@ -26,7 +26,7 @@ const payloads: Record<string, unknown> = {
   'admin.insights.read': {}, 'center.candidate.read': {}, 'center.candidate.update': { centerId: 'c1', ...weekly },
   'admin.center.candidate.confirm': { candidateId: 'c1' },
 };
-const syncView = { status: { lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null, outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 }, pending: [], imports: [], volunteers: [volunteer], mappings: [] };
+const syncView = { status: { lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null, outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 }, pending: [], imports: [], volunteers: [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }] };
 const results: Record<string, object> = {
   'admin.sync.read': syncView, 'admin.sync.now': { status: syncView.status },
   'session.me': { user, centers: [center] },

@@ -50,7 +50,7 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     await executeCommit(db, await prepareScheduleBackfill(db));
     const admin = await google('admin@example.test');
     async function call(operation: string, credential: string, path = '/api', payload: unknown = {}) {
-      const response = await runtime!.dispatchFetch('https://local'+path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const response = await runtime!.dispatchFetch('https://local'+path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(operation === 'admin.sync.read' ? { 'X-Sync-Read-Protocol': '2' } : {}) },
         body: JSON.stringify({ operation, credential, payload }) });
       return { response, body: await response.json() };
     }
@@ -99,6 +99,10 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     }
     expect((await call('admin.sync.now', ticket)).response.status).toBe(401);
     expect(googleReads).toBe(2);
+    const oldStatusClient = await runtime.dispatchFetch('https://local/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'admin.sync.read', credential: ticket, payload: {} }) });
+    expect(oldStatusClient.status).toBe(400);
+    expect(await oldStatusClient.json()).toMatchObject({ ok: false, error: { details: { syncReadProtocol: 2 } } });
     const generic = await runtime.getWorker('generic-main');
     const genericRead = await generic.fetch('https://local/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ operation: 'admin.sync.read', credential: admin, payload: {} }) });
@@ -122,10 +126,26 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     const richGeneric = await generic.fetch('https://local/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ operation: 'admin.sync.read', credential: admin, payload: {} }) });
     expect(richRead.body).toEqual(await richGeneric.json());
+    const compact = Schema.decodeUnknownSync(resultSchemas['admin.sync.read'])((richRead.body as { data: unknown }).data);
+    expect(compact.imports[0]).not.toHaveProperty('stagedAvailability');
+    expect(compact.imports[0]?.participantCount).toBe(1);
+    expect(Object.keys(compact.volunteers[0]!).sort()).toEqual(['email', 'id', 'name']);
+    expect(compact).not.toHaveProperty('mappings');
+    const legacyIntervals = [
+      { id: 'old-one', sourceParticipantId: 'same-participant', volunteerId: 'volunteer-1', weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' },
+      { id: 'old-two', sourceParticipantId: 'same-participant', volunteerId: 'volunteer-1', weekday: 2, start: '09:00', end: '10:00', timeZone: 'America/New_York' },
+    ];
+    await db.prepare("UPDATE imports SET participant_count=NULL,staged_availability=? WHERE id='synthetic-history'").bind(JSON.stringify(legacyIntervals)).run();
+    const legacySummary = Schema.decodeUnknownSync(resultSchemas['admin.sync.read'])(((await call('admin.sync.read', ticket)).body as { data: unknown }).data);
+    expect(legacySummary.imports[0]?.participantCount).toBe(1);
+    const legacyGeneric = await generic.fetch('https://local/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'admin.sync.read', credential: admin, payload: {} }) });
+    expect((await call('admin.sync.read', ticket)).body).toEqual(await legacyGeneric.json());
+
     expect(richRead.body).toMatchObject({ ok: true, data: { pending: [pendingParticipant], imports: [{ id: 'synthetic-history' }], job: { id: 'synthetic-job', state: 'succeeded' } } });
-    await db.prepare("UPDATE volunteers SET lifecycle_status='invalid' WHERE id='volunteer-1'").run();
+    await db.prepare("UPDATE volunteers SET name='' WHERE id='volunteer-1'").run();
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
-    await db.prepare("UPDATE volunteers SET lifecycle_status='active' WHERE id='volunteer-1'").run();
+    await db.prepare("UPDATE volunteers SET name='Alex Example' WHERE id='volunteer-1'").run();
     // Direct fixture writes invalidate the prepared schedule, even when restoring a value.
     await executeCommit(db, await prepareScheduleBackfill(db));
     const privateWorker = await runtime.getWorker('private-reader');
