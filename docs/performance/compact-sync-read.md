@@ -67,3 +67,21 @@ The private diagnostic configurations initially pointed to `dist`; predeployment
 Main was restored first to `7bb1b7b4-daa4-4923-847a-3586c7e29cd6`, then reader to `d679ba8e-64d3-4546-8fdf-055960777e67`; Wrangler verified each at 100% traffic. The restored client was reloaded and showed the signed-out welcome screen. This diagnostic approval required restoration regardless of success and does not authorize leaving the compact candidate deployed.
 
 Remaining qualification includes other authenticated reads, largest supported inputs/growth bounds, renewal/error paths and the broader Queue/writer ledger. Two first-observed samples are not a guarantee about every cold isolate or future request. The overall <=9 ms goal stays active.
+
+
+## Broader release trial: rolled back
+
+The subsequent specifically approved release trial of the same application candidate failed on **Insights**, after successful sign-in, schedule loading and two sync-status reads. The [sanitized release record](compact-sync-release-trial.json) identifies all operation samples and versions.
+
+| Request | Combined CPU (ms) |
+| --- | --- |
+| Protocol negotiation | 2 |
+| Google verification | 7 |
+| Session issuance | 6 |
+| Initial schedule read | 5 |
+| Sync-status reads | 5, 4 |
+| First Insights read | **30** (29 main + 1 private reader) |
+
+All functional reads returned HTTP 200 with `ok` tail outcomes. The strict CPU gate failed regardless. No more reads or redeploys were performed after that measurement; center proposals and schedule preview remain unmeasured for this candidate. The source-level [bounded-work audit](bounded-work-audit.md) describes remaining risks but does not identify which routine consumed the 29 ms.
+
+Main `88346974-cfef-41f5-9904-025f80403621` and reader `6bccfa45-7427-4e96-a808-7eb812f6d3f5` were rolled back, main first, to the baseline versions listed above. Wrangler verified both at 100% traffic, the restored client showed its signed-out welcome, and both tail capture sessions were stopped. The compact sync improvement remains preserved in Git; Insights is the next measured read bottleneck. No overall release or nine-millisecond completion claim is justified.

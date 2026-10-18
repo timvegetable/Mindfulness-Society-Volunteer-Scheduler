@@ -1,0 +1,104 @@
+{
+  "sourceCommit": "3ad9f8779aa91d4d4d0b85f8275145a814cf1b61",
+  "variants": [
+    {
+      "stage": "full",
+      "changedSourceFile": null,
+      "injectedCode": null,
+      "nativeBundleSha256": "1736460fd01ef74f90daafa9ad86e4ef14d9a331fe3893f21f33d8dcae665c90",
+      "wranglerBundleSha256": "6ca634aa0908d67f09ed8b2df6dd1d881bea73266e4a161f002df1d2a288ad06",
+      "dryRunPassed": true
+    },
+    {
+      "stage": "snapshot",
+      "changedSourceFile": "src/worker/api/dispatch.ts",
+      "injectedCode": "    // [DEBUG-insights-cpu] temporary diagnostic variant only\n    if (operation === 'admin.insights.read') return yield* Effect.fail(new AppError('INTERNAL_ERROR', 'Temporary Insights CPU diagnostic complete: snapshot.'));\n",
+      "nativeBundleSha256": "c45d21af87af03e200649c9d997e4d633c5b54b8bc5dfe436747e4a0fce6f064",
+      "wranglerBundleSha256": "0cad8ac33ae71fc9a05e608a9d07ddbe3e29f46676dfa59fd1e2b40c69ff384f",
+      "dryRunPassed": true
+    },
+    {
+      "stage": "view",
+      "changedSourceFile": "src/worker/api/dispatch.ts",
+      "injectedCode": "    // [DEBUG-insights-cpu] temporary diagnostic variant only\n    if (operation === 'admin.insights.read') return yield* Effect.fail(new AppError('INTERNAL_ERROR', 'Temporary Insights CPU diagnostic complete: view.'));\n",
+      "nativeBundleSha256": "cecd4d21e7142c473005bd7379736724be0c87a7651bdc2eb945ba0cf8618953",
+      "wranglerBundleSha256": "07de28c25b8cf7546dbb7498f618d4d51e1894f0536f66fe4d9d3ce27ce7b413",
+      "dryRunPassed": true
+    },
+    {
+      "stage": "validation",
+      "changedSourceFile": "src/worker/api/dispatch.ts",
+      "injectedCode": "    // [DEBUG-insights-cpu] temporary diagnostic variant only\n    if (operation === 'admin.insights.read') return yield* Effect.fail(new AppError('INTERNAL_ERROR', 'Temporary Insights CPU diagnostic complete: validation.'));\n",
+      "nativeBundleSha256": "41e00a2220dffd0f10bf54edd9ec4ff741d3d65915c3b6f8d7132ce14dfef2b3",
+      "wranglerBundleSha256": "c76170f5614fb4a510a94677d6bbf04e286c5f41855ab4b91046471f4f9ccc3e",
+      "dryRunPassed": true
+    }
+  ],
+  "sourceTreeSha256": "c76204dfbe054e1d9794d111a9e816c09fc2adb407105c119cba344c4e1495f4",
+  "nativeProof": {
+    "checks": [
+      {
+        "stage": "full",
+        "actor": "admin",
+        "result": "complete"
+      },
+      {
+        "stage": "full",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      },
+      {
+        "stage": "full",
+        "actor": "forged",
+        "result": "UNAUTHORIZED"
+      },
+      {
+        "stage": "snapshot",
+        "actor": "admin",
+        "result": "INTERNAL_ERROR"
+      },
+      {
+        "stage": "snapshot",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      },
+      {
+        "stage": "snapshot",
+        "actor": "forged",
+        "result": "UNAUTHORIZED"
+      },
+      {
+        "stage": "view",
+        "actor": "admin",
+        "result": "INTERNAL_ERROR"
+      },
+      {
+        "stage": "view",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      },
+      {
+        "stage": "view",
+        "actor": "forged",
+        "result": "UNAUTHORIZED"
+      },
+      {
+        "stage": "validation",
+        "actor": "admin",
+        "result": "INTERNAL_ERROR"
+      },
+      {
+        "stage": "validation",
+        "actor": "volunteer",
+        "result": "FORBIDDEN"
+      },
+      {
+        "stage": "validation",
+        "actor": "forged",
+        "result": "UNAUTHORIZED"
+      }
+    ],
+    "metadataUnchanged": true
+  },
+  "note": "Temporary copies only. No diagnostic route, environment flag, secret, validation bypass or output schema change is added to application source. Three conditional stops in generic dispatch apply only to admin.insights.read, after current-account authorization."
+}
