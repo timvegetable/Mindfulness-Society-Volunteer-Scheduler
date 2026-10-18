@@ -93,6 +93,30 @@ function labelledSection(groups: readonly string[]): {
   return { valid: true, section: uniqueValues[0] };
 }
 
+function unlabelledDepartmentSection(
+  groups: readonly string[],
+): string | undefined {
+  // This legacy shape pairs a department code and four-digit section with a
+  // three-word descriptive suffix. Requiring both groups avoids guessing from
+  // unrelated numeric room or location details.
+  if (groups.length !== 2) return undefined;
+
+  const codeGroups = groups.flatMap((group, index) => {
+    const match = /^\s*([A-Z]{3})\s+(\d{4})\s*$/.exec(group);
+    return match?.[2] ? [{ index, section: match[2] }] : [];
+  });
+  if (codeGroups.length !== 1) return undefined;
+  if (/\b(?:section|sec\.?)\b/i.test(groups.join(" "))) return undefined;
+
+  const otherGroup = groups[1 - codeGroups[0]!.index];
+  if (!otherGroup || /\d/.test(otherGroup)) return undefined;
+  const words = otherGroup.match(/\p{L}+/gu) ?? [];
+  if (words.length !== 3 || (otherGroup.match(/,/g) ?? []).length !== 1)
+    return undefined;
+
+  return codeGroups[0]!.section;
+}
+
 function recognizableTeacher(name: string): boolean {
   return (
     !!name &&
@@ -118,8 +142,16 @@ export function formatUniv100Label(session: Pick<Session, "title">): string {
     if (!teacherAndDetails || !recognizableTeacher(teacherAndDetails.teacher))
       return session.title;
     const detailsSection = labelledSection(teacherAndDetails.groups);
-    if (!detailsSection.valid) return session.title;
     const courseSection = courseMatch[1];
+    if (!detailsSection.valid) {
+      if (courseSection) return session.title;
+      const legacySection = unlabelledDepartmentSection(
+        teacherAndDetails.groups,
+      );
+      return legacySection
+        ? label(teacherAndDetails.teacher, legacySection)
+        : session.title;
+    }
     if (
       courseSection &&
       detailsSection.section &&

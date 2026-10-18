@@ -24,6 +24,18 @@ describe("formatUniv100Label", () => {
     );
   });
 
+  it.each([
+    "UNIV100: Professor Ada Example (North Quad, West) (BIO 4821)",
+    "UNIV100: Professor Ada Example (BIO 4821) (North Quad, West)",
+  ])(
+    "uses a four-digit department code with a separate descriptive suffix: %s",
+    (title) => {
+      expect(formatUniv100Label({ title })).toBe(
+        "UNIV100-4821: Professor Ada Example",
+      );
+    },
+  );
+
   it("does not infer a section from an unlabelled number in a metadata group", () => {
     const title =
       "UNIV100: Professor Ada Example (Synthetic Department, Subject Marker) (Room Code 1234)";
@@ -34,7 +46,13 @@ describe("formatUniv100Label", () => {
 
   it("keeps a title when an unlabelled number could be a section or location", () => {
     const title =
-      "UNIV100: Professor Ada Example (Synthetic Department, Subject Marker) (SYN 1234)";
+      "UNIV100: Professor Ada Example (Synthetic Department) (SYN 1234)";
+    expect(formatUniv100Label({ title })).toBe(title);
+  });
+
+  it("keeps an ambiguous title when the descriptive suffix also has a number", () => {
+    const title =
+      "UNIV100: Professor Ada Example (North Quad 18, West) (BIO 4821)";
     expect(formatUniv100Label({ title })).toBe(title);
   });
 
