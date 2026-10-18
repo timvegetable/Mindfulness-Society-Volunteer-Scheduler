@@ -118,6 +118,33 @@ test('an administrator links a pending submission and immediately sees the resol
   await expect(page.locator('.pending-participants tbody tr')).toHaveCount(39);
 });
 
+test('roster link pickers sort names and preserve selected IDs through a sync refresh', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  await page.goto('/__browser-check?shuffled-roster=1');
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+
+  const first = page.getByRole('combobox', { name: 'Roster link for Synthetic Volunteer 01 (WhenIsGood ID: p-synthetic-v0)', exact: true });
+  const second = page.getByRole('combobox', { name: 'Roster link for Synthetic Volunteer 02 (WhenIsGood ID: p-synthetic-v1)', exact: true });
+  const values = await first.locator('option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value));
+  expect(values).toEqual(['', 'synthetic-v0', 'synthetic-v1', 'synthetic-v3', 'synthetic-v4', 'synthetic-v2']);
+  const labels = await first.locator('option').evaluateAll(options => options.map(option => option.textContent));
+  expect(labels).toEqual([
+    'Choose a volunteer', 'Alex Example (a@example.test)', 'alex Example (m@example.test)',
+    'ALex Example (z@example.test)', 'Beth Example (beth@example.test)', 'Zoe Example (zoe@example.test)',
+  ]);
+
+  await first.selectOption('synthetic-v2'); await second.selectOption('synthetic-v1');
+  await page.getByRole('button', { name: 'Sync now', exact: true }).click();
+  await expect(first).toHaveValue('synthetic-v2'); await expect(second).toHaveValue('synthetic-v1');
+  await expect(page.getByRole('button', { name: 'Sync now', exact: true })).toBeFocused();
+
+  await first.selectOption('synthetic-v3');
+  await expect(first).toHaveValue('synthetic-v3');
+  await first.locator('xpath=ancestor::tr').getByRole('button', { name: 'Link participant', exact: true }).click();
+  await expect(page.locator('.pending-participants tbody tr')).toHaveCount(39);
+  await expect(page.getByRole('combobox', { name: 'Roster link for Synthetic Volunteer 02 (WhenIsGood ID: p-synthetic-v1)', exact: true })).toHaveValue('synthetic-v1');
+});
+
 
 test('Sync now and linking preserve other unsaved roster links', async ({ page }) => {
   await page.goto('/__browser-check');

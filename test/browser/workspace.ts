@@ -33,11 +33,20 @@ const candidates: ResultOf<'center.candidate.read'> = {
     coverage: { volunteers: volunteers.slice(0, 2), requestedCount: 2, shortfall: 0 },
   })),
 };
+const syncRoster: ResultOf<'admin.sync.read'>['volunteers'] = new URLSearchParams(location.search).has('shuffled-roster')
+  ? [
+    { id: 'synthetic-v2', name: 'Zoe Example', email: 'zoe@example.test' },
+    { id: 'synthetic-v3', name: 'ALex Example', email: 'z@example.test' },
+    { id: 'synthetic-v1', name: 'alex Example', email: 'm@example.test' },
+    { id: 'synthetic-v4', name: 'Beth Example', email: 'beth@example.test' },
+    { id: 'synthetic-v0', name: 'Alex Example', email: 'a@example.test' },
+  ]
+  : volunteers.map(({ id, name, email }) => ({ id, name, email }));
 let synchronization: ResultOf<'admin.sync.read'> = {
   ...revisions, status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: '2026-10-13T12:00:00Z',
     outcome: 'changed', diagnostic: null, participantCount: 40, matchedCount: 0, pendingCount: 40 },
   pending: volunteers.map(v => ({ id: `p-${v.id}`, name: v.name, email: v.email, intervals: [{ weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' }],
-    reason: 'new', resolvable: true, present: true, firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z' })), imports: new URLSearchParams(location.search).has('history') ? [{ id: 'synthetic-import', status: 'completed', startedAt: '2026-10-13T12:00:00Z', actorId: 'synthetic-admin', participantCount: 40, matchedCount: 0 }] : [], volunteers: volunteers.map(({ id, name, email }) => ({ id, name, email })),
+    reason: 'new', resolvable: true, present: true, firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z' })), imports: new URLSearchParams(location.search).has('history') ? [{ id: 'synthetic-import', status: 'completed', startedAt: '2026-10-13T12:00:00Z', actorId: 'synthetic-admin', participantCount: 40, matchedCount: 0 }] : [], volunteers: syncRoster,
 };
 
 if (new URLSearchParams(location.search).has('collision')) {
