@@ -1,0 +1,255 @@
+{
+  "candidate": "3ad9f8779aa91d4d4d0b85f8275145a814cf1b61",
+  "manifestCommit": "2647e18",
+  "metric": "Cloudflare tail integer cpuTime. Sequential main/private events paired by order and timestamps, combined per external HTTP request. Zero is below reporting precision. First observed does not guarantee a cold isolate.",
+  "samples": [
+    {
+      "variant": "full",
+      "sample": 1,
+      "mainVersion": "8fd7d801-bedf-4dc5-b36a-8e6e2cc80557",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 30,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 31
+    },
+    {
+      "variant": "full",
+      "sample": 2,
+      "mainVersion": "8fd7d801-bedf-4dc5-b36a-8e6e2cc80557",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 21,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 22
+    },
+    {
+      "variant": "full",
+      "sample": 3,
+      "mainVersion": "8fd7d801-bedf-4dc5-b36a-8e6e2cc80557",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 13,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 14
+    },
+    {
+      "variant": "full",
+      "sample": 4,
+      "mainVersion": "8fd7d801-bedf-4dc5-b36a-8e6e2cc80557",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 13,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 14
+    },
+    {
+      "variant": "full",
+      "sample": 5,
+      "mainVersion": "8fd7d801-bedf-4dc5-b36a-8e6e2cc80557",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 12,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 13
+    },
+    {
+      "variant": "snapshot",
+      "sample": 1,
+      "mainVersion": "16922793-0852-489c-b949-13a3e132531a",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 18,
+      "readerCpuMs": 2,
+      "combinedCpuMs": 20
+    },
+    {
+      "variant": "snapshot",
+      "sample": 2,
+      "mainVersion": "16922793-0852-489c-b949-13a3e132531a",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 8,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 9
+    },
+    {
+      "variant": "snapshot",
+      "sample": 3,
+      "mainVersion": "16922793-0852-489c-b949-13a3e132531a",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 5,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 6
+    },
+    {
+      "variant": "snapshot",
+      "sample": 4,
+      "mainVersion": "16922793-0852-489c-b949-13a3e132531a",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 3,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 4
+    },
+    {
+      "variant": "snapshot",
+      "sample": 5,
+      "mainVersion": "16922793-0852-489c-b949-13a3e132531a",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 5,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 6
+    },
+    {
+      "variant": "view",
+      "sample": 1,
+      "mainVersion": "3b16de02-8191-4f86-b3b1-5e7d67b21424",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 27,
+      "readerCpuMs": 2,
+      "combinedCpuMs": 29
+    },
+    {
+      "variant": "view",
+      "sample": 2,
+      "mainVersion": "3b16de02-8191-4f86-b3b1-5e7d67b21424",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 20,
+      "readerCpuMs": 2,
+      "combinedCpuMs": 22
+    },
+    {
+      "variant": "view",
+      "sample": 3,
+      "mainVersion": "3b16de02-8191-4f86-b3b1-5e7d67b21424",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 11,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 12
+    },
+    {
+      "variant": "view",
+      "sample": 4,
+      "mainVersion": "3b16de02-8191-4f86-b3b1-5e7d67b21424",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 10,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 11
+    },
+    {
+      "variant": "view",
+      "sample": 5,
+      "mainVersion": "3b16de02-8191-4f86-b3b1-5e7d67b21424",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 11,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 12
+    },
+    {
+      "variant": "validation",
+      "sample": 1,
+      "mainVersion": "330361fb-937f-4211-9f38-d3d5d7c4d03c",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 41,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 42
+    },
+    {
+      "variant": "validation",
+      "sample": 2,
+      "mainVersion": "330361fb-937f-4211-9f38-d3d5d7c4d03c",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 22,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 23
+    },
+    {
+      "variant": "validation",
+      "sample": 3,
+      "mainVersion": "330361fb-937f-4211-9f38-d3d5d7c4d03c",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 18,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 19
+    },
+    {
+      "variant": "validation",
+      "sample": 4,
+      "mainVersion": "330361fb-937f-4211-9f38-d3d5d7c4d03c",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 9,
+      "readerCpuMs": 0,
+      "combinedCpuMs": 9
+    },
+    {
+      "variant": "validation",
+      "sample": 5,
+      "mainVersion": "330361fb-937f-4211-9f38-d3d5d7c4d03c",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 12,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 13
+    },
+    {
+      "variant": "full-redeploy",
+      "sample": 1,
+      "mainVersion": "1dcecb7f-1c01-4bc9-97be-a2d2a7570065",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 25,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 26
+    },
+    {
+      "variant": "full-redeploy",
+      "sample": 2,
+      "mainVersion": "1dcecb7f-1c01-4bc9-97be-a2d2a7570065",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 15,
+      "readerCpuMs": 0,
+      "combinedCpuMs": 15
+    },
+    {
+      "variant": "full-redeploy",
+      "sample": 3,
+      "mainVersion": "1dcecb7f-1c01-4bc9-97be-a2d2a7570065",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 12,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 13
+    },
+    {
+      "variant": "full-redeploy",
+      "sample": 4,
+      "mainVersion": "1dcecb7f-1c01-4bc9-97be-a2d2a7570065",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 13,
+      "readerCpuMs": 1,
+      "combinedCpuMs": 14
+    },
+    {
+      "variant": "full-redeploy",
+      "sample": 5,
+      "mainVersion": "1dcecb7f-1c01-4bc9-97be-a2d2a7570065",
+      "readerVersion": "b2a07559-99e2-43f3-a1d5-305ad7fd1474",
+      "mainCpuMs": 11,
+      "readerCpuMs": 0,
+      "combinedCpuMs": 11
+    }
+  ],
+  "signinCombinedCpuMs": {
+    "negotiation": 2,
+    "googleVerification": 11,
+    "sessionIssuance": 10,
+    "initialScheduleRead": 6
+  },
+  "results": {
+    "normalInsightsSuccesses": 10,
+    "intentionalDiagnostics": 15,
+    "unexpectedFailures": 0,
+    "normalInsightsRequestsAboveNineMs": 10
+  },
+  "baselineRestored": {
+    "main": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6",
+    "reader": "d679ba8e-64d3-4546-8fdf-055960777e67",
+    "trafficPercent": 100,
+    "client": "Signed-out welcome verified after reload."
+  },
+  "limitations": [
+    "Different deployments and first-use noise; error-path prefixes cannot be subtracted as exact CPU phases.",
+    "Only current production data; larger input gates unverified.",
+    "Sign-in CPU was over budget in this run despite functional success and earlier lower samples."
+  ]
+}

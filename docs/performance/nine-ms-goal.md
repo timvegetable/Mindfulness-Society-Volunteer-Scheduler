@@ -7,10 +7,10 @@ Use Cloudflare operation-attributed CPU for production gates, summing caller/pri
 | Required surface | Current evidence | Remaining proof/work |
 | --- | --- | --- |
 | Static assets, client config and bounded invalid-request handling | Earlier observations include cheap unlabeled HTTP responses | Explicit route/error attribution and worst supported input bounds |
-| Sign-in and renewal | `7838e51` initial split stages 6 and 5 ms, negotiation 1 ms; rolled back after later read failure | Candidate first/repeat and first-observed after redeploy, renewal, rejection/error cases |
+| Sign-in and renewal | Earlier split samples 5–8 ms; latest Insights diagnostic had Google verification 11 ms and issuance 10 ms combined, functional successes but CPU failures | Candidate first/repeat and first-observed after redeploy, renewal, rejection/error cases |
 | Prepared schedule | `2ecbe19` approved trial 3–5 ms, including first observed after redeploy; `7838e51` initial read 3 ms | Preserve gates after further changes; largest supported schedules |
 | Sync status | Earlier first reads 14/12 ms; compact `3ad9f87` diagnostic: ten normal reads 1–5 ms, both first-observed reads 5 ms; restored baseline afterward | Qualify/release compact candidate with remaining reads; populated-history growth and largest-input bounds |
-| Insights and center proposals | Compact release trial: first Insights 30 ms combined (29 main + 1 reader), immediate rollback; historical proposal breaches 16–27 ms | Diagnose Insights using production evidence; then first/repeat proposal measurements and bounded largest inputs |
+| Insights and center proposals | Compact release first Insights 30 ms; repeated diagnostic full reads 11–31 ms, snapshot prefix 4–20 ms and handler prefix 11–29 ms; restored baseline; historical proposal breaches 16–27 ms | Diagnose Insights using production evidence; then first/repeat proposal measurements and bounded largest inputs |
 | Volunteer dashboard | Functional/schema/authorization coverage | Production CPU with an authorized volunteer; largest supported data |
 | Read-only schedule preview | Functional scheduling tests | Production first/repeat CPU; representative largest scheduling input; split/client-side computation proposal if needed |
 | HTTP mutations and prepared schedule writers | Functional atomicity/concurrency/replay tests; historical manual enqueue 6 ms | Per-operation first/repeat success, replay/error and added preparation CPU; production writes need explicit concrete approval |
