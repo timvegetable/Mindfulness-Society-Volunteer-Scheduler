@@ -1,0 +1,128 @@
+{
+  "sourceCommit": "bc8b315",
+  "metric": "Cloudflare live-tail cpuTime in milliseconds; sequential main/private events paired by path/timestamps and summed within each external HTTP request.",
+  "result": "rolled back: small async sync-status read exceeded the 9 ms gate",
+  "combinedCpuMs": {
+    "protocolNegotiation": 1,
+    "googleVerification": 5,
+    "sessionIssuance": 8,
+    "scheduleRead": 4,
+    "syncStatusRead": 12
+  },
+  "observations": [
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api",
+      "cpuMs": 1,
+      "wallMs": 1,
+      "outcome": "ok",
+      "status": 400,
+      "timestamp": 1792291714730,
+      "version": "93d63570-dd68-4e14-ad77-9c902dac8473"
+    },
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api/identity",
+      "cpuMs": 0,
+      "wallMs": 62,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291714750,
+      "version": "93d63570-dd68-4e14-ad77-9c902dac8473"
+    },
+    {
+      "worker": "reader",
+      "operation": "session.google.verify",
+      "path": "/internal/identity",
+      "cpuMs": 5,
+      "wallMs": 41,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291714752,
+      "version": "3b71492e-36cb-4d0c-9fa8-591e3956e302"
+    },
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api",
+      "cpuMs": 2,
+      "wallMs": 83,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291714828,
+      "version": "93d63570-dd68-4e14-ad77-9c902dac8473"
+    },
+    {
+      "worker": "reader",
+      "operation": "session.me",
+      "path": "/internal/session",
+      "cpuMs": 6,
+      "wallMs": 76,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291714831,
+      "version": "3b71492e-36cb-4d0c-9fa8-591e3956e302"
+    },
+    {
+      "worker": "main",
+      "operation": null,
+      "path": "/api/schedule",
+      "cpuMs": 0,
+      "wallMs": 32,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291714948,
+      "version": "93d63570-dd68-4e14-ad77-9c902dac8473"
+    },
+    {
+      "worker": "reader",
+      "operation": "admin.schedule.read",
+      "path": "/api/schedule",
+      "cpuMs": 4,
+      "wallMs": 28,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291714951,
+      "version": "3b71492e-36cb-4d0c-9fa8-591e3956e302"
+    },
+    {
+      "worker": "main",
+      "operation": "admin.sync.read",
+      "path": "/api",
+      "cpuMs": 11,
+      "wallMs": 57,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291730454,
+      "version": "93d63570-dd68-4e14-ad77-9c902dac8473"
+    },
+    {
+      "worker": "reader",
+      "operation": "read.session.verify",
+      "path": "/internal/read-session",
+      "cpuMs": 1,
+      "wallMs": 1,
+      "outcome": "ok",
+      "status": 200,
+      "timestamp": 1792291730459,
+      "version": "3b71492e-36cb-4d0c-9fa8-591e3956e302"
+    }
+  ],
+  "rollback": {
+    "main": "7bb1b7b4-daa4-4923-847a-3586c7e29cd6",
+    "reader": "d679ba8e-64d3-4546-8fdf-055960777e67"
+  },
+  "unmeasured": [
+    "repeat sync-status reads",
+    "identical redeploy first-observed samples",
+    "Insights",
+    "center proposals",
+    "schedule preview",
+    "volunteer dashboard",
+    "writes",
+    "changed-source Queue stages",
+    "larger inputs"
+  ]
+}
