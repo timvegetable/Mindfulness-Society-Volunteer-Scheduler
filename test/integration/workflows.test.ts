@@ -82,6 +82,22 @@ describe('authorization, revisions and durable idempotency', () => {
     const schedule = success(await app.request('admin.schedule.read', {}, 'admin'));
     expect(schedule.centers).toEqual([{ id: 'center-1', name: 'North Center' }]);
   });
+  it('keeps started assignment details separate from the upcoming session list', async () => {
+    const app = await application(); await addPublishedFixture(app);
+    await app.db.batch([
+      app.db.prepare("UPDATE centers SET name='Opal Senior Center' WHERE id='center-1'"),
+      app.db.prepare("UPDATE sessions SET title='opal-senior-center',date='2026-10-04',start_time='07:00',end_time='08:00' WHERE id='session-1'"),
+      app.db.prepare("INSERT INTO sessions (id,kind,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES ('session-univ','univ100','UNIV100: Professor Ada Example (Department: Biology, Room 110, Section 0123)','2026-10-04','07:00','08:00','America/New_York',1,'confirmed')"),
+      app.db.prepare("INSERT INTO sessions (id,kind,center_id,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES ('session-future','center','center-1','opal-senior-center','2026-10-05','10:00','11:00','America/New_York',1,'locked')"),
+      app.db.prepare("INSERT INTO assignments (id,session_id,volunteer_id,schedule_revision,status) VALUES ('assignment-univ','session-univ','volunteer-1',1,'assigned')"),
+    ]);
+
+    const dashboard = success(await app.request('volunteer.dashboard', {}, 'volunteer'));
+    expect(dashboard.assignments.map(row => row.id)).toEqual(['assignment-1', 'assignment-univ']);
+    expect(dashboard.sessions.map(row => row.id)).toEqual(['session-future']);
+    expect(dashboard.assignmentSessions?.map(row => row.id)).toEqual(['session-1', 'session-univ']);
+    expect(dashboard.centers).toEqual([{ id: 'center-1', name: 'Opal Senior Center' }]);
+  });
   it('rejects caller-controlled volunteer IDs and only edits the authenticated volunteer', async () => {
     const app = await application(); const before = await app.read();
     expect(await app.request('volunteer.availability.recurring.update', { intervals: [interval], volunteerId: 'volunteer-2' }, 'volunteer')).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
