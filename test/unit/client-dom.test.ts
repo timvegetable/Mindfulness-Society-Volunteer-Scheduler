@@ -6,14 +6,18 @@ import type { ResultOf } from '../../src/shared/api/schemas';
 const volunteer = { id: 'v1', name: 'Alice', email: 'alice@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 1 };
 const secondVolunteer = { id: 'v2', name: 'Bob', email: 'bob@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 2 };
 const thirdVolunteer = { id: 'v3', name: 'Cara', email: 'cara@example.test', lifecycleStatus: 'active', interviewStatus: 'complete', readinessRank: 3 };
-const center = { id: 'c1', name: 'Authorized Center', active: true };
-const session = { id: 's1', kind: 'center', centerId: 'c1', title: 'Morning session', date: '2026-10-06', start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' };
+const center = { id: 'c1', name: 'Opal Senior Center', active: true };
+const sessionCenter = { id: center.id, name: center.name };
+const session = { id: 's1', kind: 'center', centerId: 'c1', title: 'opal-senior-center', date: '2099-10-06', start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' };
+const univSession = { ...session, id: 'univ100', kind: 'univ100', centerId: null, title: 'UNIV100: Professor Ada Example (Department: Biology, Room 110, Section 0123)' };
+const legacySession = { ...session, id: 'legacy', centerId: null, title: 'Center session: Historical name' };
 const assignment = { id: 'a1', sessionId: 's1', volunteerId: 'v1', scheduleRevision: 1, status: 'assigned' };
 const base = { dataRevision: 7, schedulingInputRevision: 2 };
 let callback: (response: { credential: string }) => void;
 let requests: { operation: string; expectedRevision?: number }[];
 let roles: Role[];
 let confirmAnswer: boolean;
+let confirmMessage = '';
 let previewRevision: number;
 let configId: string;
 let initialized: number;
@@ -31,13 +35,13 @@ const click = (label: string) => {
 };
 async function settle() { for (let i = 0; i < 8; i++) await new Promise(resolve => setTimeout(resolve, 0)); }
 async function mount() {
-  await startClient({ id: () => 'test-intent', confirm: () => confirmAnswer, prompt: () => '', fetch: async (input, init) => {
+  await startClient({ id: () => 'test-intent', confirm: message => { confirmMessage = message; return confirmAnswer; }, prompt: () => '', fetch: async (input, init) => {
     if (input === '/client-config') return new Response(JSON.stringify({ oauthClientId: configId, timeZone: 'America/New_York' }));
     const body = JSON.parse(String(init?.body)) as { operation: string; expectedRevision?: number }; requests.push(body);
     let data: unknown;
-    if (body.operation === 'session.me') data = { ...base, user: { id: 'u1', email: volunteer.email, roles, volunteerId: 'v1', centerIds: ['c1'], active: true }, centers: [center] };
-    else if (body.operation === 'volunteer.dashboard') { await dashboardRead; data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session] }; }
-    else if (body.operation === 'admin.schedule.read' || body.operation === 'admin.schedule.rerun') data = { ...base, run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [session, { ...session, id: 's2', title: 'Center session: Another center', requiredStaffCount: 2 }], volunteers: [volunteer], stale: false };
+    if (body.operation === 'session.me') data = { ...base, user: { id: 'u1', email: volunteer.email, roles, volunteerId: 'v1', centerIds: ['c1'], active: true }, centers: roles.includes('administrator') || roles.includes('center-contact') ? [center] : [] };
+    else if (body.operation === 'volunteer.dashboard') { await dashboardRead; data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session, univSession], centers: [sessionCenter] }; }
+    else if (body.operation === 'admin.schedule.read' || body.operation === 'admin.schedule.rerun') data = { ...base, run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [legacySession, univSession, session, { ...session, id: 's2', title: 'An older readable label', requiredStaffCount: 2 }], volunteers: [volunteer], centers: [sessionCenter], stale: false };
     else if (body.operation === 'admin.schedule.preview') data = { ...base, dataRevision: previewRevision, output: { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } };
     else if (body.operation === 'center.candidate.read') data = { ...base, centers: [center], candidates: [] };
     else if (body.operation === 'admin.sync.read' || body.operation === 'admin.sync.now') data = { ...base,
@@ -50,7 +54,7 @@ async function mount() {
 }
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
-  requests = []; roles = ['volunteer']; confirmAnswer = false; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined;
+  requests = []; roles = ['volunteer']; confirmAnswer = false; confirmMessage = ''; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined;
   syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }];
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
@@ -114,14 +118,36 @@ describe('client DOM behaviors', () => {
   });
   it('does not send a cancellation when confirmation is dismissed', async () => {
     await signIn(); click('Cancel assignment'); await settle();
+    expect(confirmMessage).toContain('Opal Senior Center');
+    expect(confirmMessage).not.toContain('opal-senior-center');
     expect(requests.some(item => item.operation === 'volunteer.assignment.cancel')).toBe(false);
+  });
+  it('uses referenced center names in volunteer assignments and upcoming sessions', async () => {
+    roles = ['volunteer']; await signIn();
+    expect(document.querySelector('.assignments-panel tbody')?.textContent).toContain('Opal Senior Center');
+    expect(document.querySelector('.assignments-panel tbody')?.textContent).not.toContain('opal-senior-center');
+    const upcoming = [...document.querySelectorAll('h2')].find(node => node.textContent === 'Upcoming sessions');
+    expect(upcoming?.parentElement?.querySelector('tbody')?.textContent).toContain('Opal Senior Center');
+    expect(upcoming?.parentElement?.querySelector('tbody')?.textContent).toContain('UNIV100-0123: Professor Ada Example');
+    expect(document.body.textContent).not.toContain('opal-senior-center');
   });
   it('publishes with the reviewed preview revision after explicit confirmation', async () => {
     roles = ['administrator']; confirmAnswer = true; await signIn();
     expect(document.querySelector('tbody tr:last-child td:last-child')?.textContent).toBe('2');
+    expect(document.querySelector('tbody')?.textContent).toContain('Opal Senior Center');
+    expect(document.querySelector('tbody')?.textContent).toContain('Historical name');
+    expect(document.querySelector('tbody')?.textContent).toContain('UNIV100-0123: Professor Ada Example');
     expect(document.querySelector('tbody')?.textContent).not.toContain('Center session:');
+    expect(document.querySelector('tbody')?.textContent).not.toContain('opal-senior-center');
+    expect(document.querySelector('tbody')?.textContent).not.toContain('An older readable label');
     click('Preview schedule'); await settle();
     expect(document.querySelector('tbody tr:last-child td:last-child')?.textContent).toBe('2');
+    expect(document.querySelector('tbody')?.textContent).toContain('Opal Senior Center');
+    expect(document.querySelector('tbody')?.textContent).toContain('Historical name');
+    expect(document.querySelector('tbody')?.textContent).toContain('UNIV100-0123: Professor Ada Example');
+    expect(document.querySelector('tbody')?.textContent).not.toContain('Center session:');
+    expect(document.querySelector('tbody')?.textContent).not.toContain('opal-senior-center');
+    expect(document.querySelector('tbody')?.textContent).not.toContain('An older readable label');
     expect(document.querySelectorAll('table')).toHaveLength(1);
     expect(document.querySelector('h2')?.textContent).toBe('Schedule preview');
     click('Back to published schedule'); await settle();
@@ -138,7 +164,7 @@ describe('client DOM behaviors', () => {
   it('offers only authorized centers and no administrative confirm controls to a contact', async () => {
     roles = ['center-contact']; await signIn();
     const options = [...document.querySelectorAll('option')].map(item => item.textContent);
-    expect(options).toContain('Authorized Center'); expect(options).not.toContain('Unauthorized Center'); expect(document.body.textContent).not.toContain('Publish schedule');
+    expect(options).toContain('Opal Senior Center'); expect(options).not.toContain('Unauthorized Center'); expect(document.body.textContent).not.toContain('Publish schedule');
   });
   it('shows numeric heatmap counts and participant details on selection', async () => {
     roles = ['administrator']; await signIn(); click('Insights'); await settle(); click('9:00 AM–10:00 AM · 1'); await settle();

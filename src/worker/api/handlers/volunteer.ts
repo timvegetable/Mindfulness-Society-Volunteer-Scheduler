@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import type { AvailabilityException, WeeklyInterval, Assignment, Shortfall } from '../../../shared/domain/models';
+import { sessionCenters } from '../../../shared/domain/session-label';
 import { normalizeWeeklyIntervals } from '../../../shared/domain/intervals';
 import { instantFor, futureStartCheck } from '../../../shared/domain/availability';
 import { selectBackup } from '../../../shared/domain/scheduler';
@@ -15,12 +16,14 @@ export function dashboard(ctx: HandlerContext) {
   return Effect.gen(function* () {
     const volunteer = yield* ownVolunteer(ctx);
     const startsLater = futureStartCheck(ctx.now.getTime());
+    const sessions = ctx.state.sessions.filter((session) => session.status !== 'cancelled' && startsLater(session.date, session.start, session.timeZone));
     return {
       volunteer,
       assignments: currentAssignments(ctx.state).filter((row) => row.volunteerId === volunteer.id),
       recurringAvailability: ctx.state.recurringAvailability.filter((row) => row.volunteerId === volunteer.id),
       availabilityExceptions: ctx.state.availabilityExceptions.filter((row) => row.volunteerId === volunteer.id),
-      sessions: ctx.state.sessions.filter((session) => session.status !== 'cancelled' && startsLater(session.date, session.start, session.timeZone)),
+      sessions,
+      centers: sessionCenters(sessions, ctx.state.centers),
     };
   });
 }

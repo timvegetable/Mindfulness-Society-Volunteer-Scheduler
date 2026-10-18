@@ -75,6 +75,13 @@ describe('authorization, revisions and durable idempotency', () => {
     const app = await application();
     for (const operation of ['volunteer.dashboard', 'admin.schedule.read', 'center.candidate.read'] as const) success(await app.request(operation, {}, 'multi'));
   });
+  it('returns only centers referenced by the displayed sessions at each read boundary', async () => {
+    const app = await application();
+    const volunteer = success(await app.request('volunteer.dashboard', {}, 'volunteer'));
+    expect(volunteer.centers).toEqual([{ id: 'center-1', name: 'North Center' }]);
+    const schedule = success(await app.request('admin.schedule.read', {}, 'admin'));
+    expect(schedule.centers).toEqual([{ id: 'center-1', name: 'North Center' }]);
+  });
   it('rejects caller-controlled volunteer IDs and only edits the authenticated volunteer', async () => {
     const app = await application(); const before = await app.read();
     expect(await app.request('volunteer.availability.recurring.update', { intervals: [interval], volunteerId: 'volunteer-2' }, 'volunteer')).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });

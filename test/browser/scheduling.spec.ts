@@ -28,6 +28,8 @@ test('workspace tables stay contained and schedule preview returns to published 
   const viewport = page.viewportSize()!;
   await page.goto(`/__browser-check?width=${viewport.width}&height=${viewport.height}`);
   await expect(page.getByRole('heading', { name: 'Session schedule', exact: true })).toBeVisible();
+  await expect(page.locator('.schedule-panel tbody tr').first()).toContainText('Synthetic Center');
+  await expect(page.locator('.schedule-panel tbody')).not.toContainText('Synthetic session 1');
   const logo = page.locator('.brand-logo');
   await expect(logo).toBeVisible();
   await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
@@ -35,6 +37,7 @@ test('workspace tables stay contained and schedule preview returns to published 
 
   await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Schedule preview', exact: true })).toBeVisible();
+  await expect(page.locator('.schedule-panel tbody tr').first()).toContainText('Synthetic Center');
   await expect(page.getByRole('button', { name: 'Publish schedule', exact: true })).toBeEnabled();
   await checkLayout(page);
   await page.getByRole('button', { name: 'Back to published schedule', exact: true }).click();

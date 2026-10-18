@@ -30,22 +30,24 @@ export async function readSchedule(request: Request, env: ScheduleReadBindings &
       || (Object.hasOwn(body, 'idempotencyKey') && (typeof body.idempotencyKey !== 'string' || !body.idempotencyKey))) throw new AppError('INVALID_REQUEST', 'Invalid schedule request.');
     console.info('Scheduling API operation:', 'admin.schedule.read');
     const identity = await readTicketsFor(env, body.credential.startsWith('r2.') ? 'session' : 'schedule')!.verify(body.credential, Date.now());
-    const [users, manifests, parts] = await env.DB.batch<Record<string, unknown>>([
+    const [users, manifests, parts, centers] = await env.DB.batch<Record<string, unknown>>([
       env.DB.prepare(`SELECT ${accountColumns} FROM users WHERE id=? AND lower(trim(email))=?`)
         .bind(identity.accountId, identity.email),
       env.DB.prepare(`SELECT m.*, COALESCE((SELECT value FROM meta WHERE key='dataRevision'),'0') AS data_revision,
         COALESCE((SELECT value FROM meta WHERE key='schedulingInputRevision'),'0') AS scheduling_revision,
         (SELECT value FROM meta WHERE key='scheduleViewRevision') AS current_version FROM schedule_read_manifest m WHERE id='schedule'`),
       env.DB.prepare('SELECT part,body FROM schedule_read_parts ORDER BY part'),
+      env.DB.prepare(`SELECT id,name FROM centers
+        WHERE id IN (SELECT DISTINCT center_id FROM sessions WHERE kind='center' AND center_id IS NOT NULL) ORDER BY id`),
     ]);
     const stored = users?.results[0];
     if (!stored) throw new AppError('UNAUTHORIZED', 'This account is not active.');
     const user = storedAccount(stored);
     if (!user.active) throw new AppError('UNAUTHORIZED', 'This account is not active.');
     if (!canUseOperation(user, 'admin.schedule.read')) throw new AppError('FORBIDDEN', 'Your account cannot read this schedule.');
-    const manifest = manifests?.results[0], rows = parts?.results;
+    const manifest = manifests?.results[0], rows = parts?.results, centerRows = centers?.results;
     if (!manifest || manifest.schema_version !== representationVersion || !rows || !rows.length
-      || revision(manifest.part_count) !== rows.length || revision(manifest.source_version) !== revision(manifest.current_version)
+      || !centerRows || revision(manifest.part_count) !== rows.length || revision(manifest.source_version) !== revision(manifest.current_version)
       || typeof manifest.digest !== 'string' || !/^[a-f0-9]{64}$/.test(manifest.digest)) throw unavailable();
     const input = manifest.input_revision === null ? null : revision(manifest.input_revision);
     const dataRevision = revision(manifest.data_revision), schedulingInputRevision = revision(manifest.scheduling_revision);
@@ -56,7 +58,11 @@ export async function readSchedule(request: Request, env: ScheduleReadBindings &
     const core = fragments.join('');
     if (!core.startsWith('{') || !core.endsWith('}') || await representationDigest(core, input) !== manifest.digest) throw unavailable();
     const stale = input === null || input < schedulingInputRevision;
-    return new Response(`{"ok":true,"data":${core.slice(0, -1)},"stale":${stale},"dataRevision":${dataRevision},"schedulingInputRevision":${schedulingInputRevision}}}`, { headers });
+    const centerRecords = centerRows.map(row => {
+      if (typeof row.id !== 'string' || !row.id || typeof row.name !== 'string' || !row.name) throw unavailable();
+      return { id: row.id, name: row.name };
+    });
+    return new Response(`{"ok":true,"data":${core.slice(0, -1)},"centers":${JSON.stringify(centerRecords)},"stale":${stale},"dataRevision":${dataRevision},"schedulingInputRevision":${schedulingInputRevision}}}`, { headers });
   } catch (error) {
     const failure = error instanceof AppError ? error : unavailable();
     const status = failure.code === 'UNAUTHORIZED' ? 401 : failure.code === 'FORBIDDEN' ? 403
