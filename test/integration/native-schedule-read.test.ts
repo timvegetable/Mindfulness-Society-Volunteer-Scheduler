@@ -38,6 +38,10 @@ it('exchanges real Google-style credentials and reads prepared schedules through
       compatibilityDate: '2026-10-04', d1Databases: { DB: 'native-read-shared' }, bindings: readerBindings, outboundService },
       { name: 'google-only', modules: true, modulesRoot: work, scriptPath: join(work, 'reader.js'),
         compatibilityDate: '2026-10-04', bindings: readerBindings, outboundService },
+      { name: 'generic-main', modules: true, modulesRoot: work, scriptPath: join(work, 'worker.js'),
+        compatibilityDate: '2026-10-04', d1Databases: { DB: 'native-read-shared' }, outboundService,
+        bindings: { OAUTH_CLIENT_ID: 'native-read-client', SCHEDULE_READ_MODE: 'prepare', ADMIN_EMAILS: '', EMAIL_FROM: 'unused@example.test',
+          DISPLAY_INCREMENT_MINUTES: '30', OPERATING_HOURS_START: '09:00', OPERATING_HOURS_END: '21:00' } },
       { name: 'disabled-reader', modules: true, modulesRoot: work, scriptPath: join(work, 'reader.js'),
         compatibilityDate: '2026-10-04', bindings: { ...readerBindings, SCHEDULE_READ_MODE: 'disabled' }, outboundService }] }));
     const db = await runtime.getD1Database('DB') as unknown as D1Database;
@@ -95,6 +99,35 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     }
     expect((await call('admin.sync.now', ticket)).response.status).toBe(401);
     expect(googleReads).toBe(2);
+    const generic = await runtime.getWorker('generic-main');
+    const genericRead = await generic.fetch('https://local/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'admin.sync.read', credential: admin, payload: {} }) });
+    expect((await call('admin.sync.read', ticket)).body).toEqual(await genericRead.json());
+    expect((await call('admin.sync.read', ticket, '/api', { extra: true })).body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+    const tamperedRead = ticket.slice(0, -4) + 'AAAA';
+    expect((await call('admin.sync.read', tamperedRead)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
+    expect(googleReads).toBe(3);
+    const checkedAt = '2026-10-17T20:00:00Z';
+    const participant = { id: 'synthetic-quote"', name: 'Synthetic \"quote\" \u2603', email: null, intervals: [], identityStable: true };
+    const pendingParticipant = { ...participant, resolvable: true, reason: 'new', present: true, firstSeenAt: checkedAt, lastSeenAt: checkedAt };
+    await db.batch([
+      db.prepare("INSERT INTO imports(id,source,content_hash,status,started_at,completed_at,participant_count,matched_count,unmatched,staged_availability) VALUES ('synthetic-history','whenIsGood','hash','completed',?,?,1,0,?,?)")
+        .bind(checkedAt, checkedAt, JSON.stringify([participant]), JSON.stringify([{ ...participant, volunteerId: null, pendingReason: 'new' }])),
+      db.prepare("INSERT INTO synchronizations(id,generation,outcome,participant_count,matched_count,pending_count,participants,pending,last_attempt_at,last_success_at) VALUES ('whenIsGood',1,'unchanged',1,0,1,'[]',?,?,?)")
+        .bind(JSON.stringify([pendingParticipant]), checkedAt, checkedAt),
+      db.prepare("INSERT INTO synchronization_jobs(id,actor_id,actor_kind,operation,intent_key,fingerprint,phase,created_at,updated_at) VALUES ('synthetic-job','user-admin','administrator','admin.sync.now','synthetic-key','{}','done',?,?)")
+        .bind(checkedAt, checkedAt),
+    ]);
+    const richRead = await call('admin.sync.read', ticket);
+    const richGeneric = await generic.fetch('https://local/api', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'admin.sync.read', credential: admin, payload: {} }) });
+    expect(richRead.body).toEqual(await richGeneric.json());
+    expect(richRead.body).toMatchObject({ ok: true, data: { pending: [pendingParticipant], imports: [{ id: 'synthetic-history' }], job: { id: 'synthetic-job', state: 'succeeded' } } });
+    await db.prepare("UPDATE volunteers SET lifecycle_status='invalid' WHERE id='volunteer-1'").run();
+    expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    await db.prepare("UPDATE volunteers SET lifecycle_status='active' WHERE id='volunteer-1'").run();
+    // Direct fixture writes invalidate the prepared schedule, even when restoring a value.
+    await executeCommit(db, await prepareScheduleBackfill(db));
     const privateWorker = await runtime.getWorker('private-reader');
     const oldExchange = await privateWorker.fetch('https://local/internal/session', { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'session.me', credential: admin, payload: {} }) });
@@ -139,6 +172,6 @@ it('exchanges real Google-style credentials and reads prepared schedules through
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
     await db.prepare("UPDATE users SET roles='[\"administrator\"]',id='replacement-admin' WHERE id='user-admin'").run();
     expect((await call('admin.sync.read', ticket)).body).toMatchObject({ ok: false, error: { code: 'UNAUTHORIZED' } });
-    expect(googleReads).toBe(2);
+    expect(googleReads).toBe(3);
   } finally { await runtime?.dispose(); await rm(work, { recursive: true, force: true }); }
 });

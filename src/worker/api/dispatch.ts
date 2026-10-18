@@ -1,4 +1,5 @@
-import { decodePayload, decodeRequest, decodeResult, decodeUser } from './validation';
+import { authorizedAccount } from './authorization';
+import { decodePayload, decodeRequest, decodeResult } from './validation';
 import { SynchronizationJobs } from '../synchronizationJobs';
 import { synchronize } from '../synchronization';
 import { Effect, Option } from 'effect';
@@ -10,7 +11,7 @@ import { AuthService } from '../services/AuthService';
 import { Database, schedulingInputsChanged } from '../services/Database';
 import { Clock } from '../services/Clock';
 import { EmailService } from '../services/EmailService';
-import { canUseCenter, canUseOperation, policies } from './policies';
+import { canUseCenter, policies } from './policies';
 import { handleOperation } from './handlers';
 import type { AppConfig } from '../config';
 
@@ -63,11 +64,9 @@ export function dispatch(raw: unknown, config: AppConfig) {
     const identity = yield* auth.verify(envelope.credential);
     const database = yield* Database;
     const before = yield* (database.readForOperation?.(envelope.operation) ?? database.read);
-    const user = before.users.find((row) => row.active && (identity.accountId === undefined || row.id === identity.accountId) && row.email.trim().toLowerCase() === identity.email.toLowerCase());
-    if (!user) return yield* Effect.fail(new AppError('UNAUTHORIZED', 'This account is not active.'));
-    yield* Effect.try({ try: () => decodeUser(user), catch: () => new AppError('INTERNAL_ERROR', 'Stored account data is invalid.') });
     const operation = envelope.operation;
-    if (!canUseOperation(user, operation)) return yield* Effect.fail(new AppError('FORBIDDEN', 'Your account cannot perform this operation.'));
+    const user = yield* Effect.try({ try: () => authorizedAccount(before.users, identity, operation),
+      catch: error => error instanceof AppError ? error : new AppError('INTERNAL_ERROR', 'Stored account data is invalid.') });
     const payload = yield* Effect.try({ try: () => normalizePayload(operation, envelope.payload), catch: () => new AppError('INVALID_REQUEST', 'Invalid operation payload.') });
     if (!authorizeScope(operation, payload, user, before)) return yield* Effect.fail(new AppError('FORBIDDEN', 'This resource is outside your account.'));
     const clock = yield* Clock;

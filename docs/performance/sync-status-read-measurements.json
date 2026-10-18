@@ -1,0 +1,275 @@
+{
+  "baselineSourceCommit": "dbaafbf",
+  "metric": "Local Node process CPU less separately measured synchronous SQLite engine CPU. This is a causal local comparison, not Worker CPU accounting or a production performance bound.",
+  "fixture": "Owner-only production backup restored into disposable in-memory SQLite; actual post-sign-in main/private protocol is exercised with a locally signed synthetic proof. No Google credential or private record is retained in this artifact.",
+  "responseBytes": 36353,
+  "responsesIdenticalBySha256": true,
+  "runs": [
+    {
+      "mode": "generic",
+      "run": 1,
+      "firstNodeCpuMs": 11.067,
+      "repeatNodeCpuMs": [
+        4.173,
+        6.025,
+        3.017,
+        8.58,
+        7.128
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 1,
+      "firstNodeCpuMs": 7.517,
+      "repeatNodeCpuMs": [
+        4.673,
+        6.547,
+        2.901,
+        3.35,
+        5.76
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "generic",
+      "run": 2,
+      "firstNodeCpuMs": 9.707,
+      "repeatNodeCpuMs": [
+        4.168,
+        6.085,
+        2.578,
+        5.177,
+        8.493
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 2,
+      "firstNodeCpuMs": 7.161,
+      "repeatNodeCpuMs": [
+        3.498,
+        5.443,
+        2.369,
+        3.12,
+        6.365
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "generic",
+      "run": 3,
+      "firstNodeCpuMs": 9.527,
+      "repeatNodeCpuMs": [
+        4.037,
+        6.211,
+        2.767,
+        5.186,
+        5.883
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 3,
+      "firstNodeCpuMs": 7.903,
+      "repeatNodeCpuMs": [
+        4.446,
+        6.364,
+        2.903,
+        3.986,
+        5.755
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "generic",
+      "run": 4,
+      "firstNodeCpuMs": 11.071,
+      "repeatNodeCpuMs": [
+        4.129,
+        7.411,
+        3.109,
+        4.978,
+        6.468
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 4,
+      "firstNodeCpuMs": 7.296,
+      "repeatNodeCpuMs": [
+        3.368,
+        5.34,
+        2.368,
+        2.747,
+        6.636
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "generic",
+      "run": 5,
+      "firstNodeCpuMs": 13.206,
+      "repeatNodeCpuMs": [
+        5.14,
+        6.946,
+        3.113,
+        6.658,
+        6.83
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 5,
+      "firstNodeCpuMs": 13.123,
+      "repeatNodeCpuMs": [
+        6.593,
+        9.24,
+        4.153,
+        6.328,
+        7.426
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "generic",
+      "run": 6,
+      "firstNodeCpuMs": 12.449,
+      "repeatNodeCpuMs": [
+        4.409,
+        8.299,
+        3.752,
+        3.948,
+        6.581
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 6,
+      "firstNodeCpuMs": 6.987,
+      "repeatNodeCpuMs": [
+        3.065,
+        4.847,
+        2.986,
+        2.267,
+        6.072
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "generic",
+      "run": 7,
+      "firstNodeCpuMs": 9.567,
+      "repeatNodeCpuMs": [
+        5.318,
+        6.401,
+        2.488,
+        9.493,
+        5.326
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 7,
+      "firstNodeCpuMs": 6.447,
+      "repeatNodeCpuMs": [
+        4.061,
+        5.337,
+        2.214,
+        2.088,
+        6.697
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "generic",
+      "run": 8,
+      "firstNodeCpuMs": 11.159,
+      "repeatNodeCpuMs": [
+        3.996,
+        5.703,
+        2.36,
+        8.111,
+        5.382
+      ],
+      "responseBytes": 36353
+    },
+    {
+      "mode": "candidate",
+      "run": 8,
+      "firstNodeCpuMs": 8.279,
+      "repeatNodeCpuMs": [
+        4.619,
+        7.725,
+        3.263,
+        6.087,
+        6.768
+      ],
+      "responseBytes": 36353
+    }
+  ],
+  "representativeWarmStages": [
+    {
+      "stage": "view",
+      "meanNodeCpuMs": 0.0014199999999999998
+    },
+    {
+      "stage": "validation",
+      "meanNodeCpuMs": 0.35933
+    },
+    {
+      "stage": "serialization",
+      "meanNodeCpuMs": 0.09388
+    }
+  ],
+  "singleInstrumentedNodeRun": {
+    "totalNodeCpuMs": 8.872,
+    "phases": [
+      {
+        "label": "http-envelope",
+        "cpuMs": 0.338
+      },
+      {
+        "label": "verified-principal",
+        "cpuMs": 2.027
+      },
+      {
+        "label": "snapshot",
+        "cpuMs": 1.87
+      },
+      {
+        "label": "authorization-payload",
+        "cpuMs": 0.173
+      },
+      {
+        "label": "latest-job",
+        "cpuMs": 0.175
+      },
+      {
+        "label": "view-validation",
+        "cpuMs": 2.814
+      },
+      {
+        "label": "serialization",
+        "cpuMs": 0.14
+      },
+      {
+        "label": "consume-body",
+        "cpuMs": 1.059
+      }
+    ]
+  },
+  "limitations": [
+    "SQLite adapter does not reproduce native D1 transport/conversion cost.",
+    "Node process CPU includes runtime/GC/native crypto behavior that is not Cloudflare per-invocation accounting.",
+    "HTTP/crypto setup is warmed by a real local session exchange and ticket verification prelude; this is not an entirely fresh isolate.",
+    "One of eight candidate first reads still exceeded 9 ms locally.",
+    "No production deployment of this candidate has been performed."
+  ]
+}
