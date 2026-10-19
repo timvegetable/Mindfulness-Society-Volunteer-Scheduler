@@ -9,6 +9,7 @@ import { dashboard, updateRecurring, createException, cancelAssignment } from '.
 import { previewSchedule, publishSchedule } from './schedule';
 import { readCandidates, updateCandidate, confirmCandidate } from './candidates';
 import { previewImport, promoteImport, upsertMapping } from './imports';
+import { disableCalendarSubscription, enableCalendarSubscription, readCalendarSubscription, resetCalendarSubscription } from './calendar';
 import { scheduleView, type HandlerContext } from './context';
 
 export function handleOperation(operation: Operation, payload: unknown, ctx: HandlerContext) {
@@ -26,6 +27,10 @@ export function handleOperation(operation: Operation, payload: unknown, ctx: Han
     case 'volunteer.availability.recurring.update': return updateRecurring(ctx, input('volunteer.availability.recurring.update').intervals);
     case 'volunteer.availability.exception.create': return createException(ctx, input('volunteer.availability.exception.create'));
     case 'volunteer.assignment.cancel': return cancelAssignment(ctx, input('volunteer.assignment.cancel'));
+    case 'volunteer.calendar.read': return readCalendarSubscription(ctx);
+    case 'volunteer.calendar.enable': return enableCalendarSubscription(ctx);
+    case 'volunteer.calendar.reset': return resetCalendarSubscription(ctx);
+    case 'volunteer.calendar.disable': return disableCalendarSubscription(ctx);
     case 'admin.schedule.read': return Effect.succeed(scheduleView(ctx.state, ctx.now));
     case 'admin.schedule.preview': return Effect.succeed(previewSchedule(ctx));
     case 'admin.schedule.rerun': return publishSchedule(ctx);

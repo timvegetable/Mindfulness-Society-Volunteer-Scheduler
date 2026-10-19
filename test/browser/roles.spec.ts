@@ -66,6 +66,75 @@ test('volunteer empty states identify the missing upcoming sessions and assignme
   await expect(upcoming.getByText('No upcoming sessions.', { exact: true })).toBeVisible();
 });
 
+test('volunteer can create, copy, reset and disable a personal calendar link', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => {} } });
+  });
+  await page.goto('/__role-check?latency=30');
+  const assignments = page.locator('.assignments-panel');
+  const open = assignments.locator('.calendar-entry');
+  await expect(open).toBeVisible();
+  await open.click();
+  const dialog = page.locator('dialog.calendar-dialog');
+  await expect(page.getByRole('dialog', { name: 'Sync to calendar' })).toBeVisible();
+  await expect(dialog.getByText('Checking calendar sync…')).toBeVisible();
+  const create = dialog.getByRole('button', { name: 'Create calendar link', exact: true });
+  await expect(create).toBeVisible();
+  await create.click();
+  await expect(open).toHaveText(/Calendar sync on/);
+  const url = dialog.getByLabel('Your calendar link', { exact: true });
+  await expect(url).toHaveValue(/\/calendar\/[A-Za-z0-9_-]{43}\.ics$/);
+  await expect(dialog).toContainText('Anyone with this link can see your assignments. Keep it private.');
+  await expect(dialog).toContainText('Other calendars');
+  await expect(dialog).toContainText('From URL');
+  await expect(dialog.getByRole('heading', { name: 'Sync to calendar', exact: true })).toBeVisible();
+  await expect(dialog.locator('.calendar-dialog-body h3').allTextContents()).resolves.toEqual(['Add to Google Calendar', 'Other calendar apps', 'Manage your link']);
+  await expect(dialog).not.toContainText('No upcoming assignments are on your calendar yet.');
+  await dialog.getByRole('button', { name: 'Copy link', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('status')).toHaveText('Link copied. Paste it into your calendar app.');
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Reload view', exact: true }).click();
+  await expect(open).toHaveText(/Calendar sync on/);
+  await expect(open.locator('.calendar-indicator')).toBeVisible();
+  await open.click();
+  await dialog.getByLabel('Your calendar link', { exact: true }).waitFor({ state: 'visible' });
+
+  const management = dialog.locator('.calendar-manage');
+  await management.getByRole('button', { name: 'Reset link', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Reset your calendar link?', exact: true })).toBeVisible();
+  await expect(dialog).toContainText('Your assignments aren’t affected.');
+  await dialog.getByRole('button', { name: 'Reset link', exact: true }).click();
+  await expect(url).toHaveValue(/\/calendar\/[A-Za-z0-9_-]{43}\.ics$/);
+  await expect(url).not.toHaveValue(/A{43}/);
+  await expect(open).toHaveText(/Calendar sync on/);
+
+  await management.getByRole('button', { name: 'Turn off sync', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: 'Turn off calendar sync?', exact: true })).toBeVisible();
+  await expect(dialog).toContainText('Your assignments aren’t affected.');
+  await dialog.getByRole('button', { name: 'Turn off sync', exact: true }).click();
+  await expect(create).toBeVisible();
+  await expect(open).toHaveText(/Sync to calendar/);
+  await expect(open.locator('.calendar-indicator')).toHaveCount(0);
+  await expect(dialog.getByText('The personal link is off.')).toBeVisible();
+  page.on('dialog', current => current.type() === 'prompt' ? current.accept('Calendar flow test') : current.accept());
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await assignments.getByRole('button', { name: 'Cancel assignment', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Cancel assignment', exact: true })).toHaveCount(0);
+});
+
+test('calendar link errors offer retry and a new account without assignments has an empty state', async ({ page }) => {
+  await page.goto('/__role-check?calendar-read-error&empty-calendar');
+  await page.locator('.assignments-panel').getByRole('button', { name: 'Sync to calendar', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Sync to calendar' });
+  await expect(dialog.getByRole('alert')).toContainText('Calendar settings could not be loaded');
+  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Create calendar link', exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Create calendar link', exact: true }).click();
+  await expect(dialog).toContainText('No upcoming assignments are on your calendar yet.');
+});
+
 test('contact proposal creation, editing and withdrawal retains reading position', async ({ page }) => {
   await page.goto('/__role-check?role=contact&latency=50');
   await expect(page.getByRole('heading', { name: 'New proposal', exact: true })).toBeVisible();

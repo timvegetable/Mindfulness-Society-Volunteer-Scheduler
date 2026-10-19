@@ -47,6 +47,12 @@ For an initialized local database that already has the idempotency and synchroni
 npx wrangler d1 execute DB --local --file=migrations/0003_synchronization_jobs.sql
 ```
 
+For an existing local database, add personal calendar subscriptions without resetting the roster:
+
+```sh
+npx wrangler d1 execute DB --local --file=migrations/0005_calendar_subscriptions.sql
+```
+
 Wrangler emulates the configured Queues locally; development does not require creating remote queues. Do not rerun the destructive initializer or seed an existing private roster just to add the pipeline.
 
 
@@ -67,6 +73,7 @@ All application dates and intervals use the fixed `America/New_York` time zone, 
 | `EMAIL_API_KEY` | Resend API key, a Worker secret |
 | `EMAIL_PROVIDER` | `resend` by default; `gmail` selects Gmail API delivery |
 | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Worker secrets for the authorized Gmail sender |
+| `CALENDAR_TOKEN_KEY` | Dedicated 32-byte base64url Worker secret used to encrypt retrievable personal calendar links |
 
 For real local integrations, override placeholders in a private `.dev.vars` file. Configure Google Identity Services to allow the local Vite origin `http://localhost:5173`. The development command uses `localhost` to match the integration wizard; Google treats `127.0.0.1` as a different origin. The Worker verifies Google signatures with cached public JWKS, audience, issuer, expiration, and verified email, then reads the active user and roles from D1 for every request. Add authorized users to the private local seed; there is no anonymous or development authentication bypass.
 
@@ -79,6 +86,14 @@ npm run dev
 ```
 
 Open the Vite URL printed in the terminal. Vite proxies `/api` and `/client-config` to the local Worker at port 8787.
+
+### Personal calendar subscriptions
+
+Volunteers can turn on a private, read-only iCalendar subscription from **Your assignments**. The feed contains only the volunteer's current published future assignments, uses stable event IDs, and carries cancellation records for removed assignments. Calendar apps decide when to refresh, so updates can be delayed. Anyone who has the personal URL can read its contents; reset invalidates the old URL, and disabling stops future feed access without erasing events that an app already cached.
+
+Add a dedicated 32-byte base64url `CALENDAR_TOKEN_KEY` secret to the Worker before volunteers create links. Generate a key with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`; keep it in the private `.dev.vars` file locally or add it as a Worker secret in the private production configuration. Back up the key securely: the database stores only a hash plus authenticated ciphertext so the signed-in owner can recover their own URL. Do not reuse the email or schedule-reader secret.
+
+Google Calendar URL subscriptions are added on a computer under **Other calendars → Add other calendars → From URL**. Paste the subscription URL and choose **Add calendar** using [Google's setup instructions](https://support.google.com/calendar/answer/37100?hl=en). Other calendar apps generally provide a similar subscribe-by-URL option. The feed uses iCalendar event properties and CRLF line folding from [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545); it is a polled calendar snapshot, not an iTIP meeting invitation or cancellation message ([RFC 5546](https://www.rfc-editor.org/rfc/rfc5546)).
 
 The launcher reports readiness for both services and rejects occupied ports. Optionally retain local diagnostics with `npm run dev -- --log-file /tmp/scheduler-preview.log`. These logs may contain private data; keep them local.
 
@@ -149,7 +164,7 @@ GitHub Actions runs these checks on pushes and pull requests, with a manual run 
 - `src/shared/` contains Effect Schemas and pure intervals, availability, scheduling, coverage, and insights.
 - `src/worker/` contains typed Effect workflows, capability services, D1 repositories, and the HTTP boundary.
 - `src/client/` contains the SPA and response validation. Google credentials remain in memory only.
-- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql`, `migrations/0002_synchronization.sql`, and `migrations/0003_synchronization_jobs.sql` are additive migrations.
+- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql` through `migrations/0005_calendar_subscriptions.sql` are additive migrations.
 
 Every mutation requires a reviewed `expectedRevision` and an `idempotencyKey`. Replays are scoped by actor and operation and compare a canonical serialization of validated, normalized payloads. Identical retries return the stored response bytes even after other writes advance the revision; changed input with the same key is rejected.
 
@@ -186,8 +201,12 @@ npx wrangler queues create mindfulness-scheduler-sync-dead --config wrangler.pro
 npx wrangler queues create mindfulness-scheduler-sync --config wrangler.production.local.json
 # PRODUCTION WRITE: explicit approval required for the Queue pipeline migration.
 npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0003_synchronization_jobs.sql
+# PRODUCTION WRITE: explicit approval required before releasing personal calendar subscriptions.
+npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0005_calendar_subscriptions.sql
 # PRODUCTION SECRET WRITE: explicit approval required; enter the key interactively.
 npx wrangler secret put EMAIL_API_KEY --config wrangler.production.local.json
+# PRODUCTION SECRET WRITE: generate and securely store a separate 32-byte base64url key before entering it.
+npx wrangler secret put CALENDAR_TOKEN_KEY --config wrangler.production.local.json
 ```
 
 For the Queue candidate, add the producer/consumer definitions and dead-letter variable from the tracked config to the reviewed private config; retain batch size one for both consumers. Verify the reviewed production config includes the 30-minute Cron Trigger, then run the full validation suite and a dry run before deploying. Then, only after separate explicit deployment approval:
