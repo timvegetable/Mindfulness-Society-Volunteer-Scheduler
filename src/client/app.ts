@@ -1,3 +1,4 @@
+import { compareSchedule } from '../shared/domain/schedule-diff';
 import { ApiClient, ApiError } from './api';
 import type { Candidate, Session, Volunteer } from '../shared/domain/models';
 import { formatSessionTitle } from '../shared/domain/session-label';
@@ -478,12 +479,12 @@ function assignmentSession(session: Session, centers: ResultOf<'admin.schedule.r
   return cell;
 }
 
-function scheduleSession(group: GroupedScheduleRow, centers: ResultOf<'admin.schedule.read'>['centers']) {
+function scheduleSession(group: GroupedScheduleRow, centers: ResultOf<'admin.schedule.read'>['centers'], diff = false, showDateChips = false) {
   const session = group.occurrences[0]!.session;
   const cell = el('div', '', 'schedule-session');
   append(cell, el('span', formatSessionTitle(session, centers), 'session-name'));
   if (group.weekly) {
-    append(cell, el('span', `${days[group.weekday - 1]} · ${timeRange(session.start, session.end)}`, 'session-time'));
+    append(cell, el('span', `${days[group.weekday - 1]} · ${timeRange(session.start, session.end)}${diff ? ` · ${group.occurrences.length} dates` : ''}`, 'session-time'));
     const first = group.occurrences[0]!.session.date;
     const last = group.occurrences[group.occurrences.length - 1]!.session.date;
     const details = el('details', '', 'schedule-dates');
@@ -494,7 +495,15 @@ function scheduleSession(group: GroupedScheduleRow, centers: ResultOf<'admin.sch
       actualDate.dateTime = occurrence.session.date;
       const item = el('li'); item.append(actualDate); dateList.append(item);
     }
-    details.append(dateList); cell.append(details);
+    details.append(dateList);
+    if (showDateChips && group.occurrences.length <= 4) {
+      const chips = el('div', '', 'schedule-date-chips');
+      for (const occurrence of group.occurrences) {
+        const date = el('time', new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }).format(new Date(`${occurrence.session.date}T12:00:00Z`)));
+        date.dateTime = occurrence.session.date; chips.append(date);
+      }
+      cell.append(chips);
+    } else cell.append(details);
   } else append(cell, el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
   return cell;
 }
@@ -518,9 +527,6 @@ function scheduleOccurrences(
   });
 }
 
-function scheduleGroups(sessions: readonly Session[], assignments: readonly ScheduleAssignmentDisplay[], backups: readonly ScheduleBackupDisplay[]) {
-  return groupWeeklyScheduleRows(scheduleOccurrences(sessions, assignments, backups));
-}
 
 function scheduleView(data: ResultOf<'admin.schedule.read'>) {
   const schedule = card('Session schedule'); schedule.classList.add('schedule-panel'); content.append(schedule);
@@ -536,37 +542,88 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
   if (data.stale) schedule.append(staleNotice);
   const scheduleArea = el('div'); let previewRevision: number | undefined;
   const publish = button('Publish schedule', async () => { if (previewRevision === undefined) return; if (!confirmAction('Publish this reviewed schedule? This creates a new published schedule.')) return; await api.call('admin.schedule.rerun', {}, previewRevision); await refreshView('schedule', 'The reviewed schedule has been published.', '.schedule-toolbar button'); }); publish.disabled = true; publish.hidden = true;
-  const back = button('Back to published schedule', () => renderPublished(), 'quiet'); back.hidden = true;
+  const publishedOccurrences = scheduleOccurrences(data.sessions, data.assignments, data.backups);
+  let previewOccurrences: ScheduleOccurrence[] | undefined;
+  let comparison: ReturnType<typeof compareSchedule> | undefined;
+  type ScheduleMode = 'Published' | 'Preview' | 'Changes';
+  let mode: ScheduleMode = 'Published';
+  const comparisonBar = el('div', '', 'schedule-comparison'); comparisonBar.hidden = true;
+  const segments = el('div', '', 'schedule-segments'); segments.setAttribute('role', 'group'); segments.setAttribute('aria-label', 'Schedule view');
+  const summary = el('p', '', 'muted schedule-change-summary'); summary.setAttribute('aria-live', 'polite');
+  const modeButtons = new Map<ScheduleMode, HTMLButtonElement>();
+  for (const value of ['Published', 'Preview', 'Changes'] as const) {
+    const control = button(value, () => { mode = value; renderMode(); }, 'quiet');
+    modeButtons.set(value, control); segments.append(control);
+  }
+  append(comparisonBar, segments, summary);
   const previewButton = button('Preview schedule', async () => {
     const preview = await api.call('admin.schedule.preview', {});
     if (preview.dataRevision !== data.dataRevision) throw new ApiError('STALE_REVISION', 'Reload the schedule and review a new preview.');
     content.dataset.reviewing = 'true';
     previewRevision = preview.dataRevision;
-    schedule.querySelector('h2')!.textContent = 'Schedule preview';
-    description.textContent = 'Preview · Unpublished changes';
-    staleNotice.hidden = true; previewButton.textContent = 'Refresh preview'; previewButton.classList.add('quiet'); back.hidden = false;
-    const previewSessions = preview.sessions;
-    scheduleArea.replaceChildren();
-    if (!previewSessions.length) empty(scheduleArea, 'No upcoming sessions to preview.');
-    else scheduleArea.append(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(previewSessions, preview.output.assignments, preview.output.backups).map(group => {
-      const occurrence = group.occurrences[0]!;
-      return [scheduleSession(group, data.centers), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
-    })));
-    publish.disabled = false; publish.hidden = false;
+    const previewSessions = preview.sessions.filter(session => session.status !== 'cancelled');
+    const previewSessionIds = new Set(previewSessions.map(session => session.id));
+    previewOccurrences = scheduleOccurrences(previewSessions, preview.output.assignments, preview.output.backups);
+    const comparablePublished = publishedOccurrences.filter(row => previewSessionIds.has(row.session.id));
+    comparison = compareSchedule(comparablePublished, previewOccurrences);
+    mode = comparison.changedDates ? 'Changes' : 'Preview';
+    previewButton.textContent = 'Refresh preview'; previewButton.classList.add('quiet');
+    comparisonBar.hidden = false; publish.disabled = false; publish.hidden = false;
+    renderMode();
   });
-  toolbar.append(append(el('div', '', 'actions'), previewButton, publish, back)); schedule.append(scheduleArea);
-  function renderPublished() {
-    delete content.dataset.reviewing;
-    previewRevision = undefined; publish.disabled = true; publish.hidden = true; back.hidden = true;
-    previewButton.textContent = 'Preview schedule'; previewButton.classList.remove('quiet'); schedule.querySelector('h2')!.textContent = 'Session schedule';
-    publishedState(); staleNotice.hidden = false; scheduleArea.replaceChildren();
-    if (!data.sessions.length) empty(scheduleArea, 'No upcoming sessions.');
-    else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(data.sessions, data.assignments, data.backups).map(group => {
+  toolbar.append(append(el('div', '', 'actions'), previewButton, publish)); schedule.append(comparisonBar, scheduleArea);
+  function occurrenceTable(rows: readonly ScheduleOccurrence[], published: boolean) {
+    return table(published ? ['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'] : ['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], groupWeeklyScheduleRows(rows).map(group => {
       const occurrence = group.occurrences[0]!;
-      return [scheduleSession(group, data.centers), statusPill(occurrence.session.status), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
-    })));
+      return [scheduleSession(group, data.centers), ...(published ? [statusPill(occurrence.session.status)] : []), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
+    }));
   }
-  renderPublished();
+  function staffing(row: ScheduleOccurrence, previous?: ScheduleOccurrence) {
+    const cell = el('div', '', 'schedule-staffing');
+    const assignmentChanged = previous && JSON.stringify([...row.assignedVolunteerIds].sort()) !== JSON.stringify([...previous.assignedVolunteerIds].sort());
+    cell.append(el(assignmentChanged && row.assignedVolunteerIds.length ? 's' : 'span', row.assignedVolunteerIds.length ? names(row.assignedVolunteerIds, data.volunteers) : 'No volunteer'));
+    if (row.orderedBackupVolunteerIds.length) cell.append(el('span', `Backup${row.orderedBackupVolunteerIds.length > 1 ? 's (in order)' : ''}: ${names(row.orderedBackupVolunteerIds, data.volunteers)}`, 'session-time'));
+    if (!previous && !row.assignedVolunteerIds.length) cell.classList.add('schedule-staffing-unfilled');
+    return cell;
+  }
+  function renderMode() {
+    schedule.querySelector('h2')!.textContent = mode === 'Published' ? 'Session schedule' : 'Schedule preview';
+    if (mode === 'Published') publishedState(); else description.textContent = 'Preview · Unpublished changes';
+    staleNotice.hidden = mode !== 'Published';
+    for (const [value, control] of modeButtons) control.setAttribute('aria-pressed', String(value === mode));
+    if (comparison) {
+      modeButtons.get('Changes')!.textContent = `Changes · ${comparison.groups.length}`;
+      summary.replaceChildren(el('strong', `${comparison.groups.length} sessions changed`), document.createTextNode(` · ${comparison.newlyUnfilled} dates now unfilled · ${comparison.newlyFilled} dates newly filled`));
+    }
+    scheduleArea.replaceChildren();
+    if (mode === 'Published') {
+      if (!data.sessions.length) empty(scheduleArea, 'No upcoming sessions.');
+      else scheduleArea.append(occurrenceTable(publishedOccurrences, true));
+    } else if (mode === 'Preview') {
+      if (!previewOccurrences?.length) empty(scheduleArea, 'No upcoming sessions to preview.');
+      else scheduleArea.append(occurrenceTable(previewOccurrences, false));
+    } else if (comparison) {
+      const frame = el('div', '', 'schedule-diff-frame'); scheduleArea.append(frame);
+      if (!comparison.groups.length) empty(scheduleArea, 'No staffing changes. The preview matches the current schedule.');
+      else {
+        const changesTable = table(['Session', 'Change', 'Published', 'Preview', 'Unfilled'], comparison.groups.map(({ group, change }, index) => {
+          const labels = el('div', '', 'schedule-change-labels');
+          const label = change.labels.find(value => !['Newly unfilled', 'Newly filled'].includes(value)) ?? change.labels[0]!;
+          labels.append(el('span', label, 'session-status'));
+          const unfilled = el('div', '', 'schedule-unfilled-change');
+          append(unfilled, el('span', `each date: ${change.published.unfilledCount} →`, 'session-time'), scheduleShortfall(change.preview.unfilledCount));
+          return [scheduleSession(group, data.centers, true, index === 0), labels, staffing(change.published, change.preview), staffing(change.preview), unfilled];
+        }));
+        changesTable.classList.add('schedule-diff'); frame.append(changesTable);
+      }
+      if (comparison.unchanged.length) {
+        const unchanged = el('details', '', 'schedule-unchanged');
+        unchanged.append(el('summary', 'Show unchanged sessions'), occurrenceTable(comparison.unchanged, false));
+        frame.append(unchanged);
+      }
+    }
+  }
+  renderMode();
 }
 
 function candidatesView(data: ResultOf<'center.candidate.read'>) {
