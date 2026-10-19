@@ -221,6 +221,27 @@ describe('schedule publication and cancellation', () => {
     success(await app.request('volunteer.availability.exception.create', { date: '2026-10-05', kind: 'unavailable', start: '10:00', end: '11:00', timeZone: interval.timeZone }, 'volunteer'));
     expect(success(await app.request('admin.schedule.read')).stale).toBe(true); expect(app.notifications).toHaveLength(1);
   });
+  it('publishes balanced preview assignments consistently across reruns and volunteer views', async () => {
+    const app = await application();
+    await app.db.batch([
+      app.db.prepare("UPDATE volunteers SET lifecycle_status='active', interview_status='complete', readiness_rank=1 WHERE id IN ('volunteer-1','volunteer-2','volunteer-3')"),
+      ...['2026-10-12', '2026-10-19', '2026-10-26'].map((date, index) => app.db.prepare(`INSERT INTO sessions (id,kind,center_id,title,date,start_time,end_time,time_zone,required_staff_count,status)
+        VALUES ('session-${index + 2}','center','center-1','North mindfulness',?,'10:00','11:00','America/New_York',1,'locked')`).bind(date)),
+    ]);
+
+    const preview = success(await app.request('admin.schedule.preview'));
+    const first = success(await app.request('admin.schedule.rerun'));
+    const second = success(await app.request('admin.schedule.rerun'));
+    const rows = (assignments: typeof first.assignments) => assignments.map(({ sessionId, volunteerId }) => ({ sessionId, volunteerId }));
+    expect(preview.output.assignments).toEqual([
+      { sessionId: 'session-1', volunteerId: 'volunteer-1' }, { sessionId: 'session-2', volunteerId: 'volunteer-2' },
+      { sessionId: 'session-3', volunteerId: 'volunteer-3' }, { sessionId: 'session-4', volunteerId: 'volunteer-1' },
+    ]);
+    expect(rows(first.assignments)).toEqual(preview.output.assignments);
+    expect(rows(second.assignments)).toEqual(preview.output.assignments);
+    const dashboard = success(await app.request('volunteer.dashboard', {}, 'volunteer'));
+    expect(dashboard.assignments.map(({ sessionId }) => sessionId).sort()).toEqual(['session-1', 'session-4']);
+  });
   it('cancels, stores the dated exception, promotes an eligible backup and reorders remaining backups', async () => {
     const app = await application(); await addPublishedFixture(app);
     const result = success(await app.request('volunteer.assignment.cancel', { assignmentId: 'assignment-1', reason: 'Away' }, 'volunteer'));
