@@ -8,8 +8,8 @@ import { partCharacters, representationDigest, representationVersion } from './s
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const unavailable = () => new AppError('INTERNAL_ERROR', 'The schedule is temporarily unavailable. Please try again.');
-/** Only native crypto, fresh authority and a prepared representation execute here.
- * Selection/normalization/schema validation happen in the transactional writer.
+/** Verify fresh authority and project time-sensitive rows from the prepared schedule.
+ * Selection, normalization, and schema validation remain in the transactional writer.
  */
 export async function readSchedule(request: Request, env: ScheduleReadBindings & { DB: D1Database }, readAt = Date.now()): Promise<Response> {
   try {

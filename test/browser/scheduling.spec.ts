@@ -81,20 +81,21 @@ test('admin published and preview schedules render the current future sessions',
   await page.clock.install({ time: new Date('2026-10-04T12:00:00.000Z') });
   await page.goto('/__browser-check?future-cutoff=1');
   const panel = page.locator('.schedule-panel');
-  await expect(panel.locator('tbody tr')).toHaveCount(3);
-  await expect(panel.locator('tbody')).toContainText('Later today');
-  await expect(panel.locator('tbody')).toContainText('Next day');
-  await expect(panel.locator('tbody')).toContainText('Cancelled future session');
-  await expect(panel.locator('tbody')).not.toContainText('Past session');
-  await expect(panel.locator('tbody')).not.toContainText('Boundary session');
+  const rows = panel.locator('tbody tr');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText('8:01 AM');
+  await expect(rows.nth(1)).toContainText('9:00 AM');
+  await expect(rows.nth(2)).toContainText('11:00 AM');
+  await expect(panel.locator('tbody')).not.toContainText('7:59 AM');
+  await expect(panel.locator('tbody')).not.toContainText('8:00 AM');
 
   await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
-  await expect(panel.locator('tbody tr')).toHaveCount(2);
-  await expect(panel.locator('tbody')).toContainText('Later today');
-  await expect(panel.locator('tbody')).toContainText('Next day');
-  await expect(panel.locator('tbody')).not.toContainText('Cancelled future session');
-  await expect(panel.locator('tbody')).not.toContainText('Past session');
-  await expect(panel.locator('tbody')).not.toContainText('Boundary session');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText('8:01 AM');
+  await expect(rows.nth(1)).toContainText('9:00 AM');
+  await expect(panel.locator('tbody')).not.toContainText('11:00 AM');
+  await expect(panel.locator('tbody')).not.toContainText('7:59 AM');
+  await expect(panel.locator('tbody')).not.toContainText('8:00 AM');
 });
 
 test('admin empty schedule states describe the lack of upcoming sessions', async ({ page }) => {
@@ -117,9 +118,9 @@ test('weekly preview groups contain only dates after the start cutoff', async ({
     await expect(firstGroup.locator('.session-time')).toHaveText('Friday · 9:00 AM–10:00 AM');
     const details = firstGroup.locator('details.schedule-dates');
     await expect(details.locator('summary')).toHaveText('View 3 dates · Oct 16, 2026 to Oct 30, 2026');
-    await expect(details.locator('li')).toHaveCount(3);
-    await expect(details.locator('li')).not.toContainText('October 2, 2026');
-    await expect(details.locator('li')).not.toContainText('October 9, 2026');
+    await expect(details.locator('li')).toHaveText([
+      'Friday, October 16, 2026', 'Friday, October 23, 2026', 'Friday, October 30, 2026',
+    ]);
   };
   await inspectDates();
   await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
