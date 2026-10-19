@@ -44,6 +44,21 @@ if (new URLSearchParams(location.search).has('reference')) {
   const referenceAssignments = [1, 4].flatMap(i => [0, 1].map(j => ({ id: `synthetic-a${i}-${j}`, sessionId: sessions[i]!.id, volunteerId: volunteers[j]!.id, scheduleRevision: 1, status: 'assigned' as const })));
   schedule = { ...schedule, sessions: referenceSessions, assignments: referenceAssignments, run: { id: 'synthetic-run', inputRevision: 1, outputRevision: 1, status: 'completed', assignmentIds: referenceAssignments.map(item => item.id), backupIds: [], shortfalls: [] } };
 }
+// Synthetic dates and staffing mirror the supplied diff reference's structure.
+const diffReference = new URLSearchParams(location.search).has('diff-reference');
+if (diffReference) {
+  const centers = [{ id: 'diff-community', name: 'Example Community Center' }, { id: 'diff-virtual', name: 'Example Virtual Center' }];
+  const diffSessions = [
+    ...['2026-09-25', '2026-10-02', '2026-10-09', '2026-10-16'].map((date, i) => ({ ...sessions[0]!, id: `diff-friday-${i}`, centerId: centers[0]!.id, date, start: '13:00', end: '13:45', requiredStaffCount: 1 })),
+    ...['2026-09-21', '2026-09-28', '2026-10-05', '2026-10-12'].map((date, i) => ({ ...sessions[0]!, id: `diff-monday-${i}`, centerId: centers[1]!.id, date, start: '13:00', end: '13:45', requiredStaffCount: 1 })),
+    ...['2026-11-06', '2026-11-13', '2026-11-20'].map((date, i) => ({ ...sessions[0]!, id: `diff-unchanged-${i}`, centerId: centers[0]!.id, date, start: '13:00', end: '13:45', requiredStaffCount: 1 })),
+  ];
+  schedule = { ...schedule, sessions: diffSessions, centers,
+    volunteers: volunteers.map((volunteer, i) => ({ ...volunteer, name: i === 0 ? 'Avery Example' : i === 1 ? 'Casey Example' : volunteer.name })),
+    assignments: diffSessions.slice(0, 8).map(session => ({ id: `a-${session.id}`, sessionId: session.id, volunteerId: volunteers[0]!.id, scheduleRevision: 1, status: 'assigned' })),
+    backups: diffSessions.slice(0, 8).map(session => ({ id: `b-${session.id}`, sessionId: session.id, volunteerId: volunteers[1]!.id, scheduleRevision: 1, position: 1, status: 'available' })),
+  };
+}
 const insights: ResultOf<'admin.insights.read'> = {
   ...revisions, leftoverVolunteers: volunteers,
   grid: Array.from({ length: 40 }, (_, i) => {
@@ -162,8 +177,9 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
   check(innerWidth === expectedWidth && innerHeight === expectedHeight, 'Actual viewport differs from expected dimensions');
   check(document.querySelector('.content')?.getAttribute('aria-busy') === 'false', 'Page has not finished rendering');
   check(document.documentElement.scrollWidth <= document.documentElement.clientWidth, 'Page expands horizontally');
-  const regions = [...document.querySelectorAll<HTMLElement>('#app .table-scroll')];
-  check(regions.length > 0, 'No table present');
+  const regions = [...document.querySelectorAll<HTMLElement>('#app .table-scroll')].filter(region => !region.closest('details:not([open])'));
+  const emptyChanges = document.querySelector('.schedule-segments button[aria-pressed="true"]')?.textContent === 'Changes · 0';
+  check(regions.length > 0 || emptyChanges, 'No table present');
   const tables = regions.map(region => {
     const header = region.querySelector<HTMLElement>('th')!;
     const rows = region.querySelectorAll('tbody tr').length;
@@ -175,7 +191,9 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     const style = getComputedStyle(region);
     const page = document.querySelector('[aria-current="page"]')?.textContent;
     const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : 40;
-    check(rows === expectedRows, 'Synthetic row count does not match the current records');
+    // The reference fixture has two changed dates and two unchanged active dates.
+    const comparisonRows = diffReference ? region.classList.contains('schedule-diff') ? 2 : region.closest('.schedule-unchanged') ? 1 : 3 : params.has('reference') && (region.classList.contains('schedule-diff') || region.closest('.schedule-unchanged')) ? 2 : expectedRows;
+    check(rows === comparisonRows, 'Synthetic row count does not match the current records');
     if (region.closest('.schedule-panel')) {
       check(style.maxHeight === 'none' && region.scrollHeight <= region.clientHeight + 1, 'Schedule rows are vertically clipped');
     } else {

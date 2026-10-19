@@ -168,7 +168,7 @@ describe('client DOM behaviors', () => {
     expect(document.querySelector('tbody')?.textContent).not.toContain('Center session:');
     expect(document.querySelector('tbody')?.textContent).not.toContain('opal-senior-center');
     expect(document.querySelector('tbody')?.textContent).not.toContain('An older readable label');
-    click('Preview schedule'); await settle();
+    click('Preview schedule'); await settle(); click('Preview'); await settle();
     expect(document.querySelector('tbody tr:last-child td:last-child')?.textContent).toBe('2');
     expect(document.querySelector('tbody')?.textContent).toContain('Opal Senior Center');
     expect(document.querySelector('tbody')?.textContent).toContain('Historical name');
@@ -178,10 +178,10 @@ describe('client DOM behaviors', () => {
     expect(document.querySelector('tbody')?.textContent).not.toContain('An older readable label');
     expect(document.querySelectorAll('table')).toHaveLength(1);
     expect(document.querySelector('h2')?.textContent).toBe('Schedule preview');
-    click('Back to published schedule'); await settle();
+    click('Published'); await settle();
     expect(document.querySelectorAll('table')).toHaveLength(1);
     expect(document.querySelector('h2')?.textContent).toBe('Session schedule');
-    click('Preview schedule'); await settle(); click('Publish schedule'); await settle();
+    click('Refresh preview'); await settle(); click('Publish schedule'); await settle();
     expect(requests.find(item => item.operation === 'admin.schedule.rerun')?.expectedRevision).toBe(7);
   });
   it('groups published rows from published staffing and rebuilds preview groups from preview staffing', async () => {
@@ -200,10 +200,10 @@ describe('client DOM behaviors', () => {
     expect(scheduleRows()[0]?.textContent).toContain('Friday');
     expect(scheduleRows()[0]?.querySelector('details summary')?.textContent).toContain('3 dates');
 
-    click('Preview schedule'); await settle();
+    click('Preview schedule'); await settle(); click('Preview'); await settle();
     expect(scheduleRows()).toHaveLength(3);
     expect(document.querySelector('.schedule-panel tbody')?.textContent).toContain('2026-10-09');
-    click('Back to published schedule'); await settle();
+    click('Published'); await settle();
     expect(scheduleRows()).toHaveLength(1);
     expect(scheduleRows()[0]?.querySelector('details summary')?.textContent).toContain('3 dates');
 
@@ -212,10 +212,30 @@ describe('client DOM behaviors', () => {
       backups: sessions.flatMap((item, index) => (index === 1 ? ['v3', 'v2'] : ['v2', 'v3']).map((volunteerId, position) => ({ sessionId: item.id, volunteerId, position: position + 1 }))),
       shortfalls: [],
     };
-    click('Preview schedule'); await settle();
+    click('Refresh preview'); await settle(); click('Preview'); await settle();
     expect(scheduleRows()).toHaveLength(3);
-    click('Back to published schedule'); await settle();
+    click('Published'); await settle();
     expect(scheduleRows()).toHaveLength(1);
+  });
+  it('keeps a reviewed preview while switching between date-level changes and the current schedule', async () => {
+    roles = ['administrator']; confirmAnswer = true;
+    const sessions = ['2026-10-02', '2026-10-09', '2026-10-16'].map((date, i) => ({ ...session, id: `diff-${i}`, date }));
+    adminSchedule = { ...base, run: null, sessions, assignments: sessions.map(item => ({ ...assignment, id: `a-${item.id}`, sessionId: item.id })), backups: [], shortfalls: [], volunteers: [volunteer], centers: [sessionCenter], stale: false };
+    previewOutput = { assignments: [], backups: [], shortfalls: [] };
+    await signIn(); click('Preview schedule'); await settle();
+    expect(document.querySelector('.schedule-segments button[aria-pressed="true"]')?.textContent).toBe('Changes · 1');
+    expect(document.querySelector('.schedule-change-summary')?.textContent).toContain('3 dates now unfilled');
+    expect(document.querySelector('.schedule-diff tbody')?.textContent).toContain('Unassigned');
+    expect(document.querySelector('.schedule-diff s')?.textContent).toBe(volunteer.name);
+    click('Published'); await settle();
+    expect(document.querySelector('tbody')?.textContent).toContain(volunteer.name);
+    click('Preview'); await settle();
+    expect(document.querySelector('tbody')?.textContent).not.toContain(volunteer.name);
+    click('Changes · 1'); await settle();
+    expect(document.querySelector('.schedule-diff')).not.toBeNull();
+    expect(requests.filter(item => item.operation === 'admin.schedule.preview')).toHaveLength(1);
+    click('Publish schedule'); await settle();
+    expect(requests.find(item => item.operation === 'admin.schedule.rerun')?.expectedRevision).toBe(7);
   });
   it('blocks publication if preview and displayed session revisions differ', async () => {
     roles = ['administrator']; previewRevision = 8; confirmAnswer = true; await signIn(); click('Preview schedule'); await settle();

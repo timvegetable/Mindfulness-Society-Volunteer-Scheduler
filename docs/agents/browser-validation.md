@@ -18,7 +18,7 @@ For interactive volunteer and center-contact UI testing without Google sign-in, 
 
 At desktop and mobile sizes:
 
-1. Check Schedule, then use **Preview schedule** and **Back to published schedule**.
+1. Check Schedule, then use **Preview schedule**. Switch between **Published**, **Preview**, and **Changes** without refreshing the preview. Verify before/after staffing, affected-date counts, and the unchanged-date disclosure.
 2. Open Availability sync. Check the status and pending-participant table, then use **Sync now** and link a synthetic participant to a roster record. These are browser-memory simulations, with no external fetch or database write.
 3. Open Insights and check both tables. Change overlap sorting between weekday/time and descending count. Inspect count ties and select a heatmap interval to compare its names and count with the table.
 4. Open Center proposals and check its table.

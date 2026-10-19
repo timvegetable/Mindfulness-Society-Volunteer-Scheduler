@@ -36,13 +36,19 @@ test('workspace tables stay contained and schedule preview returns to published 
   await checkLayout(page);
 
   await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Changes · 0', exact: true }).click();
+  await expect(page.getByText('No staffing changes. The preview matches the current schedule.', { exact: true })).toBeVisible();
+  await checkLayout(page);
+  await page.getByText('Show unchanged sessions', { exact: true }).click();
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Schedule preview', exact: true })).toBeVisible();
   await expect(page.locator('.schedule-panel tbody tr').first()).toContainText('Synthetic Center');
   await expect(page.getByRole('button', { name: 'Publish schedule', exact: true })).toBeEnabled();
   await checkLayout(page);
-  await page.getByRole('button', { name: 'Back to published schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Published', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Session schedule', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Publish schedule', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Publish schedule', exact: true })).toBeEnabled();
   await checkLayout(page);
 
   const region = page.getByRole('region');
@@ -56,6 +62,10 @@ test('workspace tables stay contained and schedule preview returns to published 
     await expect.poll(() => region.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
   }
 
+  // The synthetic harness declines discard confirmation; retain the reviewed preview.
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Session schedule', exact: true })).toBeVisible();
+  await page.reload();
   await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
   await expect(page.getByLabel('WhenIsGood results code')).toHaveCount(0);
   await page.getByRole('button', { name: 'Sync now', exact: true }).click();
@@ -106,10 +116,11 @@ test('weekly schedule groups disclose their finite dates in published and previe
   await inspectDates();
   await checkLayout(page);
   await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Schedule preview', exact: true })).toBeVisible();
   await inspectDates();
   await checkLayout(page);
-  await page.getByRole('button', { name: 'Back to published schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Published', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Session schedule', exact: true })).toBeVisible();
   await inspectDates();
   await checkLayout(page);
@@ -287,11 +298,53 @@ test('published status and cancelled sessions survive a preview round trip witho
   await expect(page.locator('tbody tr').nth(2).locator('.shortfall')).toHaveText('0');
   await checkLayout(page);
   await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expect(page.locator('.publication-pill')).toHaveCount(0);
   await expect(page.locator('.publication-state')).toHaveText('Preview · Unpublished changes');
   await checkLayout(page);
-  await page.getByRole('button', { name: 'Back to published schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Published', exact: true }).click();
   await expect(page.locator('.publication-pill')).toHaveText('Published');
   await expect(page.locator('.session-status-cancelled')).toHaveText('cancelled');
   await checkLayout(page);
+});
+
+
+test('schedule changes show before and after staffing and preserve the preview across views', async ({ page }, testInfo) => {
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?reference&width=${viewport.width}&height=${viewport.height}`);
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  const changes = page.getByRole('button', { name: 'Changes · 2', exact: true });
+  await expect(changes).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.schedule-diff tbody tr')).toHaveCount(2);
+  await expect(page.locator('.schedule-diff tbody tr').first()).toContainText('Unassigned');
+  await expect(page.locator('.schedule-diff tbody tr').first().locator('s')).toContainText('Synthetic Volunteer 01');
+  await expect(page.locator('.schedule-change-summary')).toContainText('2 dates now unfilled');
+  await expect(page.locator('.schedule-unchanged table')).toBeHidden();
+  await checkLayout(page);
+  await page.screenshot({ path: `/tmp/schedule-changes-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByText('Show unchanged sessions', { exact: true }).click();
+  await expect(page.locator('.schedule-unchanged table')).toBeVisible();
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Published', exact: true }).click();
+  await expect(page.locator('.publication-pill')).toHaveText('Published');
+  await expect(page.locator('.session-status-cancelled')).toBeVisible();
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(page.locator('.schedule-panel tbody tr')).toHaveCount(4);
+  await expect(page.getByRole('button', { name: 'Refresh preview', exact: true })).toBeVisible();
+  await changes.click();
+  await expect(page.locator('.schedule-diff tbody tr')).toHaveCount(2);
+});
+
+
+test('schedule diff follows the supplied grouped-date reference', async ({ page }, testInfo) => {
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?diff-reference&width=${viewport.width}&height=${viewport.height}`);
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await expect(page.locator('.schedule-change-summary')).toHaveText('2 sessions changed · 8 dates now unfilled · 0 dates newly filled');
+  await expect(page.locator('.schedule-diff .session-status')).toHaveText(['Unassigned', 'Unassigned']);
+  await expect(page.locator('.schedule-date-chips time')).toHaveText(['Sep 25', 'Oct 2', 'Oct 9', 'Oct 16']);
+  await expect(page.locator('.schedule-diff tbody tr').last().locator('.schedule-dates summary')).toContainText('View 4 dates');
+  await expect(page.locator('.schedule-diff-frame > .schedule-unchanged')).toBeVisible();
+  await checkLayout(page);
+  await page.locator('#app').screenshot({ path: `/tmp/schedule-reference-${testInfo.project.name}.png` });
 });
