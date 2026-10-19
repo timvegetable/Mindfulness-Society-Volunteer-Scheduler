@@ -1,5 +1,7 @@
 import { ApiClient, ApiError } from './api';
 import type { Candidate, Session, Volunteer } from '../shared/domain/models';
+import { formatSessionTitle } from '../shared/domain/session-label';
+import { groupWeeklyScheduleRows, type GroupedScheduleRow, type ScheduleOccurrence } from '../shared/domain/schedule-presentation';
 import type { ResultOf } from '../shared/api/schemas';
 
 declare global {
@@ -11,6 +13,7 @@ let clientFetch: typeof fetch;
 let confirmAction: (message: string) => boolean;
 let promptAction: (message: string) => string | null;
 const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const rosterOptionCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
 let zone = 'America/New_York';
 let me: ResultOf<'session.me'> | undefined;
 let activeTab = '';
@@ -84,10 +87,14 @@ const timeText = (time: string) => {
   return `${hour % 12 || 12}:${minutes} ${hour < 12 ? 'AM' : 'PM'}`;
 };
 const timeRange = (start: string, end: string) => `${timeText(start)}–${timeText(end)}`;
-const sessionTitle = (title: string) => title.replace(/^Center session:\s*/i, '');
-const sessionText = (session: Pick<Session, 'title' | 'date' | 'start' | 'end'>) => `${sessionTitle(session.title)} · ${session.date} · ${timeRange(session.start, session.end)}`;
+const sessionText = (session: Session, centers: ResultOf<'volunteer.dashboard'>['centers']) => `${formatSessionTitle(session, centers)} · ${session.date} · ${timeRange(session.start, session.end)}`;
 const unfilledPlaces = (session: Session, assignedCount: number) => session.status === 'cancelled' ? 0 : Math.max(0, session.requiredStaffCount - assignedCount);
-const names = (ids: string[], volunteers: readonly Volunteer[]) => ids.map(id => volunteers.find(volunteer => volunteer.id === id)?.name ?? 'Volunteer').join(', ') || '—';
+const names = (ids: readonly string[], volunteers: readonly Volunteer[]) => ids.map(id => volunteers.find(volunteer => volunteer.id === id)?.name ?? 'Volunteer').join(', ') || '—';
+const sortedRosterOptions = (volunteers: ResultOf<'admin.sync.read'>['volunteers']) => [...volunteers]
+  .sort((left, right) => rosterOptionCollator.compare(left.name, right.name)
+    || rosterOptionCollator.compare(left.email, right.email)
+    || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+  .map(volunteer => [volunteer.id, `${volunteer.name} (${volunteer.email})`] as [string, string]);
 
 function shell() {
   app.replaceChildren();
@@ -225,14 +232,15 @@ async function refreshView(tab: string, message = '', focusSelector?: string, pr
 function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   content.className = 'content volunteer-workspace';
   const assignments = card('Your assignments'); assignments.classList.add('assignments-panel'); content.append(assignments);
+  const assignmentSessions = data.assignmentSessions ?? data.sessions;
   const rows = data.assignments.filter(item => item.status === 'assigned').map(assignment => {
-    const session = data.sessions.find(item => item.id === assignment.sessionId);
+    const session = assignmentSessions.find(item => item.id === assignment.sessionId);
     const cancel = button('Cancel assignment', async () => {
-      if (!confirmAction(`Cancel your assignment for ${session ? sessionText(session) : 'this session'}? This will mark you unavailable for the session and notify the coordinator.`)) return;
+      if (!confirmAction(`Cancel your assignment for ${session ? sessionText(session, data.centers) : 'this session'}? This will mark you unavailable for the session and notify the coordinator.`)) return;
       const reason = promptAction('Reason for cancellation (optional):') ?? '';
       await api.call('volunteer.assignment.cancel', { assignmentId: assignment.id, reason }, data.dataRevision); await refreshView('volunteer', 'Assignment cancelled.', '.assignments-panel h2');
     }, 'danger quiet');
-    return [session ? scheduleSession(session) : 'Session', cancel];
+    return [session ? assignmentSession(session, data.centers) : 'Session', cancel];
   });
   if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No assignments.');
   const recurring = card('Weekly availability', 'Update in WhenIsGood. Availability is checked automatically every 30 minutes.'); recurring.append(el('p', `Last successful sync: ${syncTime(data.freshness?.lastSuccessAt ?? null)}.${data.freshness?.problem ? ' The latest check failed; your saved availability is preserved.' : ''}`, 'muted sync-freshness')); content.append(recurring);
@@ -254,16 +262,60 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   else empty(exceptions, 'No exceptions.');
   const upcoming = card('Upcoming sessions'); content.append(upcoming); const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const sessions = data.sessions.filter(session => session.date >= today && session.status !== 'cancelled').sort((a, b) => `${a.date}${a.start}`.localeCompare(`${b.date}${b.start}`));
-  sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [sessionTitle(session.title), session.date, timeRange(session.start, session.end), statusPill(session.status)]))) : empty(upcoming, 'No upcoming sessions.');
+  sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [formatSessionTitle(session, data.centers), session.date, timeRange(session.start, session.end), statusPill(session.status)]))) : empty(upcoming, 'No upcoming sessions.');
 }
 
-function scheduleSession(session: Session) {
+const shortScheduleDate = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+const fullScheduleDate = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+function assignmentSession(session: Session, centers: ResultOf<'admin.schedule.read'>['centers']) {
   const cell = el('div', '', 'schedule-session');
-  append(cell, el('span', sessionTitle(session.title), 'session-name'), el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
+  append(cell, el('span', formatSessionTitle(session, centers), 'session-name'), el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
+  return cell;
+}
+
+function scheduleSession(group: GroupedScheduleRow, centers: ResultOf<'admin.schedule.read'>['centers']) {
+  const session = group.occurrences[0]!.session;
+  const cell = el('div', '', 'schedule-session');
+  append(cell, el('span', formatSessionTitle(session, centers), 'session-name'));
+  if (group.weekly) {
+    append(cell, el('span', `${days[group.weekday - 1]} · ${timeRange(session.start, session.end)}`, 'session-time'));
+    const first = group.occurrences[0]!.session.date;
+    const last = group.occurrences[group.occurrences.length - 1]!.session.date;
+    const details = el('details', '', 'schedule-dates');
+    details.append(el('summary', `View ${group.occurrences.length} dates · ${shortScheduleDate.format(new Date(`${first}T12:00:00Z`))} to ${shortScheduleDate.format(new Date(`${last}T12:00:00Z`))}`));
+    const dateList = el('ol');
+    for (const occurrence of group.occurrences) {
+      const actualDate = el('time', fullScheduleDate.format(new Date(`${occurrence.session.date}T12:00:00Z`)));
+      actualDate.dateTime = occurrence.session.date;
+      const item = el('li'); item.append(actualDate); dateList.append(item);
+    }
+    details.append(dateList); cell.append(details);
+  } else append(cell, el('span', `${session.date} · ${timeRange(session.start, session.end)}`, 'session-time'));
   return cell;
 }
 function scheduleShortfall(count: number) {
   return el('span', String(count), count > 0 ? 'shortfall has-shortfall' : 'shortfall');
+}
+
+type ScheduleAssignmentDisplay = { sessionId: string; volunteerId: string; status?: 'assigned' | 'cancelled' };
+type ScheduleBackupDisplay = { sessionId: string; volunteerId: string; position: number; status?: 'available' | 'promoted' | 'skipped' };
+
+function scheduleOccurrences(
+  sessions: readonly Session[],
+  assignments: readonly ScheduleAssignmentDisplay[],
+  backups: readonly ScheduleBackupDisplay[],
+): ScheduleOccurrence[] {
+  return sessions.map(session => {
+    const assignedVolunteerIds = assignments.filter(item => item.sessionId === session.id && (item.status === undefined || item.status === 'assigned')).map(item => item.volunteerId);
+    const orderedBackupVolunteerIds = backups.filter(item => item.sessionId === session.id && (item.status === undefined || item.status === 'available'))
+      .sort((left, right) => left.position - right.position).map(item => item.volunteerId);
+    return { session, assignedVolunteerIds, orderedBackupVolunteerIds, unfilledCount: unfilledPlaces(session, assignedVolunteerIds.length) };
+  });
+}
+
+function scheduleGroups(sessions: readonly Session[], assignments: readonly ScheduleAssignmentDisplay[], backups: readonly ScheduleBackupDisplay[]) {
+  return groupWeeklyScheduleRows(scheduleOccurrences(sessions, assignments, backups));
 }
 
 function scheduleView(data: ResultOf<'admin.schedule.read'>) {
@@ -289,9 +341,11 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     schedule.querySelector('h2')!.textContent = 'Schedule preview';
     description.textContent = 'Preview · Unpublished changes';
     staleNotice.hidden = true; previewButton.textContent = 'Refresh preview'; previewButton.classList.add('quiet'); back.hidden = false;
-    scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.filter(session => session.status !== 'cancelled').map(session => [
-      scheduleSession(session), names(preview.output.assignments.filter(item => item.sessionId === session.id).map(item => item.volunteerId), data.volunteers), names(preview.output.backups.filter(item => item.sessionId === session.id).sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, preview.output.assignments.filter(item => item.sessionId === session.id).length)),
-    ])));
+    const previewSessions = data.sessions.filter(session => session.status !== 'cancelled');
+    scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(previewSessions, preview.output.assignments, preview.output.backups).map(group => {
+      const occurrence = group.occurrences[0]!;
+      return [scheduleSession(group, data.centers), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
+    })));
     publish.disabled = false; publish.hidden = false;
   });
   toolbar.append(append(el('div', '', 'actions'), previewButton, publish, back)); schedule.append(scheduleArea);
@@ -301,9 +355,10 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     previewButton.textContent = 'Preview schedule'; previewButton.classList.remove('quiet'); schedule.querySelector('h2')!.textContent = 'Session schedule';
     publishedState(); staleNotice.hidden = false; scheduleArea.replaceChildren();
     if (!data.sessions.length) empty(scheduleArea, 'No sessions have been created. Confirm a center proposal to add one.');
-    else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], data.sessions.map(session => [
-      scheduleSession(session), statusPill(session.status), names(data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').map(item => item.volunteerId), data.volunteers), names(data.backups.filter(item => item.sessionId === session.id && item.status === 'available').sort((a, b) => a.position - b.position).map(item => item.volunteerId), data.volunteers), scheduleShortfall(unfilledPlaces(session, data.assignments.filter(item => item.sessionId === session.id && item.status === 'assigned').length)),
-    ])));
+    else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(data.sessions, data.assignments, data.backups).map(group => {
+      const occurrence = group.occurrences[0]!;
+      return [scheduleSession(group, data.centers), statusPill(occurrence.session.status), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
+    })));
   }
   renderPublished();
 }
@@ -372,7 +427,7 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
       if (!participant.present) action.append(el('p', 'No longer in the latest results. Saved roster availability is preserved.', 'muted'));
       else if (participant.identityStable === false || !participant.resolvable) action.append(el('p', 'Correct the source identity before linking this submission.', 'muted'));
       else {
-        const picker = select([['', 'Choose a volunteer'], ...data.volunteers.map(v => [v.id, `${v.name} (${v.email})`] as [string, string])]); picker.required = true; picker.setAttribute('aria-label', `Roster link for ${participant.name || 'unnamed participant'} (WhenIsGood ID: ${participant.id})`); picker.dataset.focusKey = `mapping-${participant.id}`; picker.dataset.participantId = participant.id;
+        const picker = select([['', 'Choose a volunteer'], ...sortedRosterOptions(data.volunteers)]); picker.required = true; picker.setAttribute('aria-label', `Roster link for ${participant.name || 'unnamed participant'} (WhenIsGood ID: ${participant.id})`); picker.dataset.focusKey = `mapping-${participant.id}`; picker.dataset.participantId = participant.id;
         const mappingForm = form(action, 'Link participant', async () => {
           await api.call('admin.import.mapping.upsert', { sourceParticipantId: participant.id, volunteerId: picker.value }, data.dataRevision);
           await refreshView('imports', 'Participant linked and the latest saved source availability applied.', '.content button', { consumedParticipantId: participant.id });

@@ -11,6 +11,7 @@ import { AuthService } from '../services/AuthService';
 import { Database, schedulingInputsChanged } from '../services/Database';
 import { Clock } from '../services/Clock';
 import { EmailService } from '../services/EmailService';
+import { volunteerNotification } from '../notifications';
 import { canUseCenter, policies } from './policies';
 import { handleOperation } from './handlers';
 import type { AppConfig } from '../config';
@@ -104,11 +105,13 @@ export function dispatch(raw: unknown, config: AppConfig) {
       }
       return yield* Effect.fail(committed);
     }
-    if (operation === 'volunteer.availability.recurring.update' || operation === 'volunteer.availability.exception.create' || operation === 'volunteer.assignment.cancel') {
-      const email = yield* EmailService;
-      yield* email.send({ to: config.adminEmails, subject: 'Volunteer schedule update', text: `${user.email} completed ${operation} at ${now.toISOString()}. Data revision ${dataRevision}.` })
-        .pipe(Effect.catchCause(() => Effect.logError('Administrative notification failed after the mutation committed.')));
-    }
+    yield* Effect.gen(function* () {
+      const notification = yield* Effect.sync(() => volunteerNotification(operation, payload, state, user, config.adminEmails));
+      if (notification) {
+        const email = yield* EmailService;
+        yield* email.send(notification);
+      }
+    }).pipe(Effect.catchCause(() => Effect.logError('Administrative notification failed after the mutation committed.')));
     return response;
   });
 }

@@ -6,18 +6,37 @@ import type { ResultOf } from '../../src/shared/api/schemas';
 
 const revisions = { dataRevision: 1, schedulingInputRevision: 1 };
 const center = { id: 'synthetic-center', name: 'Synthetic Center', active: true };
+const sessionCenter = { id: center.id, name: center.name };
+const weeklySchedule = new URLSearchParams(location.search).has('weekly-schedule');
 const volunteers = Array.from({ length: 40 }, (_, i) => ({
   id: `synthetic-v${i}`, name: `Synthetic Volunteer ${String(i + 1).padStart(2, '0')}`,
   email: `volunteer${i}@example.test`, lifecycleStatus: 'active' as const,
   interviewStatus: 'complete' as const, readinessRank: i,
 }));
-const sessions = volunteers.map((_, i) => ({
-  id: `synthetic-s${i}`, kind: 'center' as const, centerId: center.id,
-  title: `Synthetic session ${i + 1}`, date: '2026-10-06', start: '09:00', end: '10:00',
-  timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
-}));
+const sessions = weeklySchedule
+  ? [
+    ...['2026-10-02', '2026-10-09', '2026-10-16'].map((date, i) => ({
+      id: `synthetic-weekly-${i}`, kind: 'center' as const, centerId: center.id, title: `Synthetic weekly ${i + 1}`, date,
+      start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+    })),
+    ...volunteers.slice(3).map((_, i) => ({
+      id: `synthetic-supplement-${i}`, kind: 'center' as const, centerId: center.id, title: `Synthetic session ${i + 4}`, date: '2026-11-03',
+      start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+    })),
+  ]
+  : volunteers.map((_, i) => ({
+    id: `synthetic-s${i}`, kind: 'center' as const, centerId: center.id,
+    title: `Synthetic session ${i + 1}`, date: '2026-10-06', start: '09:00', end: '10:00',
+    timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+  }));
+const scheduleAssignments = weeklySchedule ? sessions.slice(0, 3).map((session, i) => ({
+  id: `synthetic-assignment-${i}`, sessionId: session.id, volunteerId: 'synthetic-v0', scheduleRevision: 1, status: 'assigned' as const,
+})) : [];
+const scheduleBackups = weeklySchedule ? sessions.slice(0, 3).map((session, i) => ({
+  id: `synthetic-backup-${i}`, sessionId: session.id, volunteerId: 'synthetic-v1', scheduleRevision: 1, position: 1, status: 'available' as const,
+})) : [];
 let schedule: ResultOf<'admin.schedule.read'> = {
-  ...revisions, run: null, sessions, volunteers, assignments: [], backups: [], shortfalls: [], stale: false,
+  ...revisions, run: null, sessions, volunteers, centers: [sessionCenter], assignments: scheduleAssignments, backups: scheduleBackups, shortfalls: [], stale: false,
 };
 // Small, explicitly synthetic schedule for visual comparison and publication-state checks.
 if (new URLSearchParams(location.search).has('reference')) {
@@ -39,11 +58,20 @@ const candidates: ResultOf<'center.candidate.read'> = {
     coverage: { volunteers: volunteers.slice(0, 2), requestedCount: 2, shortfall: 0 },
   })),
 };
+const syncRoster: ResultOf<'admin.sync.read'>['volunteers'] = new URLSearchParams(location.search).has('shuffled-roster')
+  ? [
+    { id: 'synthetic-v2', name: 'Zoe Example', email: 'zoe@example.test' },
+    { id: 'synthetic-v3', name: 'ALex Example', email: 'z@example.test' },
+    { id: 'synthetic-v1', name: 'alex Example', email: 'm@example.test' },
+    { id: 'synthetic-v4', name: 'Beth Example', email: 'beth@example.test' },
+    { id: 'synthetic-v0', name: 'Alex Example', email: 'a@example.test' },
+  ]
+  : volunteers.map(({ id, name, email }) => ({ id, name, email }));
 let synchronization: ResultOf<'admin.sync.read'> = {
   ...revisions, status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: '2026-10-13T12:00:00Z',
     outcome: 'changed', diagnostic: null, participantCount: 40, matchedCount: 0, pendingCount: 40 },
   pending: volunteers.map(v => ({ id: `p-${v.id}`, name: v.name, email: v.email, intervals: [{ weekday: 1, start: '09:00', end: '10:00', timeZone: 'America/New_York' }],
-    reason: 'new', resolvable: true, present: true, firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z' })), imports: new URLSearchParams(location.search).has('history') ? [{ id: 'synthetic-import', status: 'completed', startedAt: '2026-10-13T12:00:00Z', actorId: 'synthetic-admin', participantCount: 40, matchedCount: 0 }] : [], volunteers: volunteers.map(({ id, name, email }) => ({ id, name, email })),
+    reason: 'new', resolvable: true, present: true, firstSeenAt: '2026-10-13T12:00:00Z', lastSeenAt: '2026-10-13T12:00:00Z' })), imports: new URLSearchParams(location.search).has('history') ? [{ id: 'synthetic-import', status: 'completed', startedAt: '2026-10-13T12:00:00Z', actorId: 'synthetic-admin', participantCount: 40, matchedCount: 0 }] : [], volunteers: syncRoster,
 };
 
 if (new URLSearchParams(location.search).has('collision')) {
@@ -100,7 +128,11 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       document.documentElement.dataset.scheduleReads = String(++scheduleReads);
       data = schedule; break;
     }
-    case 'admin.schedule.preview': data = { ...revisions, output: { assignments: [], backups: [], shortfalls: [] } }; break;
+    case 'admin.schedule.preview': data = { ...revisions, output: {
+      assignments: scheduleAssignments.map(({ sessionId, volunteerId }) => ({ sessionId, volunteerId })),
+      backups: scheduleBackups.map(({ sessionId, volunteerId, position }) => ({ sessionId, volunteerId, position })),
+      shortfalls: [],
+    } }; break;
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;
 
@@ -142,7 +174,7 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     const sticky = Math.abs(header.getBoundingClientRect().top - before) < 2;
     const style = getComputedStyle(region);
     const page = document.querySelector('[aria-current="page"]')?.textContent;
-    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : 40;
+    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : 40;
     check(rows === expectedRows, 'Synthetic row count does not match the current records');
     if (region.closest('.schedule-panel')) {
       check(style.maxHeight === 'none' && region.scrollHeight <= region.clientHeight + 1, 'Schedule rows are vertically clipped');

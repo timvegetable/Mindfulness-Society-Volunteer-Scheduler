@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import { AppError } from '../../../shared/api/errors';
 import type { Snapshot, User } from '../../../shared/domain/models';
+import { sessionCenters } from '../../../shared/domain/session-label';
 import type { AppConfig } from '../../config';
 import { currentAssignments, currentBackups, currentRun } from '../../../shared/domain/scheduler';
 export { currentAssignments, currentBackups, currentRun } from '../../../shared/domain/scheduler';
@@ -14,5 +15,6 @@ export function scheduleView(state: Snapshot) {
   const run = currentRun(state);
   return { run, assignments: currentAssignments(state), backups: currentBackups(state),
     shortfalls: run?.shortfalls ?? [], sessions: state.sessions, volunteers: state.volunteers,
+    centers: sessionCenters(state.sessions, state.centers),
     stale: !run || run.inputRevision < state.schedulingInputRevision };
 }

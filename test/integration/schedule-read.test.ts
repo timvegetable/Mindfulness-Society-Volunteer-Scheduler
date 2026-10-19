@@ -45,6 +45,21 @@ describe('prepared schedule public read workflow', () => {
     expect(await view(app)).toEqual(success(await app.request('admin.schedule.read')));
     expect((await app.db.prepare('SELECT * FROM schedule_read_parts ORDER BY part').all()).results).toEqual(originalParts.results);
   });
+  it('returns the current referenced center name outside the prepared session records', async () => {
+    const app = await application();
+    const before = await view(app);
+    const originalParts = await app.db.prepare('SELECT * FROM schedule_read_parts ORDER BY part').all();
+    expect(before.centers).toContainEqual({ id: 'center-1', name: 'North Center' });
+    expect(JSON.stringify(originalParts.results)).not.toContain('centers');
+    await app.db.prepare("UPDATE centers SET name='Renamed North Center' WHERE id='center-1'").run();
+
+    const refreshed = await view(app);
+    expect(refreshed.centers).toContainEqual({ id: 'center-1', name: 'Renamed North Center' });
+    expect(refreshed.sessions.find(session => session.id === 'session-1')?.title).toBe('North mindfulness');
+    expect((await app.db.prepare('SELECT title FROM sessions WHERE id=?').bind('session-1').first<{ title: string }>())?.title).toBe('North mindfulness');
+    expect((await app.db.prepare('SELECT * FROM schedule_read_parts ORDER BY part').all()).results).toEqual(originalParts.results);
+    expect(refreshed).toEqual(success(await app.request('admin.schedule.read')));
+  });
   it.each([
     ['Schedule change 😀', 'Schedule change 😀'],
     ['Lone high \ud800', 'Lone high �'],
