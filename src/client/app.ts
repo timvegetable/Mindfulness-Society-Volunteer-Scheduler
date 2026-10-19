@@ -3,7 +3,7 @@ import { ApiClient, ApiError } from './api';
 import type { Candidate, Session, Volunteer } from '../shared/domain/models';
 import { formatSessionTitle } from '../shared/domain/session-label';
 import { groupWeeklyScheduleRows, type GroupedScheduleRow, type ScheduleOccurrence } from '../shared/domain/schedule-presentation';
-import { instantMilliseconds } from '../shared/domain/availability';
+import { instantMilliseconds, sessionsStartingAfter } from '../shared/domain/availability';
 import type { ResultOf } from '../shared/api/schemas';
 
 declare global {
@@ -292,11 +292,12 @@ function calendarSetupDialog(data: ResultOf<'volunteer.dashboard'>, trigger: HTM
   };
   const upcomingAssignments = () => {
     const sessions = data.assignmentSessions ?? data.sessions;
+    const futureSessionIds = new Set(sessionsStartingAfter(sessions, Date.now()).map(session => session.id));
     return data.assignments.some(assignment => {
       if (assignment.status !== 'assigned') return false;
       const session = sessions.find(item => item.id === assignment.sessionId);
       return !!session && session.status !== 'cancelled'
-        && instantMilliseconds(session.date, session.start, session.timeZone) > Date.now();
+        && futureSessionIds.has(session.id);
     });
   };
   const doneInFooter = () => {

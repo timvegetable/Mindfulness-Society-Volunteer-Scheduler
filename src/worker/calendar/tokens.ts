@@ -1,13 +1,8 @@
 import type { CalendarSubscription } from '../../shared/domain/models';
+import { encodeBase64Url } from '../../shared/base64url';
 
 const textEncoder = new TextEncoder();
 const tokenLength = 32;
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
 
 function decodeBase64Url(value: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('Invalid calendar credential encoding.');
