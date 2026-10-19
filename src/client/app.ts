@@ -2,6 +2,7 @@ import { ApiClient, ApiError } from './api';
 import type { Candidate, Session, Volunteer } from '../shared/domain/models';
 import { formatSessionTitle } from '../shared/domain/session-label';
 import { groupWeeklyScheduleRows, type GroupedScheduleRow, type ScheduleOccurrence } from '../shared/domain/schedule-presentation';
+import { instantMilliseconds } from '../shared/domain/availability';
 import type { ResultOf } from '../shared/api/schemas';
 
 declare global {
@@ -242,7 +243,7 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
     }, 'danger quiet');
     return [session ? assignmentSession(session, data.centers) : 'Session', cancel];
   });
-  if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No assignments.');
+  if (rows.length) assignments.append(table(['Session', 'Action'], rows)); else empty(assignments, 'No upcoming assignments.');
   const recurring = card('Weekly availability', 'Update in WhenIsGood. Availability is checked automatically every 30 minutes.'); recurring.append(el('p', `Last successful sync: ${syncTime(data.freshness?.lastSuccessAt ?? null)}.${data.freshness?.problem ? ' The latest check failed; your saved availability is preserved.' : ''}`, 'muted sync-freshness')); content.append(recurring);
   if (data.recurringAvailability.length) {
     const saved = table(['Day', 'Time'], data.recurringAvailability.map(interval => [days[interval.weekday - 1]!, timeRange(interval.start, interval.end)]));
@@ -260,8 +261,8 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   [start, end].forEach(control => control.addEventListener('input', () => end.setCustomValidity('')));
   if (data.availabilityExceptions.length) exceptions.append(table(['Date', 'Availability', 'Time', 'Reason'], data.availabilityExceptions.map(item => [item.date, statusPill(item.kind), timeRange(item.start, item.end), item.reason ?? '—'])));
   else empty(exceptions, 'No exceptions.');
-  const upcoming = card('Upcoming sessions'); content.append(upcoming); const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  const sessions = data.sessions.filter(session => session.date >= today && session.status !== 'cancelled').sort((a, b) => `${a.date}${a.start}`.localeCompare(`${b.date}${b.start}`));
+  const upcoming = card('Upcoming sessions'); content.append(upcoming);
+  const sessions = data.sessions.filter(session => session.status !== 'cancelled').sort((a, b) => instantMilliseconds(a.date, a.start, a.timeZone) - instantMilliseconds(b.date, b.start, b.timeZone) || a.id.localeCompare(b.id));
   sessions.length ? upcoming.append(table(['Session', 'Date', 'Time', 'Status'], sessions.map(session => [formatSessionTitle(session, data.centers), session.date, timeRange(session.start, session.end), statusPill(session.status)]))) : empty(upcoming, 'No upcoming sessions.');
 }
 
@@ -341,8 +342,10 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     schedule.querySelector('h2')!.textContent = 'Schedule preview';
     description.textContent = 'Preview · Unpublished changes';
     staleNotice.hidden = true; previewButton.textContent = 'Refresh preview'; previewButton.classList.add('quiet'); back.hidden = false;
-    const previewSessions = data.sessions.filter(session => session.status !== 'cancelled');
-    scheduleArea.replaceChildren(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(previewSessions, preview.output.assignments, preview.output.backups).map(group => {
+    const previewSessions = preview.sessions;
+    scheduleArea.replaceChildren();
+    if (!previewSessions.length) empty(scheduleArea, 'No upcoming sessions to preview.');
+    else scheduleArea.append(table(['Session', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(previewSessions, preview.output.assignments, preview.output.backups).map(group => {
       const occurrence = group.occurrences[0]!;
       return [scheduleSession(group, data.centers), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];
     })));
@@ -354,7 +357,7 @@ function scheduleView(data: ResultOf<'admin.schedule.read'>) {
     previewRevision = undefined; publish.disabled = true; publish.hidden = true; back.hidden = true;
     previewButton.textContent = 'Preview schedule'; previewButton.classList.remove('quiet'); schedule.querySelector('h2')!.textContent = 'Session schedule';
     publishedState(); staleNotice.hidden = false; scheduleArea.replaceChildren();
-    if (!data.sessions.length) empty(scheduleArea, 'No sessions have been created. Confirm a center proposal to add one.');
+    if (!data.sessions.length) empty(scheduleArea, 'No upcoming sessions.');
     else scheduleArea.append(table(['Session', 'Status', 'Assigned volunteers', 'Backups (in order)', 'Unfilled'], scheduleGroups(data.sessions, data.assignments, data.backups).map(group => {
       const occurrence = group.occurrences[0]!;
       return [scheduleSession(group, data.centers), statusPill(occurrence.session.status), names(occurrence.assignedVolunteerIds, data.volunteers), names(occurrence.orderedBackupVolunteerIds, data.volunteers), scheduleShortfall(occurrence.unfilledCount)];

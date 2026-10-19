@@ -26,7 +26,7 @@ export function handleOperation(operation: Operation, payload: unknown, ctx: Han
     case 'volunteer.availability.recurring.update': return updateRecurring(ctx, input('volunteer.availability.recurring.update').intervals);
     case 'volunteer.availability.exception.create': return createException(ctx, input('volunteer.availability.exception.create'));
     case 'volunteer.assignment.cancel': return cancelAssignment(ctx, input('volunteer.assignment.cancel'));
-    case 'admin.schedule.read': return Effect.succeed(scheduleView(ctx.state));
+    case 'admin.schedule.read': return Effect.succeed(scheduleView(ctx.state, ctx.now));
     case 'admin.schedule.preview': return Effect.succeed(previewSchedule(ctx));
     case 'admin.schedule.rerun': return publishSchedule(ctx);
     case 'center.candidate.read': return Effect.succeed(readCandidates(ctx));

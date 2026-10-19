@@ -2,7 +2,7 @@ import { Effect } from 'effect';
 import type { AvailabilityException, WeeklyInterval, Assignment, Shortfall } from '../../../shared/domain/models';
 import { sessionCenters } from '../../../shared/domain/session-label';
 import { normalizeWeeklyIntervals } from '../../../shared/domain/intervals';
-import { instantFor, futureStartCheck } from '../../../shared/domain/availability';
+import { instantFor, sessionsStartingAfter } from '../../../shared/domain/availability';
 import { selectBackup } from '../../../shared/domain/scheduler';
 import { IdGenerator } from '../../services/IdGenerator';
 import { attempt, currentAssignments, currentRun, fail, type HandlerContext } from './context';
@@ -15,11 +15,12 @@ export function ownVolunteer(ctx: HandlerContext) {
 export function dashboard(ctx: HandlerContext) {
   return Effect.gen(function* () {
     const volunteer = yield* ownVolunteer(ctx);
-    const startsLater = futureStartCheck(ctx.now.getTime());
-    const assignments = currentAssignments(ctx.state).filter((row) => row.volunteerId === volunteer.id);
+    const futureSessions = sessionsStartingAfter(ctx.state.sessions, ctx.now.getTime());
+    const futureSessionIds = new Set(futureSessions.map(session => session.id));
+    const assignments = currentAssignments(ctx.state).filter((row) => row.volunteerId === volunteer.id && futureSessionIds.has(row.sessionId));
     const assignedSessionIds = new Set(assignments.filter((row) => row.status === 'assigned').map((row) => row.sessionId));
-    const assignmentSessions = ctx.state.sessions.filter((session) => assignedSessionIds.has(session.id));
-    const sessions = ctx.state.sessions.filter((session) => session.status !== 'cancelled' && startsLater(session.date, session.start, session.timeZone));
+    const assignmentSessions = futureSessions.filter((session) => assignedSessionIds.has(session.id));
+    const sessions = futureSessions.filter((session) => session.status !== 'cancelled');
     return {
       volunteer,
       assignments,

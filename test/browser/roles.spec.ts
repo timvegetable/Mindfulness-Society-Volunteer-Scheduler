@@ -54,8 +54,16 @@ test('volunteer UI confirms cancellation and removes the assignment in memory', 
   page.on('dialog', dialog => dialog.type() === 'prompt' ? dialog.accept('UI test cancellation') : dialog.accept());
   await page.getByRole('button', { name: 'Cancel assignment', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Cancel assignment', exact: true })).toHaveCount(0);
-  await expect(page.getByText('No assignments.', { exact: false })).toBeVisible();
+  await expect(page.getByText('No upcoming assignments.', { exact: false })).toBeVisible();
   await expect(page.locator('section').filter({ has: page.getByRole('heading', { name: 'Date exceptions', exact: true }) }).getByRole('table')).toContainText('UI test cancellation');
+});
+
+test('volunteer empty states identify the missing upcoming sessions and assignments', async ({ page }) => {
+  await page.goto('/__role-check?future-empty=1');
+  await expect(page.getByRole('heading', { name: 'Your assignments', exact: true })).toBeVisible();
+  await expect(page.getByText('No upcoming assignments.', { exact: true })).toBeVisible();
+  const upcoming = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Upcoming sessions', exact: true }) });
+  await expect(upcoming.getByText('No upcoming sessions.', { exact: true })).toBeVisible();
 });
 
 test('contact proposal creation, editing and withdrawal retains reading position', async ({ page }) => {

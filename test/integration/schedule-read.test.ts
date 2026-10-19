@@ -11,6 +11,7 @@ const envConfig = { SCHEDULE_READ_MODE: 'enabled' as const, SCHEDULE_READ_KEY: s
   SCHEDULE_READ_AUDIENCE: 'synthetic', OAUTH_CLIENT_ID: 'client' };
 const tickets = makeReadTickets({ secret, audience: 'synthetic:client' });
 const applications: Application[] = [];
+const applicationReadTime = Date.parse('2026-10-04T12:00:00.000Z');
 afterEach(async () => { await Promise.all(applications.splice(0).map(app => app.dispose())); });
 async function application(published = true) {
   const app = await createApplication({ scheduleReads: true }); applications.push(app);
@@ -18,20 +19,43 @@ async function application(published = true) {
   await executeCommit(app.db, await prepareScheduleBackfill(app.db));
   return app;
 }
-async function read(app: Application, credential?: string) {
-  credential ??= (await tickets.issue({ id: 'user-admin', email: 'admin@example.test' }, Math.floor(Date.now() / 1000) + 3600, Date.now())).credential;
+async function read(app: Application, credential?: string, readAt = credential ? Date.now() : applicationReadTime) {
+  credential ??= (await tickets.issue({ id: 'user-admin', email: 'admin@example.test' }, Math.floor(readAt / 1000) + 3600, readAt)).credential;
   const response = await readSchedule(new Request('https://app.invalid/api/schedule', { method: 'POST',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'admin.schedule.read', credential, payload: {} }) }), { ...envConfig, DB: app.db });
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'admin.schedule.read', credential, payload: {} }) }), { ...envConfig, DB: app.db }, readAt);
   const body = await response.json();
   return { response, body };
 }
-async function view(app: Application) {
-  const { response, body } = await read(app); expect(response.status).toBe(200);
+async function view(app: Application, readAt = applicationReadTime) {
+  const { response, body } = await read(app, undefined, readAt); expect(response.status).toBe(200);
   const parsed = Schema.decodeUnknownSync(Schema.Struct({ ok: Schema.Literal(true), data: resultSchemas['admin.schedule.read'] }))(body);
   return parsed.data;
 }
 
 describe('prepared schedule public read workflow', () => {
+  it('applies the current cutoff to older prepared output as time passes', async () => {
+    const app = await application();
+    await app.db.batch([
+      app.db.prepare("UPDATE sessions SET date='2026-10-04',start_time='08:01',end_time='08:30' WHERE id='session-1'"),
+      app.db.prepare("INSERT INTO sessions (id,kind,center_id,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES ('prepared-boundary','center','center-1','Boundary','2026-10-04','08:00','08:30','America/New_York',1,'locked')"),
+      app.db.prepare("INSERT INTO assignments (id,session_id,volunteer_id,schedule_revision,status) VALUES ('prepared-boundary-assignment','prepared-boundary','volunteer-2',1,'assigned')"),
+    ]);
+    await executeCommit(app.db, await prepareScheduleBackfill(app.db));
+    const beforeStart = await view(app, Date.parse('2026-10-04T12:00:00.000Z'));
+    expect(beforeStart.sessions.map(session => session.id)).toEqual(['session-1']);
+    expect(beforeStart.assignments.map(assignment => assignment.id)).toEqual(['assignment-1']);
+
+    const atStart = Date.parse('2026-10-04T12:01:00.000Z');
+    app.setNow(new Date(atStart).toISOString());
+    const prepared = await view(app, atStart);
+    const ordinary = success(await app.request('admin.schedule.read'));
+    expect(prepared).toEqual(ordinary);
+    expect(prepared.sessions).toEqual([]);
+    expect(prepared.assignments).toEqual([]);
+    expect((await app.read()).sessions).toHaveLength(2);
+    expect((await app.read()).assignments).toHaveLength(2);
+  });
+
   it('matches the existing response, preserves live revisions/stale metadata, and reuses core bytes for availability changes', async () => {
     const app = await application();
     expect(await view(app)).toEqual(success(await app.request('admin.schedule.read')));

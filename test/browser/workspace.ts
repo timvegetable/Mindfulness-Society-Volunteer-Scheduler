@@ -2,18 +2,47 @@ import '../../src/client/style.css';
 import { Schema } from 'effect';
 import { payloadSchemas } from '../../src/shared/api/schemas';
 import { startClient } from '../../src/client/app';
+import { sessionsStartingAfter } from '../../src/shared/domain/availability';
 import type { ResultOf } from '../../src/shared/api/schemas';
 
 const revisions = { dataRevision: 1, schedulingInputRevision: 1 };
 const center = { id: 'synthetic-center', name: 'Synthetic Center', active: true };
 const sessionCenter = { id: center.id, name: center.name };
-const weeklySchedule = new URLSearchParams(location.search).has('weekly-schedule');
+const query = new URLSearchParams(location.search);
+const futureCutoff = query.has('future-cutoff') || query.has('future-weekly') || query.has('future-empty');
+const futureWeekly = query.has('future-weekly');
+const futureEmpty = query.has('future-empty');
+const weeklySchedule = query.has('weekly-schedule') || futureWeekly;
 const volunteers = Array.from({ length: 40 }, (_, i) => ({
   id: `synthetic-v${i}`, name: `Synthetic Volunteer ${String(i + 1).padStart(2, '0')}`,
   email: `volunteer${i}@example.test`, lifecycleStatus: 'active' as const,
   interviewStatus: 'complete' as const, readinessRank: i,
 }));
-const sessions = weeklySchedule
+const allSessions = futureCutoff
+  ? futureWeekly
+    ? [
+      ...['2026-10-02', '2026-10-09', '2026-10-16', '2026-10-23', '2026-10-30'].map((date, i) => ({
+        id: `synthetic-weekly-${i}`, kind: 'center' as const, centerId: center.id, title: `Synthetic weekly ${i + 1}`, date,
+        start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+      })),
+      ...volunteers.slice(3).map((_, i) => ({
+        id: `synthetic-supplement-${i}`, kind: 'center' as const, centerId: center.id, title: `Synthetic session ${i + 6}`, date: '2026-11-03',
+        start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
+      })),
+    ]
+    : futureEmpty
+      ? [
+        { id: 'synthetic-past', kind: 'center' as const, centerId: center.id, title: 'Past session', date: '2026-10-04', start: '07:59', end: '08:30', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' as const },
+        { id: 'synthetic-boundary', kind: 'center' as const, centerId: center.id, title: 'Boundary session', date: '2026-10-04', start: '08:00', end: '08:30', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' as const },
+      ]
+      : [
+        { id: 'synthetic-past', kind: 'center' as const, centerId: center.id, title: 'Past session', date: '2026-10-04', start: '07:59', end: '08:30', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' as const },
+        { id: 'synthetic-boundary', kind: 'center' as const, centerId: center.id, title: 'Boundary session', date: '2026-10-04', start: '08:00', end: '08:30', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' as const },
+        { id: 'synthetic-later-today', kind: 'center' as const, centerId: center.id, title: 'Later today', date: '2026-10-04', start: '08:01', end: '08:30', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' as const },
+        { id: 'synthetic-next-day', kind: 'center' as const, centerId: center.id, title: 'Next day', date: '2026-10-05', start: '09:00', end: '10:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'locked' as const },
+        { id: 'synthetic-cancelled', kind: 'center' as const, centerId: center.id, title: 'Cancelled future session', date: '2026-10-05', start: '11:00', end: '12:00', timeZone: 'America/New_York', requiredStaffCount: 1, status: 'cancelled' as const },
+      ]
+  : weeklySchedule
   ? [
     ...['2026-10-02', '2026-10-09', '2026-10-16'].map((date, i) => ({
       id: `synthetic-weekly-${i}`, kind: 'center' as const, centerId: center.id, title: `Synthetic weekly ${i + 1}`, date,
@@ -29,6 +58,7 @@ const sessions = weeklySchedule
     title: `Synthetic session ${i + 1}`, date: '2026-10-06', start: '09:00', end: '10:00',
     timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
   }));
+const sessions = futureCutoff ? sessionsStartingAfter(allSessions, Date.now()) : allSessions;
 const scheduleAssignments = weeklySchedule ? sessions.slice(0, 3).map((session, i) => ({
   id: `synthetic-assignment-${i}`, sessionId: session.id, volunteerId: 'synthetic-v0', scheduleRevision: 1, status: 'assigned' as const,
 })) : [];
@@ -128,7 +158,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       document.documentElement.dataset.scheduleReads = String(++scheduleReads);
       data = schedule; break;
     }
-    case 'admin.schedule.preview': data = { ...revisions, output: {
+    case 'admin.schedule.preview': data = { ...revisions, sessions: schedule.sessions.filter(session => session.status !== 'cancelled'), output: {
       assignments: scheduleAssignments.map(({ sessionId, volunteerId }) => ({ sessionId, volunteerId })),
       backups: scheduleBackups.map(({ sessionId, volunteerId, position }) => ({ sessionId, volunteerId, position })),
       shortfalls: [],

@@ -1,10 +1,12 @@
 import { Effect } from 'effect';
 import { generateSchedule } from '../../../shared/domain/scheduler';
+import { sessionsStartingAfter } from '../../../shared/domain/availability';
 import { IdGenerator } from '../../services/IdGenerator';
 import { scheduleView, type HandlerContext } from './context';
 
 export function previewSchedule(ctx: HandlerContext) {
-  return { output: generateSchedule(ctx.state, ctx.now.toISOString()) };
+  return { sessions: sessionsStartingAfter(ctx.state.sessions, ctx.now.getTime()).filter(session => session.status !== 'cancelled'),
+    output: generateSchedule(ctx.state, ctx.now.toISOString()) };
 }
 
 export function publishSchedule(ctx: HandlerContext) {
@@ -21,6 +23,6 @@ export function publishSchedule(ctx: HandlerContext) {
     ctx.state.schedulingRuns.push({ id: yield* ids.next, inputRevision: ctx.state.schedulingInputRevision, outputRevision: revision,
       status: 'completed', startedAt: ctx.now.toISOString(), completedAt: ctx.now.toISOString(),
       assignmentIds: assignments.map((row) => row.id), backupIds: backups.map((row) => row.id), shortfalls: output.shortfalls });
-    return scheduleView(ctx.state);
+    return scheduleView(ctx.state, ctx.now);
   });
 }

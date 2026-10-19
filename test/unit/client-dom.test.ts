@@ -46,7 +46,9 @@ async function mount() {
     if (body.operation === 'session.me') data = { ...base, user: { id: 'u1', email: volunteer.email, roles, volunteerId: 'v1', centerIds: ['c1'], active: true }, centers: roles.includes('administrator') || roles.includes('center-contact') ? [center] : [] };
     else if (body.operation === 'volunteer.dashboard') { await dashboardRead; data = { ...base, volunteer, assignments: [assignment], recurringAvailability: [], availabilityExceptions: [], sessions: [session, univSession], assignmentSessions: [session], centers: [sessionCenter], ...volunteerDashboardOverride }; }
     else if (body.operation === 'admin.schedule.read' || body.operation === 'admin.schedule.rerun') data = adminSchedule ?? { ...base, run: null, assignments: [assignment], backups: [], shortfalls: [], sessions: [legacySession, univSession, session, { ...session, id: 's2', title: 'An older readable label', requiredStaffCount: 2 }], volunteers: [volunteer], centers: [sessionCenter], stale: false };
-    else if (body.operation === 'admin.schedule.preview') data = { ...base, dataRevision: previewRevision, output: previewOutput ?? { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } };
+    else if (body.operation === 'admin.schedule.preview') data = { ...base, dataRevision: previewRevision,
+      sessions: adminSchedule?.sessions ?? [legacySession, univSession, session, { ...session, id: 's2', title: 'An older readable label', requiredStaffCount: 2 }],
+      output: previewOutput ?? { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } };
     else if (body.operation === 'center.candidate.read') data = { ...base, centers: [center], candidates: [] };
     else if (body.operation === 'admin.sync.read' || body.operation === 'admin.sync.now') data = { ...base,
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },

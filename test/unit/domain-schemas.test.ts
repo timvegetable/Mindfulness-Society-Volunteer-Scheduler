@@ -34,7 +34,7 @@ const results: Record<string, object> = {
   'volunteer.dashboard': { volunteer, assignments: [assignment], recurringAvailability: [recurring], availabilityExceptions: [exception], sessions: [session], centers: [sessionCenter] },
   'volunteer.availability.recurring.update': { intervals: [recurring] }, 'volunteer.availability.exception.create': { exception },
   'volunteer.assignment.cancel': { assignment, exception, promotedAssignment: null, shortfall: { sessionId: 's1', required: 1, assigned: 0, missing: 1 } },
-  'admin.schedule.read': schedule, 'admin.schedule.rerun': schedule, 'admin.schedule.preview': { output: { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } },
+  'admin.schedule.read': schedule, 'admin.schedule.rerun': schedule, 'admin.schedule.preview': { sessions: [session], output: { assignments: [{ sessionId: 's1', volunteerId: 'v1' }], backups: [], shortfalls: [] } },
   'admin.import.whenIsGood.preview': { import: importRun }, 'admin.import.whenIsGood.promote': { import: { ...importRun, status: 'completed' } },
   'admin.import.mapping.upsert': { mapping: { id: 'm1', source: 'whenIsGood', sourceEmail: 'v@example.test', volunteerId: 'v1' } },
   'admin.insights.read': { leftoverVolunteers: [volunteer], grid: [{ weekday: 1, start: '09:00', end: '10:00', volunteers: [volunteer], count: 1 }] },
