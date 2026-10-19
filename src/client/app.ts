@@ -230,16 +230,219 @@ async function refreshView(tab: string, message = '', focusSelector?: string, pr
   window.scrollBy({ top: content.getBoundingClientRect().top - top, behavior: 'instant' });
 }
 
+function calendarEntryState(control: HTMLButtonElement, enabled: boolean) {
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('width', '18'); icon.setAttribute('height', '18');
+  icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
+  const addShape = (name: 'rect' | 'line', attributes: Record<string, string>) => {
+    const shape = document.createElementNS('http://www.w3.org/2000/svg', name);
+    Object.entries(attributes).forEach(([key, value]) => shape.setAttribute(key, value));
+    shape.setAttribute('fill', 'none'); shape.setAttribute('stroke', 'currentColor'); shape.setAttribute('stroke-width', '1.8');
+    icon.append(shape);
+  };
+  addShape('rect', { x: '3', y: '5', width: '18', height: '16', rx: '2' });
+  addShape('line', { x1: '3', y1: '10', x2: '21', y2: '10' });
+  addShape('line', { x1: '8', y1: '3', x2: '8', y2: '7' });
+  addShape('line', { x1: '16', y1: '3', x2: '16', y2: '7' });
+  control.replaceChildren(icon, el('span', enabled ? 'Calendar sync on' : 'Sync to calendar'));
+  control.setAttribute('aria-label', enabled ? 'Calendar sync on' : 'Sync to calendar');
+  control.classList.toggle('calendar-entry-on', enabled);
+  if (enabled) {
+    const indicator = el('span', '', 'calendar-indicator');
+    indicator.setAttribute('aria-hidden', 'true'); control.append(indicator);
+  }
+}
+
+function calendarSetupDialog(data: ResultOf<'volunteer.dashboard'>, trigger: HTMLButtonElement, currentRevision: { value: number }) {
+  const dialog = el('dialog', '', 'calendar-dialog');
+  const title = el('h2', 'Sync to calendar'); title.id = 'calendar-dialog-title';
+  dialog.setAttribute('aria-labelledby', title.id);
+  const close = button('×', () => dialog.close(), 'quiet calendar-close');
+  close.setAttribute('aria-label', 'Close sync to calendar dialog');
+  const heading = el('div', '', 'calendar-dialog-heading'); append(heading, title, close);
+  const body = el('div', '', 'calendar-dialog-body');
+  const footer = el('div', '', 'calendar-footer');
+  const loadStatus = el('p', 'Checking calendar sync…', 'calendar-status');
+  loadStatus.setAttribute('role', 'status'); loadStatus.setAttribute('aria-live', 'polite');
+  dialog.append(heading, body, footer);
+  let subscription: ResultOf<'volunteer.calendar.read'> | undefined;
+  let linkInput: HTMLInputElement | undefined;
+  let copyButton: HTMLButtonElement | undefined;
+  let offMessage = '';
+
+  const closeDialog = () => { dialog.remove(); trigger.focus(); };
+  dialog.addEventListener('close', closeDialog);
+  const doneAction = () => button('Done', () => dialog.close(), 'quiet');
+  const reportProblem = (message: string, retry?: () => Promise<void>) => {
+    title.textContent = 'Sync to calendar'; body.replaceChildren();
+    const problem = el('p', message, 'calendar-error'); problem.setAttribute('role', 'alert');
+    body.append(problem);
+    if (retry) body.append(button('Try again', retry));
+    doneInFooter();
+  };
+  const showLoading = (message = 'Checking calendar sync…') => {
+    loadStatus.textContent = message;
+    body.replaceChildren(loadStatus); footer.replaceChildren();
+  };
+  const updateTriggerState = (enabled: boolean) => calendarEntryState(trigger, enabled);
+  const applyOwnMutation = (result: { enabled: boolean; dataRevision: number; schedulingInputRevision: number }) => {
+    currentRevision.value = result.dataRevision;
+    updateTriggerState(result.enabled);
+  };
+  const upcomingAssignments = () => {
+    const sessions = data.assignmentSessions ?? data.sessions;
+    return data.assignments.some(assignment => {
+      if (assignment.status !== 'assigned') return false;
+      const session = sessions.find(item => item.id === assignment.sessionId);
+      return !!session && session.status !== 'cancelled'
+        && instantMilliseconds(session.date, session.start, session.timeZone) > Date.now();
+    });
+  };
+  const doneInFooter = () => {
+    footer.classList.remove('calendar-confirmation-footer');
+    footer.replaceChildren(doneAction());
+  };
+
+  const renderDisabled = (message = '', statusText = '') => {
+    title.textContent = 'Sync to calendar';
+    updateTriggerState(false);
+    body.replaceChildren(el('p', 'Add your published assignments to a calendar app with a personal, read-only link.'));
+    body.append(el('p', 'The link includes only your upcoming published assignments. New assignments appear after they are published.', 'muted'));
+    if (statusText) { const state = el('p', statusText, 'calendar-enabled'); state.setAttribute('role', 'status'); body.append(state); }
+    if (message) { const error = el('p', message, 'calendar-error'); error.setAttribute('role', 'alert'); body.append(error); }
+    body.append(button('Create calendar link', createLink));
+    doneInFooter();
+  };
+  const renderEnabled = (message = '') => {
+    if (!subscription?.token) return reportProblem('The calendar link could not be loaded. Try again.', load);
+    title.textContent = 'Sync to calendar';
+    updateTriggerState(true);
+    body.replaceChildren(el('p', 'Your published assignments, kept up to date in your calendar app. Refresh timing depends on the app.'));
+    if (!upcomingAssignments()) body.append(el('p', 'No upcoming assignments are on your calendar yet.', 'calendar-empty'));
+    linkInput = input('url', new URL(`/calendar/${subscription.token}.ics`, window.location.origin).toString(), false);
+    linkInput.id = 'calendar-subscription-url';
+    linkInput.setAttribute('aria-label', 'Your calendar link');
+    linkInput.readOnly = true; linkInput.spellcheck = false; linkInput.classList.add('calendar-url');
+    const linkField = el('div', '', 'calendar-link-field');
+    const label = el('label', 'Your calendar link', 'calendar-link-label'); label.htmlFor = linkInput.id;
+    const linkRow = el('div', '', 'calendar-link-row');
+    copyButton = button('Copy link', copyLink, 'calendar-copy-button');
+    const statusMessage = el('p', '', 'calendar-copy-status'); statusMessage.setAttribute('role', 'status');
+    statusMessage.setAttribute('aria-live', 'polite');
+    append(linkRow, linkInput, copyButton); append(linkField, label, linkRow, statusMessage);
+    body.append(linkField);
+    body.append(el('p', 'Anyone with this link can see your assignments. Keep it private.', 'muted calendar-privacy'));
+    const google = el('section', '', 'calendar-instructions');
+    google.append(el('h3', 'Add to Google Calendar'));
+    const steps = el('ol', '', 'calendar-steps');
+    steps.append(el('li', 'Copy your link above.'),
+      el('li', 'On a computer, open Google Calendar. Next to “Other calendars,” select +, then From URL.'),
+      el('li', 'Paste your link and select Add calendar.'),
+      el('li', 'The calendar appears under “Other calendars” and in the Google Calendar app on your phone.'));
+    google.append(steps); body.append(google);
+    const otherApps = el('section', '', 'calendar-instructions');
+    otherApps.append(el('h3', 'Other calendar apps'),
+      el('p', 'In Apple Calendar, Outlook or similar, look for “Subscribe to calendar” or “Add from internet” and paste the same link.'));
+    body.append(otherApps);
+    const management = el('section', '', 'calendar-manage');
+    management.append(el('h3', 'Manage your link'));
+    const actions = el('div', '', 'actions calendar-manage-actions');
+    actions.append(button('Reset link', () => confirmChange('reset'), 'quiet danger'));
+    actions.append(button('Turn off sync', () => confirmChange('disable'), 'quiet danger'));
+    management.append(actions, el('p', 'Resetting replaces your link. Turning off stops it. Either way, calendars using the old link stop updating.', 'muted'));
+    body.append(management);
+    if (message) { const error = el('p', message, 'calendar-error'); error.setAttribute('role', 'alert'); body.append(error); }
+    doneInFooter();
+  };
+  async function load() {
+    showLoading();
+    try {
+      subscription = await api.call('volunteer.calendar.read', {});
+      if (subscription.enabled && subscription.token) renderEnabled();
+      else renderDisabled('', offMessage);
+    } catch {
+      reportProblem('Calendar settings could not be loaded. Check your connection and try again.', load);
+    }
+  }
+  async function createLink() {
+    showLoading('Creating your calendar link…');
+    try {
+      const result = await api.call('volunteer.calendar.enable', {}, currentRevision.value);
+      applyOwnMutation(result);
+      offMessage = '';
+      subscription = undefined;
+      await load();
+    } catch {
+      renderDisabled('Calendar link could not be created. Check your connection and try again.');
+    }
+  }
+  async function copyLink() {
+    const statusMessage = body.querySelector<HTMLElement>('.calendar-copy-status');
+    if (!linkInput || !statusMessage || !copyButton) return;
+    try {
+      await navigator.clipboard.writeText(linkInput.value);
+      const check = el('span', '✓'); check.setAttribute('aria-hidden', 'true');
+      copyButton.replaceChildren(check, el('span', 'Copied'));
+      copyButton.dataset.copied = 'true';
+      statusMessage.textContent = 'Link copied. Paste it into your calendar app.';
+    } catch {
+      linkInput.focus(); linkInput.select();
+      statusMessage.textContent = 'Copy is unavailable here. The link is selected; copy it from the field above.';
+    }
+  }
+  function confirmChange(action: 'reset' | 'disable') {
+    title.textContent = action === 'reset' ? 'Reset your calendar link?' : 'Turn off calendar sync?';
+    body.replaceChildren(el('p', action === 'reset'
+      ? 'We’ll create a new link and the current one will stop working right away. Calendars using the old link will stop updating, and events already added may stay until you remove that calendar. You’ll need to subscribe again with the new link.'
+      : 'Your link will stop working right away. Calendars using it will stop updating and no new events will appear. This doesn’t erase events already cached in calendar apps. If you turn sync on again later, you’ll get a new link.'));
+    body.append(el('p', 'Your assignments aren’t affected.', 'muted'));
+    footer.replaceChildren(
+      button('Cancel', () => renderEnabled(), 'quiet'),
+      button(action === 'reset' ? 'Reset link' : 'Turn off sync', () => { void updateSubscription(action); }, 'danger'),
+    );
+    footer.classList.add('calendar-confirmation-footer');
+    footer.querySelector<HTMLButtonElement>('button')?.focus();
+  }
+  async function updateSubscription(action: 'reset' | 'disable') {
+    if (!subscription) return;
+    const current = subscription;
+    showLoading(action === 'reset' ? 'Replacing your calendar link…' : 'Turning off calendar sync…');
+    try {
+      const result = await api.call(action === 'reset' ? 'volunteer.calendar.reset' : 'volunteer.calendar.disable', {}, currentRevision.value);
+      applyOwnMutation(result);
+      offMessage = action === 'disable' ? 'The personal link is off.' : '';
+      subscription = undefined;
+      footer.classList.remove('calendar-confirmation-footer');
+      await load();
+    } catch {
+      subscription = current;
+      footer.classList.remove('calendar-confirmation-footer');
+      if (current.enabled) renderEnabled('Calendar sync could not be changed. Your current link is still shown; try again.');
+      else renderDisabled('Calendar sync could not be changed. Check your connection and try again.');
+    }
+  }
+
+  document.body.append(dialog);
+  dialog.showModal();
+  void load();
+  return dialog;
+}
+
 function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
+  const currentRevision = { value: data.dataRevision };
   content.className = 'content volunteer-workspace';
   const assignments = card('Your assignments'); assignments.classList.add('assignments-panel'); content.append(assignments);
+  const calendarButton = button('', () => { calendarSetupDialog(data, calendarButton, currentRevision); }, 'quiet calendar-entry');
+  calendarEntryState(calendarButton, data.calendarEnabled);
+  calendarButton.setAttribute('aria-haspopup', 'dialog');
+  panelToolbar(assignments, calendarButton);
   const assignmentSessions = data.assignmentSessions ?? data.sessions;
   const rows = data.assignments.filter(item => item.status === 'assigned').map(assignment => {
     const session = assignmentSessions.find(item => item.id === assignment.sessionId);
     const cancel = button('Cancel assignment', async () => {
       if (!confirmAction(`Cancel your assignment for ${session ? sessionText(session, data.centers) : 'this session'}? This will mark you unavailable for the session and notify the coordinator.`)) return;
       const reason = promptAction('Reason for cancellation (optional):') ?? '';
-      await api.call('volunteer.assignment.cancel', { assignmentId: assignment.id, reason }, data.dataRevision); await refreshView('volunteer', 'Assignment cancelled.', '.assignments-panel h2');
+      await api.call('volunteer.assignment.cancel', { assignmentId: assignment.id, reason }, currentRevision.value); await refreshView('volunteer', 'Assignment cancelled.', '.assignments-panel h2');
     }, 'danger quiet');
     return [session ? assignmentSession(session, data.centers) : 'Session', cancel];
   });
@@ -253,7 +456,7 @@ function volunteerView(data: ResultOf<'volunteer.dashboard'>) {
   const date = input('date'); const kind = select([['unavailable', 'Unavailable'], ['available', 'Available']]); const start = input('time', '09:00'); const end = input('time', '12:00'); const reason = input('text', '', false);
   const exceptionForm = form(exceptions, 'Save exception', async () => {
     if (!validRange(start, end)) return;
-    await api.call('volunteer.availability.exception.create', { date: date.value, kind: kind.value as 'available' | 'unavailable', start: start.value, end: end.value, timeZone: zone, reason: reason.value }, data.dataRevision);
+    await api.call('volunteer.availability.exception.create', { date: date.value, kind: kind.value as 'available' | 'unavailable', start: start.value, end: end.value, timeZone: zone, reason: reason.value }, currentRevision.value);
     await refreshView('volunteer', 'Exception saved.', '.exception-form button[type=submit]');
   });
   exceptionForm.node.classList.add('exception-form');

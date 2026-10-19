@@ -12,13 +12,16 @@ let sequence = 0;
 let freshness = { lastSuccessAt: '2026-10-13T12:00:00Z', problem: false };
 let updated = false;
 let readCount = 0;
+let calendarEnabled = false;
+let calendarToken: string | null = null;
+let calendarReadFailed = false;
 const id = () => `synthetic-${++sequence}`;
 const center = { id: 'synthetic-center', name: 'North Example Center', active: true };
 const volunteer = { id: 'synthetic-volunteer', name: 'Alex Example', email: 'alex@example.test', lifecycleStatus: 'active' as const, interviewStatus: 'complete' as const, readinessRank: 1 };
 const session = { id: 'synthetic-session', kind: 'center' as const, centerId: center.id, title: 'Example mindfulness session', date: '2099-10-19', start: '10:00', end: '11:00', timeZone: zone, requiredStaffCount: 1, status: 'locked' as const };
 const dashboard: Pick<Snapshot, 'dataRevision' | 'schedulingInputRevision' | 'sessions' | 'assignments' | 'recurringAvailability' | 'availabilityExceptions'> & { volunteer: typeof volunteer } = {
   dataRevision: 1, schedulingInputRevision: 1, volunteer, sessions: futureEmpty ? [] : [session],
-  assignments: futureEmpty ? [] : [{ id: 'synthetic-assignment', sessionId: session.id, volunteerId: volunteer.id, scheduleRevision: 1, status: 'assigned' }],
+  assignments: futureEmpty || new URLSearchParams(location.search).has('empty-calendar') ? [] : [{ id: 'synthetic-assignment', sessionId: session.id, volunteerId: volunteer.id, scheduleRevision: 1, status: 'assigned' }],
   recurringAvailability: [{ id: 'synthetic-recurring', volunteerId: volunteer.id, weekday: 1, start: '09:00', end: '17:00', timeZone: zone }],
   availabilityExceptions: [],
 };
@@ -36,17 +39,17 @@ const fixtureFetch: typeof fetch = async (input, init) => {
   const request = JSON.parse(String(init?.body));
   const operation = String(request.operation);
   const allowed = role === 'volunteer'
-    ? ['volunteer.dashboard', 'volunteer.availability.recurring.update', 'volunteer.availability.exception.create', 'volunteer.assignment.cancel']
+    ? ['volunteer.dashboard', 'volunteer.availability.recurring.update', 'volunteer.availability.exception.create', 'volunteer.assignment.cancel', 'volunteer.calendar.read', 'volunteer.calendar.enable', 'volunteer.calendar.reset', 'volunteer.calendar.disable']
     : ['center.candidate.read', 'center.candidate.update'];
   if (operation !== 'session.me' && !allowed.includes(operation)) return failure('FORBIDDEN', 'This operation is not available to this synthetic role.');
-  const mutation = !['session.me', 'volunteer.dashboard', 'center.candidate.read'].includes(operation);
+  const mutation = !['session.me', 'volunteer.dashboard', 'center.candidate.read', 'volunteer.calendar.read'].includes(operation);
   if (!mutation) document.querySelector('#read-count')!.textContent = String(++readCount);
   if (mutation && request.expectedRevision !== revision) return failure('STALE_REVISION', 'Reload before saving changes.');
   let data: object;
   switch (operation) {
     case 'session.me':
       data = { user: { id: 'synthetic-user', email: role === 'volunteer' ? volunteer.email : 'contact@example.test', roles: [role], volunteerId: role === 'volunteer' ? volunteer.id : null, centerIds: role === 'center-contact' ? [center.id] : [], active: true }, centers: role === 'center-contact' ? [center] : [] }; break;
-    case 'volunteer.dashboard': data = { ...dashboard, centers: [{ id: center.id, name: center.name }], freshness }; break;
+    case 'volunteer.dashboard': data = { ...dashboard, ...revisions(), calendarEnabled, centers: [{ id: center.id, name: center.name }], freshness }; break;
     case 'volunteer.availability.recurring.update': {
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
       dashboard.recurringAvailability = payload.intervals.map(interval => ({ ...interval, id: id(), volunteerId: volunteer.id }));
@@ -66,6 +69,17 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       dashboard.availabilityExceptions.push(exception);
       data = { assignment, exception, promotedAssignment: null, shortfall: { sessionId: session.id, required: 1, assigned: 0, missing: 1 } }; break;
     }
+    case 'volunteer.calendar.read':
+      if (new URLSearchParams(location.search).has('calendar-read-error') && !calendarReadFailed) {
+        calendarReadFailed = true; return failure('INTERNAL_ERROR', 'Calendar settings unavailable.');
+      }
+      data = { enabled: calendarEnabled, token: calendarEnabled ? calendarToken : null }; break;
+    case 'volunteer.calendar.enable':
+      calendarEnabled = true; calendarToken ??= 'A'.repeat(43); data = { enabled: true }; break;
+    case 'volunteer.calendar.reset':
+      calendarEnabled = true; calendarToken = 'B'.repeat(43); data = { enabled: true }; break;
+    case 'volunteer.calendar.disable':
+      calendarEnabled = false; calendarToken = null; data = { enabled: false }; break;
     case 'center.candidate.read': data = { centers: [center], candidates: proposals.map(candidate => ({ candidate, coverage: coverage(candidate) })) }; break;
     case 'center.candidate.update': {
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);

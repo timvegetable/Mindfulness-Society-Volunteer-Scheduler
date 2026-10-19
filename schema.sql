@@ -1,6 +1,7 @@
 -- Destructive local-development/test reset. Never execute against production.
 DROP TABLE IF EXISTS schedule_read_parts;
 DROP TABLE IF EXISTS schedule_read_manifest;
+DROP TABLE IF EXISTS calendar_subscriptions;
 DROP TABLE IF EXISTS synchronization_artifacts;
 DROP TABLE IF EXISTS synchronization_outbox;
 DROP TABLE IF EXISTS synchronization_jobs;
@@ -48,6 +49,20 @@ CREATE TABLE users (
   volunteer_id TEXT REFERENCES volunteers (id),
   center_ids TEXT,
   active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE calendar_subscriptions (
+  id TEXT PRIMARY KEY,
+  volunteer_id TEXT NOT NULL UNIQUE REFERENCES volunteers (id),
+  token_hash TEXT UNIQUE,
+  token_ciphertext TEXT,
+  token_iv TEXT,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (id = volunteer_id),
+  CHECK ((enabled = 1 AND token_hash IS NOT NULL AND token_ciphertext IS NOT NULL AND token_iv IS NOT NULL)
+    OR (enabled = 0 AND token_hash IS NULL AND token_ciphertext IS NULL AND token_iv IS NULL))
 );
 
 CREATE TABLE recurring_availability (

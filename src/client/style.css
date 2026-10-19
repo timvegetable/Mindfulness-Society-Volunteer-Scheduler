@@ -644,6 +644,200 @@ textarea {
 .assignments-panel .session-time {
   white-space: normal;
 }
+.calendar-dialog {
+  width: min(42rem, calc(100vw - 2rem));
+  max-width: none;
+  max-height: min(90vh, 52rem);
+  padding: 1.5rem;
+  overflow-y: auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 18px 60px rgb(36 46 40 / 24%);
+}
+.calendar-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.calendar-dialog::backdrop {
+  background: rgb(36 46 40 / 48%);
+}
+.calendar-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.calendar-entry svg {
+  flex: 0 0 auto;
+}
+.calendar-entry-on {
+  color: var(--accent) !important;
+}
+.calendar-indicator {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #398d5f;
+}
+.calendar-dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+  flex: 0 0 auto;
+}
+.calendar-dialog-heading h2 {
+  margin: 0;
+}
+.calendar-close {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.calendar-close:hover {
+  color: var(--ink) !important;
+}
+.calendar-dialog-body {
+  max-width: none;
+  min-height: 0;
+  overflow-y: auto;
+}
+.calendar-dialog-body > p {
+  margin: 0.7rem 0;
+}
+.calendar-link-field {
+  margin: 1.1rem 0 0.25rem;
+}
+.calendar-link-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+}
+.calendar-link-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+}
+.calendar-url {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  font-size: 0.88rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+}
+.calendar-copy-button {
+  min-height: 44px;
+  flex: 0 0 auto;
+}
+.calendar-copy-button[data-copied="true"] {
+  color: var(--accent);
+  background: #e3eee7;
+  border-color: #c4dfce;
+}
+.calendar-privacy {
+  margin: 0.4rem 0 1rem !important;
+  color: var(--muted);
+}
+.calendar-instructions {
+  margin-top: 1.2rem;
+}
+.calendar-instructions h3,
+.calendar-manage h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
+}
+.calendar-instructions p {
+  margin: 0.45rem 0;
+}
+.calendar-enabled {
+  color: var(--accent);
+  font-weight: 600;
+}
+.calendar-empty {
+  padding: 0.7rem 1rem;
+  color: #4c473c;
+  background: #f4f1e8;
+  border-radius: 10px;
+}
+.calendar-manage {
+  margin-top: 1.25rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.calendar-manage-actions {
+  margin: 0.25rem 0 0.45rem;
+  gap: 0.55rem;
+}
+.calendar-manage-actions button {
+  min-height: 44px;
+}
+.calendar-manage > p {
+  margin: 0.45rem 0 0;
+}
+.calendar-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+  flex: 0 0 auto;
+}
+.calendar-footer button {
+  min-height: 44px;
+}
+.calendar-confirmation-footer .danger {
+  background: #943e2c;
+}
+.calendar-confirmation-footer .danger:hover {
+  background: #812f25;
+}
+.calendar-steps {
+  margin: 0.45rem 0 0.8rem;
+  padding-left: 1.4rem;
+}
+.calendar-steps li + li {
+  margin-top: 0.35rem;
+}
+.calendar-copy-status {
+  margin: 0.65rem 0 0;
+}
+.calendar-copy-status:empty {
+  display: none;
+}
+.calendar-copy-status:not(:empty) {
+  padding: 0.6rem 0.8rem;
+  color: var(--accent);
+  background: #e3eee7;
+  border: 1px solid #c4dfce;
+  border-radius: 9px;
+  font-weight: 500;
+}
+.calendar-error {
+  padding: 0.7rem 1rem;
+  color: #812f25;
+  background: #fff0e9;
+  border: 1px solid #e8c9ba;
+  border-radius: 10px;
+}
+.calendar-confirmation {
+  max-width: 62ch;
+}
+.calendar-confirmation h3 {
+  margin-top: 0;
+}
+.calendar-confirmation .actions {
+  margin-top: 1.2rem;
+}
 .volunteer-workspace td,
 .proposals-panel td {
   font-variant-numeric: tabular-nums;
@@ -690,6 +884,15 @@ textarea {
   }
   .card {
     padding: 1rem;
+  }
+  .calendar-dialog {
+    width: calc(100vw - 1rem);
+    max-height: calc(100vh - 1rem);
+    padding: 1rem;
+  }
+  .calendar-link-row {
+    flex-direction: column;
+    align-items: stretch;
   }
   .reload {
     margin-left: 0;

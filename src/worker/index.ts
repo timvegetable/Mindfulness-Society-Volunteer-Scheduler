@@ -11,6 +11,7 @@ import { AppError } from '../shared/api/errors';
 import { dispatchResponse, publicFailure } from './api/dispatch';
 import { appConfig, liveServices, synchronizationJobs, type Bindings } from './runtime/live';
 import { readBoundedText } from './services/http';
+import { personalCalendarFeed } from './calendar/feed';
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const failure = (code: ConstructorParameters<typeof AppError>[0], message: string, status: number, details?: unknown) => new Response(publicFailure(new AppError(code, message, details)), { status, headers });
@@ -31,6 +32,7 @@ export default {
   },
   async fetch(request: Request, env: Bindings): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/calendar' || url.pathname.startsWith('/calendar/')) return personalCalendarFeed(request, env);
     if (url.pathname === '/api/schedule') {
       if (scheduleReadMode(env) !== 'enabled') return failure('NOT_FOUND', 'This endpoint is unavailable.', 404);
       if (!env.SCHEDULE_READER) return failure('INTERNAL_ERROR', 'The schedule is temporarily unavailable. Please try again.', 500);

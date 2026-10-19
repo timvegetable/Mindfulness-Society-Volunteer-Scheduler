@@ -10,10 +10,12 @@ export interface AppConfig {
   operatingHoursEnd: string;
   oauthClientId: string;
   adminEmails: string[];
+  calendarTokenKey?: string;
 }
 
 export const testConfig: AppConfig = {
   timeZone: applicationTimeZone, displayIncrementMinutes: 30,
   operatingHoursStart: '09:00', operatingHoursEnd: '21:00',
   oauthClientId: 'test-client', adminEmails: ['admin@example.invalid'],
+  calendarTokenKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 };

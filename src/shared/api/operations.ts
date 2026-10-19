@@ -4,6 +4,7 @@ export const operations = [
   'admin.sync.read', 'admin.sync.now',
   'session.me', 'volunteer.dashboard', 'volunteer.availability.recurring.update',
   'volunteer.availability.exception.create', 'volunteer.assignment.cancel',
+  'volunteer.calendar.read', 'volunteer.calendar.enable', 'volunteer.calendar.reset', 'volunteer.calendar.disable',
   'admin.schedule.read', 'admin.schedule.preview', 'admin.schedule.rerun',
   'admin.import.whenIsGood.preview', 'admin.import.whenIsGood.promote',
   'admin.import.mapping.upsert', 'admin.insights.read', 'center.candidate.read',
@@ -13,7 +14,8 @@ export type Operation = typeof operations[number];
 export const mutatingOperations = new Set<Operation>([
   'admin.sync.now',
   'volunteer.availability.recurring.update', 'volunteer.availability.exception.create',
-  'volunteer.assignment.cancel', 'admin.schedule.rerun', 'admin.import.whenIsGood.preview',
+  'volunteer.assignment.cancel', 'volunteer.calendar.enable', 'volunteer.calendar.reset', 'volunteer.calendar.disable',
+  'admin.schedule.rerun', 'admin.import.whenIsGood.preview',
   'admin.import.whenIsGood.promote', 'admin.import.mapping.upsert', 'center.candidate.update',
   'admin.center.candidate.confirm',
 ]);
@@ -25,6 +27,8 @@ export const operationRoles: Record<Operation, readonly Role[]> = {
   'volunteer.availability.recurring.update': ['volunteer'],
   'volunteer.availability.exception.create': ['volunteer'],
   'volunteer.assignment.cancel': ['volunteer'],
+  'volunteer.calendar.read': ['volunteer'], 'volunteer.calendar.enable': ['volunteer'],
+  'volunteer.calendar.reset': ['volunteer'], 'volunteer.calendar.disable': ['volunteer'],
   'admin.schedule.read': ['administrator'], 'admin.schedule.preview': ['administrator'],
   'admin.schedule.rerun': ['administrator'], 'admin.import.whenIsGood.preview': ['administrator'],
   'admin.import.whenIsGood.promote': ['administrator'], 'admin.import.mapping.upsert': ['administrator'],

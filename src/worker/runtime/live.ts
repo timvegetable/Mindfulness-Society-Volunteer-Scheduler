@@ -18,6 +18,7 @@ export interface Bindings extends ScheduleReadBindings {
   DB: D1Database; ASSETS: Fetcher; SYNC_QUEUE: SyncQueue; SYNC_DEAD_LETTER_QUEUE: string;
   TIME_ZONE: string; DISPLAY_INCREMENT_MINUTES: string; OPERATING_HOURS_START: string; OPERATING_HOURS_END: string;
   OAUTH_CLIENT_ID: string; ADMIN_EMAILS: string;
+  CALENDAR_TOKEN_KEY?: string;
   EMAIL_API_KEY?: string; EMAIL_FROM: string;
   EMAIL_PROVIDER?: 'resend' | 'gmail';
   GMAIL_CLIENT_ID?: string; GMAIL_CLIENT_SECRET?: string; GMAIL_REFRESH_TOKEN?: string;
@@ -59,7 +60,8 @@ export function synchronizationServices(env: Bindings) {
 export function appConfig(env: Bindings): AppConfig {
   return { timeZone: applicationTimeZone, displayIncrementMinutes: Number(env.DISPLAY_INCREMENT_MINUTES),
     operatingHoursStart: env.OPERATING_HOURS_START, operatingHoursEnd: env.OPERATING_HOURS_END,
-    oauthClientId: env.OAUTH_CLIENT_ID, adminEmails: env.ADMIN_EMAILS.split(',').map((email) => email.trim()).filter(Boolean) };
+    oauthClientId: env.OAUTH_CLIENT_ID, adminEmails: env.ADMIN_EMAILS.split(',').map((email) => email.trim()).filter(Boolean),
+    calendarTokenKey: env.CALENDAR_TOKEN_KEY };
 }
 
 /** Queue consumers receive no authentication or email services. */

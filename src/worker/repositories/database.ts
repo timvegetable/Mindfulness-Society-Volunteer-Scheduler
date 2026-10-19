@@ -66,7 +66,11 @@ const operationTableKeys: Partial<Record<Operation, readonly (typeof tables[numb
   'admin.sync.now': synchronizationHeadKeys,
   'admin.schedule.preview': ['users', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'recurringAvailability', 'availabilityExceptions'],
   'admin.schedule.read': ['users', 'centers', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'backups'],
-  'volunteer.dashboard': ['users', 'centers', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'recurringAvailability', 'availabilityExceptions', 'synchronizations'],
+  'volunteer.dashboard': ['users', 'centers', 'volunteers', 'sessions', 'schedulingRuns', 'assignments', 'recurringAvailability', 'availabilityExceptions', 'synchronizations', 'calendarSubscriptions'],
+  'volunteer.calendar.read': ['users', 'volunteers', 'calendarSubscriptions'],
+  'volunteer.calendar.enable': ['users', 'volunteers', 'calendarSubscriptions'],
+  'volunteer.calendar.reset': ['users', 'volunteers', 'calendarSubscriptions'],
+  'volunteer.calendar.disable': ['users', 'volunteers', 'calendarSubscriptions'],
   'center.candidate.read': ['users', 'centers', 'candidateSchedules', 'volunteers', 'recurringAvailability'],
   'admin.insights.read': ['users', 'volunteers', 'recurringAvailability', 'schedulingRuns', 'assignments'],
 };
@@ -74,6 +78,26 @@ const operationTableKeys: Partial<Record<Operation, readonly (typeof tables[numb
 export async function readOperationSnapshot(db: D1Database, operation: Operation): Promise<Snapshot> {
   const keys = operationTableKeys[operation];
   return (await readTables(db, keys ? tables.filter(table => keys.includes(table.key)) : tables)).snapshot;
+}
+
+const calendarFeedTableKeys: readonly (typeof tables[number]['key'])[] = [
+  'users', 'centers', 'sessions', 'schedulingRuns', 'assignments', 'calendarSubscriptions',
+];
+
+export async function readCalendarFeedSnapshot(db: D1Database, tokenHash: string): Promise<{
+  snapshot: Snapshot;
+  subscription: Snapshot['calendarSubscriptions'][number] | null;
+}> {
+  const selected = tables.filter((table) => calendarFeedTableKeys.includes(table.key) && table.key !== 'calendarSubscriptions');
+  const { snapshot, extra } = await readTables(db, selected, undefined, [db.prepare(`SELECT id, volunteer_id AS volunteerId,
+    token_hash AS tokenHash, token_ciphertext AS tokenCiphertext, token_iv AS tokenIv,
+    enabled, created_at AS createdAt, updated_at AS updatedAt
+    FROM calendar_subscriptions WHERE token_hash = ? AND enabled = 1`).bind(tokenHash)]);
+  const row = extra[0]?.results[0];
+  if (!row || typeof row.id !== 'string' || typeof row.volunteerId !== 'string' || typeof row.tokenHash !== 'string'
+    || typeof row.tokenCiphertext !== 'string' || typeof row.tokenIv !== 'string' || typeof row.createdAt !== 'string'
+    || typeof row.updatedAt !== 'string' || row.enabled !== 1) return { snapshot, subscription: null };
+  return { snapshot, subscription: { ...row, enabled: true } as Snapshot['calendarSubscriptions'][number] };
 }
 
 async function readTables(db: D1Database, selectedTables: typeof tables, check?: { key: IdempotencyKey; now: string }, extra: D1PreparedStatement[] = []): Promise<SynchronizationCheck & { extra: D1Result<Record<string, unknown>>[] }> {

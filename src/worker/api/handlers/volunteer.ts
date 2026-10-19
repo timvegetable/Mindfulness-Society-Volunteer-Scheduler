@@ -24,6 +24,7 @@ export function dashboard(ctx: HandlerContext) {
     return {
       volunteer,
       assignments,
+      calendarEnabled: ctx.state.calendarSubscriptions.some((row) => row.volunteerId === volunteer.id && row.enabled),
       recurringAvailability: ctx.state.recurringAvailability.filter((row) => row.volunteerId === volunteer.id),
       availabilityExceptions: ctx.state.availabilityExceptions.filter((row) => row.volunteerId === volunteer.id),
       sessions,

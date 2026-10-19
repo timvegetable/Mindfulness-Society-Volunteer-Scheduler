@@ -52,6 +52,16 @@ export interface SyncJobSummary {
 export interface Synchronization extends SyncStatus {
   id: string; generation: number; checkId: string | null; participants: StagedParticipant[]; pending: PendingParticipant[];
 }
+export interface CalendarSubscription {
+  id: string;
+  volunteerId: string;
+  tokenHash: string | null;
+  tokenCiphertext: string | null;
+  tokenIv: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 export const emptySyncStatus = (): SyncStatus => ({ lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null,
   outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 });
 export interface ImportRun {
@@ -72,7 +82,8 @@ export interface Snapshot {
   availabilityExceptions: AvailabilityException[]; candidateSchedules: Candidate[]; sessions: Session[];
   schedulingRuns: SchedulingRun[]; assignments: Assignment[]; backups: Backup[]; imports: ImportRun[];
   importMappings: ImportMapping[]; importedAvailability: ImportedAvailability[];
-  synchronizations: Synchronization[]; dataRevision: number; schedulingInputRevision: number;
+  synchronizations: Synchronization[]; calendarSubscriptions: CalendarSubscription[];
+  dataRevision: number; schedulingInputRevision: number;
   /** Last domain revision fully reconciled with the saved source participants. */
   synchronizedDataRevision: number | null;
   /** Versioned digest of the source HTML last parsed and committed successfully. */
@@ -86,5 +97,5 @@ export interface CandidateWithCoverage { candidate: Candidate; coverage: Coverag
 export interface GridCell extends Interval { weekday: Weekday; volunteers: Volunteer[]; count: number }
 export interface Insights { leftoverVolunteers: Volunteer[]; grid: GridCell[] }
 export function emptySnapshot(): Snapshot {
-  return { centers: [], volunteers: [], users: [], recurringAvailability: [], availabilityExceptions: [], candidateSchedules: [], sessions: [], schedulingRuns: [], assignments: [], backups: [], imports: [], importMappings: [], importedAvailability: [], synchronizations: [], dataRevision: 0, schedulingInputRevision: 0, synchronizedDataRevision: null, synchronizedSourceHash: null };
+  return { centers: [], volunteers: [], users: [], recurringAvailability: [], availabilityExceptions: [], candidateSchedules: [], sessions: [], schedulingRuns: [], assignments: [], backups: [], imports: [], importMappings: [], importedAvailability: [], synchronizations: [], calendarSubscriptions: [], dataRevision: 0, schedulingInputRevision: 0, synchronizedDataRevision: null, synchronizedSourceHash: null };
 }

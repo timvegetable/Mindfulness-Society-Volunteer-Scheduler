@@ -13,6 +13,7 @@ const payloads: Record<Operation, unknown> = {
   'volunteer.availability.recurring.update': { intervals: [interval] },
   'volunteer.availability.exception.create': { date: '2026-10-06', kind: 'unavailable', start: '10:00', end: '11:00', timeZone: interval.timeZone },
   'volunteer.assignment.cancel': { assignmentId: 'assignment-1' },
+  'volunteer.calendar.read': {}, 'volunteer.calendar.enable': {}, 'volunteer.calendar.reset': {}, 'volunteer.calendar.disable': {},
   'admin.schedule.read': {}, 'admin.schedule.preview': {}, 'admin.schedule.rerun': {},
   'admin.import.whenIsGood.preview': {},
   'admin.import.whenIsGood.promote': {},
@@ -22,15 +23,17 @@ const payloads: Record<Operation, unknown> = {
   'admin.center.candidate.confirm': { candidateId: 'candidate-1' },
 };
 // Independent expected policy, deliberately not calculated using the implementation.
-const volunteerAllowed = new Set<Operation>(['session.me', 'volunteer.dashboard', 'volunteer.availability.recurring.update', 'volunteer.availability.exception.create', 'volunteer.assignment.cancel']);
+const volunteerAllowed = new Set<Operation>(['session.me', 'volunteer.dashboard', 'volunteer.availability.recurring.update', 'volunteer.availability.exception.create', 'volunteer.assignment.cancel', 'volunteer.calendar.read', 'volunteer.calendar.enable', 'volunteer.calendar.reset', 'volunteer.calendar.disable']);
 const contactAllowed = new Set<Operation>(['session.me', 'center.candidate.read', 'center.candidate.update']);
-const matrix = (['volunteer', 'contact', 'admin'] as const).flatMap(actor => operations.map(operation => ({ actor, operation, allowed: actor === 'admin' || (actor === 'volunteer' ? volunteerAllowed : contactAllowed).has(operation) })));
+const calendarOperations = new Set<Operation>(['volunteer.calendar.read', 'volunteer.calendar.enable', 'volunteer.calendar.reset', 'volunteer.calendar.disable']);
+const matrix = (['volunteer', 'contact', 'admin'] as const).flatMap(actor => operations.map(operation => ({ actor, operation, allowed: actor === 'admin' ? !calendarOperations.has(operation) : (actor === 'volunteer' ? volunteerAllowed : contactAllowed).has(operation) })));
 
 describe('every role against every public operation on local D1', () => {
   it.each(matrix)('$actor $operation allowed=$allowed', async ({ actor, operation, allowed }) => {
     const app = await application();
     await addPublishedFixture(app);
     if (operation === 'admin.import.whenIsGood.promote') success(await app.request('admin.import.whenIsGood.preview', {}));
+    if (actor === 'volunteer' && (operation === 'volunteer.calendar.reset' || operation === 'volunteer.calendar.disable')) success(await app.request('volunteer.calendar.enable', {}, 'volunteer'));
     const before = await app.read();
     const result = await app.request(operation, payloads[operation], actor);
     if (allowed) expect(result.ok, JSON.stringify(result)).toBe(true);
