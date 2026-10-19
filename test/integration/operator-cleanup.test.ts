@@ -146,9 +146,10 @@ it('prepares an offline cleanup batch that preserves the audit rows and refreshe
     ]);
 
     const tickets = makeReadTickets({ secret, audience: 'synthetic:client' });
-    const { credential } = await tickets.issue({ id: 'cleanup-admin', email: 'cleanup-admin@example.invalid' }, Math.floor(Date.now() / 1000) + 3600, Date.now());
+    const readAt = Date.parse('2026-10-04T12:00:00.000Z');
+    const { credential } = await tickets.issue({ id: 'cleanup-admin', email: 'cleanup-admin@example.invalid' }, Math.floor(readAt / 1000) + 3600, readAt);
     const response = await readSchedule(new Request('https://app.invalid/api/schedule', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'admin.schedule.read', credential, payload: {} }) }), { ...envConfig, DB: local.db });
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'admin.schedule.read', credential, payload: {} }) }), { ...envConfig, DB: local.db }, readAt);
     const body = await response.json() as { ok: boolean; data?: { sessions: { id: string; status: string }[]; volunteers: { id: string }[]; dataRevision: number; schedulingInputRevision: number } };
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ ok: true, data: { dataRevision: 9, schedulingInputRevision: 6 } });

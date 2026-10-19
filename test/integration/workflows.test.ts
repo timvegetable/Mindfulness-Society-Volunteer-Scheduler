@@ -82,20 +82,22 @@ describe('authorization, revisions and durable idempotency', () => {
     const schedule = success(await app.request('admin.schedule.read', {}, 'admin'));
     expect(schedule.centers).toEqual([{ id: 'center-1', name: 'North Center' }]);
   });
-  it('keeps started assignment details separate from the upcoming session list', async () => {
+  it('hides started assignments while retaining future cancelled assignment details', async () => {
     const app = await application(); await addPublishedFixture(app);
     await app.db.batch([
       app.db.prepare("UPDATE centers SET name='Opal Senior Center' WHERE id='center-1'"),
       app.db.prepare("UPDATE sessions SET title='opal-senior-center',date='2026-10-04',start_time='07:00',end_time='08:00' WHERE id='session-1'"),
       app.db.prepare("INSERT INTO sessions (id,kind,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES ('session-univ','univ100','UNIV100: Professor Ada Example (Department: Biology, Room 110, Section 0123)','2026-10-04','07:00','08:00','America/New_York',1,'confirmed')"),
       app.db.prepare("INSERT INTO sessions (id,kind,center_id,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES ('session-future','center','center-1','opal-senior-center','2026-10-05','10:00','11:00','America/New_York',1,'locked')"),
+      app.db.prepare("UPDATE sessions SET status='cancelled' WHERE id='session-future'"),
+      app.db.prepare("INSERT INTO assignments (id,session_id,volunteer_id,schedule_revision,status) VALUES ('assignment-future','session-future','volunteer-1',1,'assigned')"),
       app.db.prepare("INSERT INTO assignments (id,session_id,volunteer_id,schedule_revision,status) VALUES ('assignment-univ','session-univ','volunteer-1',1,'assigned')"),
     ]);
 
     const dashboard = success(await app.request('volunteer.dashboard', {}, 'volunteer'));
-    expect(dashboard.assignments.map(row => row.id)).toEqual(['assignment-1', 'assignment-univ']);
-    expect(dashboard.sessions.map(row => row.id)).toEqual(['session-future']);
-    expect(dashboard.assignmentSessions?.map(row => row.id)).toEqual(['session-1', 'session-univ']);
+    expect(dashboard.assignments.map(row => row.id)).toEqual(['assignment-future']);
+    expect(dashboard.sessions).toEqual([]);
+    expect(dashboard.assignmentSessions?.map(row => row.id)).toEqual(['session-future']);
     expect(dashboard.centers).toEqual([{ id: 'center-1', name: 'Opal Senior Center' }]);
   });
   it('rejects caller-controlled volunteer IDs and only edits the authenticated volunteer', async () => {
@@ -163,6 +165,77 @@ describe('authorization, revisions and durable idempotency', () => {
 });
 
 describe('schedule publication and cancellation', () => {
+  it('shows only sessions that start strictly after now with matching published staffing', async () => {
+    const app = await application({ instant: '2026-10-04T12:00:00.000Z' }); await addPublishedFixture(app);
+    await app.db.batch([
+      app.db.prepare("UPDATE sessions SET date='2026-10-04',start_time='07:59',end_time='08:30' WHERE id='session-1'"),
+      app.db.prepare(`INSERT INTO sessions (id,kind,center_id,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES
+        ('session-boundary','center','center-1','Boundary session','2026-10-04','08:00','08:30','America/New_York',1,'locked'),
+        ('session-later-today','center','center-1','Later today','2026-10-04','08:01','08:30','America/New_York',1,'locked'),
+        ('session-next-day','center','center-1','Next day','2026-10-05','09:00','10:00','America/New_York',1,'locked'),
+        ('session-cancelled','center','center-1','Cancelled future session','2026-10-05','11:00','12:00','America/New_York',1,'cancelled')`),
+      app.db.prepare(`INSERT INTO assignments (id,session_id,volunteer_id,schedule_revision,status) VALUES
+        ('boundary-assignment','session-boundary','volunteer-1',1,'assigned'),
+        ('later-assignment','session-later-today','volunteer-1',1,'assigned'),
+        ('next-assignment','session-next-day','volunteer-1',1,'assigned')`),
+      app.db.prepare(`INSERT INTO backups (id,session_id,volunteer_id,schedule_revision,position,status) VALUES
+        ('boundary-backup','session-boundary','volunteer-2',1,1,'available'),
+        ('later-backup','session-later-today','volunteer-2',1,1,'available'),
+        ('next-backup','session-next-day','volunteer-2',1,1,'available')`),
+      app.db.prepare("UPDATE scheduling_runs SET shortfalls='[{\"sessionId\":\"session-1\",\"required\":1,\"assigned\":0,\"missing\":1},{\"sessionId\":\"session-later-today\",\"required\":1,\"assigned\":0,\"missing\":1}]' WHERE id='fixture-run'"),
+    ]);
+
+    const schedule = success(await app.request('admin.schedule.read'));
+    expect(schedule.sessions.map(session => session.id).sort()).toEqual(['session-cancelled', 'session-later-today', 'session-next-day']);
+    expect(schedule.sessions.find(session => session.id === 'session-cancelled')?.status).toBe('cancelled');
+    expect(schedule.assignments.map(assignment => assignment.id)).toEqual(['later-assignment', 'next-assignment']);
+    expect(schedule.backups.map(backup => backup.id)).toEqual(['later-backup', 'next-backup']);
+    expect(schedule.shortfalls.map(shortfall => shortfall.sessionId)).toEqual(['session-later-today']);
+    expect(schedule.run?.shortfalls.map(shortfall => shortfall.sessionId)).toEqual(['session-later-today']);
+    expect(schedule.centers).toEqual([{ id: 'center-1', name: 'North Center' }]);
+    expect((await app.read()).sessions).toHaveLength(5);
+  });
+
+  it('keeps volunteer assignments and upcoming sessions on the same strict start cutoff', async () => {
+    const app = await application({ instant: '2026-10-04T12:00:00.000Z' }); await addPublishedFixture(app);
+    await app.db.batch([
+      app.db.prepare("UPDATE sessions SET date='2026-10-04',start_time='07:59',end_time='08:30' WHERE id='session-1'"),
+      app.db.prepare(`INSERT INTO sessions (id,kind,center_id,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES
+        ('session-boundary','center','center-1','Boundary session','2026-10-04','08:00','08:30','America/New_York',1,'locked'),
+        ('session-later-today','center','center-1','Later today','2026-10-04','08:01','08:30','America/New_York',1,'locked'),
+        ('session-next-day','center','center-1','Next day','2026-10-05','09:00','10:00','America/New_York',1,'locked')`),
+      app.db.prepare(`INSERT INTO assignments (id,session_id,volunteer_id,schedule_revision,status) VALUES
+        ('boundary-assignment','session-boundary','volunteer-1',1,'assigned'),
+        ('later-assignment','session-later-today','volunteer-1',1,'assigned'),
+        ('next-assignment','session-next-day','volunteer-1',1,'assigned')`),
+    ]);
+
+    const dashboard = success(await app.request('volunteer.dashboard', {}, 'volunteer'));
+    expect(dashboard.sessions.map(session => session.id)).toEqual(['session-later-today', 'session-next-day']);
+    expect(dashboard.assignments.map(assignment => assignment.id)).toEqual(['later-assignment', 'next-assignment']);
+    expect(dashboard.assignmentSessions?.map(session => session.id)).toEqual(['session-later-today', 'session-next-day']);
+    expect(dashboard.centers).toEqual([{ id: 'center-1', name: 'North Center' }]);
+    expect((await app.read()).assignments).toHaveLength(4);
+  });
+
+  it('returns preview sessions and generated staffing from the same future instant', async () => {
+    const app = await application({ instant: '2026-10-04T12:00:00.000Z' });
+    await app.db.batch([
+      app.db.prepare("UPDATE sessions SET date='2026-10-04',start_time='07:59',end_time='08:30' WHERE id='session-1'"),
+      app.db.prepare(`INSERT INTO sessions (id,kind,center_id,title,date,start_time,end_time,time_zone,required_staff_count,status) VALUES
+        ('session-boundary','center','center-1','Boundary session','2026-10-04','08:00','08:30','America/New_York',1,'locked'),
+        ('session-later-today','center','center-1','Later today','2026-10-04','08:01','08:30','America/New_York',1,'locked'),
+        ('session-next-day','center','center-1','Next day','2026-10-05','09:00','10:00','America/New_York',1,'locked'),
+        ('session-cancelled','center','center-1','Cancelled','2026-10-05','11:00','12:00','America/New_York',1,'cancelled')`),
+    ]);
+
+    const preview = await app.request('admin.schedule.preview');
+    expect(preview).toMatchObject({ ok: true, data: { sessions: [
+      { id: 'session-later-today' }, { id: 'session-next-day' },
+    ] } });
+    if (preview.ok) expect(preview.data.output.assignments.every(row => ['session-later-today', 'session-next-day'].includes(row.sessionId))).toBe(true);
+  });
+
   it('uses the latest completed publication across reads, continuity, insights and cancellation', async () => {
     const app = await application(); await addPublishedFixture(app);
     await app.db.batch([

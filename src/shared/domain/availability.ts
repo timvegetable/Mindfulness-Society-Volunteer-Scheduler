@@ -51,6 +51,12 @@ export function futureStartCheck(now: number): (date: string, time: string, time
   };
 }
 
+/** Keep schedule reads aligned with generation by comparing each local start in its own zone. */
+export function sessionsStartingAfter(sessions: readonly Session[], now: number): Session[] {
+  const startsLater = futureStartCheck(now);
+  return sessions.filter(session => startsLater(session.date, session.start, session.timeZone));
+}
+
 export function overlayExceptions(recurring: readonly Interval[], exceptions: readonly Pick<AvailabilityException, 'kind' | 'start' | 'end'>[]): Interval[] {
   if (!exceptions.length) return normalizeIntervals(recurring);
   // Unavailability wins when dated exceptions conflict, independently of storage order.

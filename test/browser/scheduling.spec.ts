@@ -77,6 +77,56 @@ test('workspace tables stay contained and schedule preview returns to published 
   expect(errors).toEqual([]);
 });
 
+test('admin published and preview schedules render the current future sessions', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-04T12:00:00.000Z') });
+  await page.goto('/__browser-check?future-cutoff=1');
+  const panel = page.locator('.schedule-panel');
+  const rows = panel.locator('tbody tr');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText('8:01 AM');
+  await expect(rows.nth(1)).toContainText('9:00 AM');
+  await expect(rows.nth(2)).toContainText('11:00 AM');
+  await expect(panel.locator('tbody')).not.toContainText('7:59 AM');
+  await expect(panel.locator('tbody')).not.toContainText('8:00 AM');
+
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText('8:01 AM');
+  await expect(rows.nth(1)).toContainText('9:00 AM');
+  await expect(panel.locator('tbody')).not.toContainText('11:00 AM');
+  await expect(panel.locator('tbody')).not.toContainText('7:59 AM');
+  await expect(panel.locator('tbody')).not.toContainText('8:00 AM');
+});
+
+test('admin empty schedule states describe the lack of upcoming sessions', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-04T12:00:00.000Z') });
+  await page.goto('/__browser-check?future-empty=1');
+  const panel = page.locator('.schedule-panel');
+  await expect(panel.getByText('No upcoming sessions.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await expect(panel.getByText('No upcoming sessions to preview.', { exact: true })).toBeVisible();
+});
+
+test('weekly preview groups contain only dates after the start cutoff', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-09T13:00:00.000Z') });
+  await page.goto('/__browser-check?future-weekly=1');
+  const panel = page.locator('.schedule-panel');
+  const inspectDates = async () => {
+    await expect(panel.locator('tbody tr')).toHaveCount(38);
+    const firstGroup = panel.locator('tbody tr').first().locator('.schedule-session');
+    await expect(firstGroup.locator('.session-name')).toHaveText('Synthetic Center');
+    await expect(firstGroup.locator('.session-time')).toHaveText('Friday · 9:00 AM–10:00 AM');
+    const details = firstGroup.locator('details.schedule-dates');
+    await expect(details.locator('summary')).toHaveText('View 3 dates · Oct 16, 2026 to Oct 30, 2026');
+    await expect(details.locator('li')).toHaveText([
+      'Friday, October 16, 2026', 'Friday, October 23, 2026', 'Friday, October 30, 2026',
+    ]);
+  };
+  await inspectDates();
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await inspectDates();
+});
+
 test('weekly schedule groups disclose their finite dates in published and preview views', async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   const viewport = page.viewportSize()!;

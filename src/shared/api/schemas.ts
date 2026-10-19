@@ -91,7 +91,7 @@ export const resultSchemas = {
   'volunteer.availability.exception.create': object({ ...revisions, exception: AvailabilityExceptionSchema }),
   'volunteer.assignment.cancel': object({ ...revisions, assignment: AssignmentSchema, exception: AvailabilityExceptionSchema, promotedAssignment: Schema.NullOr(AssignmentSchema), shortfall: Schema.NullOr(ShortfallSchema) }),
   'admin.schedule.read': scheduleResult, 'admin.schedule.rerun': scheduleResult,
-  'admin.schedule.preview': object({ ...revisions, output: ScheduleOutputSchema }),
+  'admin.schedule.preview': object({ ...revisions, sessions: Schema.Array(SessionSchema), output: ScheduleOutputSchema }),
   'admin.import.whenIsGood.preview': object({ ...revisions, import: ImportRunSchema }),
   'admin.import.whenIsGood.promote': object({ ...revisions, import: ImportRunSchema }),
   'admin.import.mapping.upsert': object({ ...revisions, mapping: ImportMappingSchema }),

@@ -5,6 +5,7 @@ import { payloadSchemas } from '../../src/shared/api/schemas';
 import type { Candidate, Snapshot } from '../../src/shared/domain/models';
 
 const role = new URLSearchParams(location.search).get('role') === 'contact' ? 'center-contact' : 'volunteer';
+const futureEmpty = new URLSearchParams(location.search).has('future-empty');
 const zone = 'America/New_York';
 let revision = 1;
 let sequence = 0;
@@ -16,8 +17,8 @@ const center = { id: 'synthetic-center', name: 'North Example Center', active: t
 const volunteer = { id: 'synthetic-volunteer', name: 'Alex Example', email: 'alex@example.test', lifecycleStatus: 'active' as const, interviewStatus: 'complete' as const, readinessRank: 1 };
 const session = { id: 'synthetic-session', kind: 'center' as const, centerId: center.id, title: 'Example mindfulness session', date: '2099-10-19', start: '10:00', end: '11:00', timeZone: zone, requiredStaffCount: 1, status: 'locked' as const };
 const dashboard: Pick<Snapshot, 'dataRevision' | 'schedulingInputRevision' | 'sessions' | 'assignments' | 'recurringAvailability' | 'availabilityExceptions'> & { volunteer: typeof volunteer } = {
-  dataRevision: 1, schedulingInputRevision: 1, volunteer, sessions: [session],
-  assignments: [{ id: 'synthetic-assignment', sessionId: session.id, volunteerId: volunteer.id, scheduleRevision: 1, status: 'assigned' }],
+  dataRevision: 1, schedulingInputRevision: 1, volunteer, sessions: futureEmpty ? [] : [session],
+  assignments: futureEmpty ? [] : [{ id: 'synthetic-assignment', sessionId: session.id, volunteerId: volunteer.id, scheduleRevision: 1, status: 'assigned' }],
   recurringAvailability: [{ id: 'synthetic-recurring', volunteerId: volunteer.id, weekday: 1, start: '09:00', end: '17:00', timeZone: zone }],
   availabilityExceptions: [],
 };

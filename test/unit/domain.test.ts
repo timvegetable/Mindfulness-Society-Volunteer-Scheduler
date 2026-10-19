@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeIntervals, normalizeWeeklyIntervals, subtractIntervals, timeMinutes, coversInterval } from '../../src/shared/domain/intervals';
-import { availableForSession, eligibleVolunteer, overlayExceptions, sessionsOverlap, instantMilliseconds, futureStartCheck } from '../../src/shared/domain/availability';
+import { availableForSession, eligibleVolunteer, overlayExceptions, sessionsOverlap, instantMilliseconds, futureStartCheck, sessionsStartingAfter } from '../../src/shared/domain/availability';
 import { currentAssignments, currentRun, generateSchedule, schedulableSessions, selectBackup } from '../../src/shared/domain/scheduler';
 import { candidateCoverage, candidateSession, confirmedDateCoverage, nextOccurrence } from '../../src/shared/domain/candidates';
 import { computeInsights } from '../../src/shared/domain/insights';
@@ -244,5 +244,15 @@ describe('New York daylight-saving conversion across repeated calculations', () 
       expect(schedulableSessions({ sessions: [autumn] }, '2026-11-01T05:15:00Z')).toEqual([autumn]);
       expect(schedulableSessions({ sessions: [autumn] }, '2026-11-01T06:15:00Z')).toEqual([]);
     }
+  });
+  it('filters session starts by their own time zone across daylight-saving boundaries', () => {
+    const newYork = { ...session('new-york-fall'), date: '2026-11-01', start: '01:30' };
+    const london = { ...session('london-after-fall'), date: '2026-10-25', start: '02:30', timeZone: 'Europe/London' };
+    const tokyo = { ...session('tokyo'), date: '2026-10-25', start: '09:30', timeZone: 'Asia/Tokyo' };
+    expect(sessionsStartingAfter([newYork, london, tokyo], Date.parse('2026-10-25T00:45:00Z')).map(item => item.id)).toEqual(['new-york-fall', 'london-after-fall']);
+
+    const afterSpringJump = { ...session('after-spring-jump'), date: '2026-03-08', start: '03:00' };
+    expect(sessionsStartingAfter([afterSpringJump], Date.parse('2026-03-08T06:59:00Z'))).toEqual([afterSpringJump]);
+    expect(sessionsStartingAfter([afterSpringJump], Date.parse('2026-03-08T07:00:00Z'))).toEqual([]);
   });
 });

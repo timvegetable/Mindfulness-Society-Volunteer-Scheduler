@@ -1,5 +1,6 @@
 import { accountColumns, storedAccount, storedRevision as revision } from './accounts';
 import { AppError } from '../../shared/api/errors';
+import { futureScheduleRows, type ScheduleRows } from '../../shared/domain/schedule-view';
 import { canUseOperation } from '../api/policies';
 import { readBoundedText } from '../services/http';
 import { readTicketsFor, scheduleReadMode, type ScheduleReadBindings } from './configuration';
@@ -7,10 +8,10 @@ import { partCharacters, representationDigest, representationVersion } from './s
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const unavailable = () => new AppError('INTERNAL_ERROR', 'The schedule is temporarily unavailable. Please try again.');
-/** Only native crypto, fresh authority and a prepared representation execute here.
- * Selection/normalization/schema validation happen in the transactional writer.
+/** Verify fresh authority and project time-sensitive rows from the prepared schedule.
+ * Selection, normalization, and schema validation remain in the transactional writer.
  */
-export async function readSchedule(request: Request, env: ScheduleReadBindings & { DB: D1Database }): Promise<Response> {
+export async function readSchedule(request: Request, env: ScheduleReadBindings & { DB: D1Database }, readAt = Date.now()): Promise<Response> {
   try {
     if (new URL(request.url).pathname !== '/api/schedule') throw new AppError('NOT_FOUND', 'This endpoint is unavailable.');
     if (scheduleReadMode(env) !== 'enabled') throw new AppError('NOT_FOUND', 'This endpoint is unavailable.');
@@ -29,7 +30,7 @@ export async function readSchedule(request: Request, env: ScheduleReadBindings &
       || (Object.hasOwn(body, 'expectedRevision') && (!Number.isSafeInteger(body.expectedRevision) || (body.expectedRevision as number) < 0))
       || (Object.hasOwn(body, 'idempotencyKey') && (typeof body.idempotencyKey !== 'string' || !body.idempotencyKey))) throw new AppError('INVALID_REQUEST', 'Invalid schedule request.');
     console.info('Scheduling API operation:', 'admin.schedule.read');
-    const identity = await readTicketsFor(env, body.credential.startsWith('r2.') ? 'session' : 'schedule')!.verify(body.credential, Date.now());
+    const identity = await readTicketsFor(env, body.credential.startsWith('r2.') ? 'session' : 'schedule')!.verify(body.credential, readAt);
     const [users, manifests, parts, centers] = await env.DB.batch<Record<string, unknown>>([
       env.DB.prepare(`SELECT ${accountColumns} FROM users WHERE id=? AND lower(trim(email))=?`)
         .bind(identity.accountId, identity.email),
@@ -62,7 +63,11 @@ export async function readSchedule(request: Request, env: ScheduleReadBindings &
       if (typeof row.id !== 'string' || !row.id || typeof row.name !== 'string' || !row.name) throw unavailable();
       return { id: row.id, name: row.name };
     });
-    return new Response(`{"ok":true,"data":${core.slice(0, -1)},"centers":${JSON.stringify(centerRecords)},"stale":${stale},"dataRevision":${dataRevision},"schedulingInputRevision":${schedulingInputRevision}}}`, { headers });
+    const visible = futureScheduleRows(JSON.parse(core) as ScheduleRows & { volunteers: unknown[] }, readAt);
+    const centerIds = new Set(visible.sessions.flatMap(session => session.kind === 'center' && session.centerId ? [session.centerId] : []));
+    const visibleCenters = centerRecords.filter(center => centerIds.has(center.id));
+    return new Response(JSON.stringify({ ok: true, data: { ...visible, centers: visibleCenters, stale,
+      dataRevision, schedulingInputRevision } }), { headers });
   } catch (error) {
     const failure = error instanceof AppError ? error : unavailable();
     const status = failure.code === 'UNAUTHORIZED' ? 401 : failure.code === 'FORBIDDEN' ? 403
