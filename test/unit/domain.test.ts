@@ -75,10 +75,43 @@ describe('deterministic scheduler', () => {
     expect(generateSchedule(input, now)).toEqual(generateSchedule(structuredClone(input), now));
     expect(input).toEqual(before);
   });
+  it('balances equally ready volunteers across non-overlapping dated sessions', () => {
+    const sessions = ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26'].map((date, index) => ({ ...session(`s${index + 1}`), date }));
+    const output = generateSchedule(snapshot([volunteer('a'), volunteer('b')], sessions), now);
+    expect(output.assignments).toEqual([
+      { sessionId: 's1', volunteerId: 'a' }, { sessionId: 's2', volunteerId: 'b' },
+      { sessionId: 's3', volunteerId: 'a' }, { sessionId: 's4', volunteerId: 'b' },
+    ]);
+  });
+  it('balances multiple staff positions as each assignment is allocated', () => {
+    const sessions = ['2026-10-05', '2026-10-12'].map((date, index) => ({ ...session(`s${index + 1}`, 2), date }));
+    const output = generateSchedule(snapshot([volunteer('a'), volunteer('b'), volunteer('c')], sessions), now);
+    expect(output.assignments).toEqual([
+      { sessionId: 's1', volunteerId: 'a' }, { sessionId: 's1', volunteerId: 'b' },
+      { sessionId: 's2', volunteerId: 'c' }, { sessionId: 's2', volunteerId: 'a' },
+    ]);
+  });
+  it('keeps readiness rank ahead of workload balance', () => {
+    const sessions = ['2026-10-05', '2026-10-12', '2026-10-19'].map((date, index) => ({ ...session(`s${index + 1}`), date }));
+    const output = generateSchedule(snapshot([volunteer('a', 1), volunteer('b', 2)], sessions), now);
+    expect(output.assignments).toEqual([
+      { sessionId: 's1', volunteerId: 'a' }, { sessionId: 's2', volunteerId: 'a' }, { sessionId: 's3', volunteerId: 'a' },
+    ]);
+    expect(output.backups.map(({ sessionId, volunteerId }) => [sessionId, volunteerId])).toEqual([['s1', 'b'], ['s2', 'b'], ['s3', 'b']]);
+  });
   it('prioritizes lower readiness rank and sorts ties by volunteer ID', () => {
     const output = generateSchedule(snapshot([volunteer('z', 1), volunteer('a', 2), volunteer('b', 1)]), now);
     expect(output.assignments).toEqual([{ sessionId: 's1', volunteerId: 'b' }]);
     expect(output.backups).toEqual([{ sessionId: 's1', volunteerId: 'z', position: 1 }, { sessionId: 's1', volunteerId: 'a', position: 2 }]);
+  });
+  it('orders backups by the completed schedule workload after readiness', () => {
+    const sessions = ['2026-10-05', '2026-10-12'].map((date, index) => ({ ...session(`s${index + 1}`), date }));
+    const output = generateSchedule(snapshot([volunteer('a'), volunteer('b'), volunteer('c')], sessions), now);
+    expect(output.assignments).toEqual([{ sessionId: 's1', volunteerId: 'a' }, { sessionId: 's2', volunteerId: 'b' }]);
+    expect(output.backups).toEqual([
+      { sessionId: 's1', volunteerId: 'c', position: 1 }, { sessionId: 's1', volunteerId: 'b', position: 2 },
+      { sessionId: 's2', volunteerId: 'c', position: 1 }, { sessionId: 's2', volunteerId: 'a', position: 2 },
+    ]);
   });
   it('preserves continuity within the same rank, but rank has priority', () => {
     const input = publish(snapshot([volunteer('a'), volunteer('b')]));

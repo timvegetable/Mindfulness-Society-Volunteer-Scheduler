@@ -164,6 +164,37 @@ test('weekly schedule groups disclose their finite dates in published and previe
   await checkLayout(page);
 });
 
+test('weekly schedule keeps dates with different staffing visible in published and preview views', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?weekly-schedule=1&rotating-weekly=1&width=${viewport.width}&height=${viewport.height}`);
+  const panel = page.locator('.schedule-panel');
+  const inspectStaffing = async (published: boolean) => {
+    const rows = panel.locator('tbody tr');
+    await expect(rows).toHaveCount(40);
+    const expected = [
+      ['2026-10-02', 'Synthetic Volunteer 01, Synthetic Volunteer 02'],
+      ['2026-10-09', 'Synthetic Volunteer 01, Synthetic Volunteer 03'],
+      ['2026-10-16', 'Synthetic Volunteer 02, Synthetic Volunteer 03'],
+    ];
+    for (const [index, [date, assigned]] of expected.entries()) {
+      const row = rows.nth(index);
+      await expect(row.locator('.session-time')).toHaveText(`${date} · 9:00 AM–10:00 AM`);
+      await expect(row.locator('details.schedule-dates')).toHaveCount(0);
+      await expect(row.locator('td').nth(published ? 2 : 1)).toHaveText(assigned!);
+    }
+  };
+
+  await inspectStaffing(true);
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Preview schedule', exact: true }).click();
+  await inspectStaffing(false);
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Back to published schedule', exact: true }).click();
+  await inspectStaffing(true);
+  await checkLayout(page);
+});
+
 
 test('admin reload keeps the current reading position', async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));

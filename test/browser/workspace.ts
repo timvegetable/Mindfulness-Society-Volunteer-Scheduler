@@ -13,6 +13,7 @@ const futureCutoff = query.has('future-cutoff') || query.has('future-weekly') ||
 const futureWeekly = query.has('future-weekly');
 const futureEmpty = query.has('future-empty');
 const weeklySchedule = query.has('weekly-schedule') || futureWeekly;
+const rotatingWeeklySchedule = query.has('rotating-weekly');
 const volunteers = Array.from({ length: 40 }, (_, i) => ({
   id: `synthetic-v${i}`, name: `Synthetic Volunteer ${String(i + 1).padStart(2, '0')}`,
   email: `volunteer${i}@example.test`, lifecycleStatus: 'active' as const,
@@ -59,12 +60,16 @@ const allSessions = futureCutoff
     timeZone: 'America/New_York', requiredStaffCount: 2, status: 'locked' as const,
   }));
 const sessions = futureCutoff ? sessionsStartingAfter(allSessions, Date.now()) : allSessions;
-const scheduleAssignments = weeklySchedule ? sessions.slice(0, 3).map((session, i) => ({
-  id: `synthetic-assignment-${i}`, sessionId: session.id, volunteerId: 'synthetic-v0', scheduleRevision: 1, status: 'assigned' as const,
-})) : [];
-const scheduleBackups = weeklySchedule ? sessions.slice(0, 3).map((session, i) => ({
-  id: `synthetic-backup-${i}`, sessionId: session.id, volunteerId: 'synthetic-v1', scheduleRevision: 1, position: 1, status: 'available' as const,
-})) : [];
+const rotatingAssignments = [['synthetic-v0', 'synthetic-v1'], ['synthetic-v0', 'synthetic-v2'], ['synthetic-v1', 'synthetic-v2']];
+const rotatingBackups = [['synthetic-v2', 'synthetic-v3'], ['synthetic-v1', 'synthetic-v3'], ['synthetic-v0', 'synthetic-v3']];
+const scheduleAssignments = weeklySchedule ? sessions.slice(0, 3).flatMap((session, i) =>
+  (rotatingWeeklySchedule ? rotatingAssignments[i]! : ['synthetic-v0']).map((volunteerId, j) => ({
+    id: `synthetic-assignment-${i}-${j}`, sessionId: session.id, volunteerId, scheduleRevision: 1, status: 'assigned' as const,
+  }))) : [];
+const scheduleBackups = weeklySchedule ? sessions.slice(0, 3).flatMap((session, i) =>
+  (rotatingWeeklySchedule ? rotatingBackups[i]! : ['synthetic-v1']).map((volunteerId, j) => ({
+    id: `synthetic-backup-${i}-${j}`, sessionId: session.id, volunteerId, scheduleRevision: 1, position: j + 1, status: 'available' as const,
+  }))) : [];
 let schedule: ResultOf<'admin.schedule.read'> = {
   ...revisions, run: null, sessions, volunteers, centers: [sessionCenter], assignments: scheduleAssignments, backups: scheduleBackups, shortfalls: [], stale: false,
 };
@@ -204,7 +209,7 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     const sticky = Math.abs(header.getBoundingClientRect().top - before) < 2;
     const style = getComputedStyle(region);
     const page = document.querySelector('[aria-current="page"]')?.textContent;
-    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : 40;
+    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? rotatingWeeklySchedule ? 40 : weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : 40;
     check(rows === expectedRows, 'Synthetic row count does not match the current records');
     if (region.closest('.schedule-panel')) {
       check(style.maxHeight === 'none' && region.scrollHeight <= region.clientHeight + 1, 'Schedule rows are vertically clipped');
