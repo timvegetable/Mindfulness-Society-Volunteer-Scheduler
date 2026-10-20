@@ -56,6 +56,7 @@ async function mount() {
       ...(body.operation === 'admin.sync.read' ? { pending: syncPending, imports: [], volunteers: syncVolunteers } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
     else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: adminVolunteers };
+    else if (body.operation === 'admin.volunteer.remove') { adminVolunteers = adminVolunteers.map(row => row.id === (body as unknown as { payload: { volunteerId: string } }).payload.volunteerId ? { ...row, lifecycleStatus: 'inactive' } : row); data = { ...base, volunteer: adminVolunteers[0] }; }
     else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));
   } });
@@ -331,6 +332,21 @@ describe('client DOM behaviors', () => {
 
     expect([...document.querySelectorAll<HTMLButtonElement>('.volunteers-panel button[data-focus-key]')].map(node => node.dataset.focusKey))
       .toEqual(['volunteer-v-first', 'volunteer-v-tie-a', 'volunteer-v-tie-z', 'volunteer-v-z', 'volunteer-v-last']);
+  });
+
+  it('removes a volunteer only after confirming they will be marked inactive, and offers no removal for inactive volunteers', async () => {
+    roles = ['administrator'];
+    adminVolunteers = [{ ...volunteer, id: 'v-active', name: 'Ada Example' }, { ...volunteer, id: 'v-gone', name: 'Zed Example', lifecycleStatus: 'inactive' }];
+    await signIn(); click('Volunteers'); await settle();
+    const rows = () => [...document.querySelectorAll('.volunteers-panel tbody tr')];
+    expect(rows().map(row => [...row.querySelectorAll('button')].map(node => node.textContent))).toEqual([['Edit', 'Remove'], ['Edit']]);
+    click('Remove'); await settle();
+    expect(confirmMessage).toContain('Ada Example'); expect(confirmMessage).toContain('inactive');
+    expect(requests.some(item => item.operation === 'admin.volunteer.remove')).toBe(false);
+    confirmAnswer = true; click('Remove'); await settle();
+    expect(requests.find(item => item.operation === 'admin.volunteer.remove')).toMatchObject({ payload: { volunteerId: 'v-active' } });
+    expect(rows().map(row => row.textContent)).toEqual([expect.stringContaining('inactive'), expect.stringContaining('inactive')]);
+    expect(document.querySelectorAll('.volunteers-panel tbody button')).toHaveLength(2);
   });
 
   it('keeps roster link choices alphabetized with deterministic ties in every pending participant picker', async () => {

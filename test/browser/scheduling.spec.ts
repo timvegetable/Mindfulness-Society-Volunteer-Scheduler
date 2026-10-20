@@ -301,6 +301,26 @@ test('an administrator corrects a volunteer name and email in the Volunteers tab
   await checkLayout(page);
 });
 
+test('an administrator removes a volunteer by marking them inactive in the Volunteers tab', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?width=${viewport.width}&height=${viewport.height}`);
+  await page.getByRole('button', { name: 'Volunteers', exact: true }).click();
+  const rows = page.locator('.volunteers-panel tbody tr');
+  await expect(rows).toHaveCount(40);
+  const row = rows.filter({ hasText: 'Synthetic Volunteer 02' });
+  await expect(row).toContainText('active');
+  await row.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Volunteer marked inactive.');
+  await expect(rows).toHaveCount(40);
+  await expect(row).toContainText('inactive');
+  await expect(row.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: 'Edit', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Reload view', exact: true }).click();
+  await expect(rows.filter({ hasText: 'Synthetic Volunteer 02' })).toContainText('inactive');
+  await checkLayout(page);
+});
+
 test('roster link pickers sort names and preserve selected IDs through a sync refresh', async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await page.goto('/__browser-check?shuffled-roster=1');

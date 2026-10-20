@@ -83,6 +83,7 @@ export const payloadSchemas = {
   'admin.volunteer.read': empty,
   // Name and email stay plain strings so the handler can explain blank or malformed values.
   'admin.volunteer.update': object({ volunteerId: text, name: Schema.String, email: Schema.String }),
+  'admin.volunteer.remove': object({ volunteerId: text }),
 } satisfies Record<Operation, Schema.Top>;
 const revisions = { dataRevision: revision, schedulingInputRevision: revision };
 const scheduleResult = object({ ...revisions, run: Schema.NullOr(SchedulingRunSchema), assignments: Schema.Array(AssignmentSchema), backups: Schema.Array(BackupSchema), shortfalls: Schema.Array(ShortfallSchema), sessions: Schema.Array(SessionSchema), volunteers: Schema.Array(VolunteerSchema), centers: Schema.Array(SessionCenterSchema), stale: Schema.Boolean });
@@ -110,6 +111,7 @@ export const resultSchemas = {
   'admin.center.candidate.confirm': object({ ...revisions, candidate: CandidateSchema, session: SessionSchema }),
   'admin.volunteer.read': object({ ...revisions, volunteers: Schema.Array(VolunteerSchema) }),
   'admin.volunteer.update': object({ ...revisions, volunteer: VolunteerSchema }),
+  'admin.volunteer.remove': object({ ...revisions, volunteer: VolunteerSchema }),
 } satisfies Record<Operation, Schema.Top>;
 export type PayloadOf<O extends Operation> = typeof payloadSchemas[O]['Type'];
 export type ResultOf<O extends Operation> = typeof resultSchemas[O]['Type'];

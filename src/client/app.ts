@@ -731,6 +731,11 @@ function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
       nameCell.replaceChildren(name); emailCell.replaceChildren(email); action.replaceChildren(editor.node); name.focus();
     }, 'quiet');
     edit.dataset.focusKey = `volunteer-${volunteer.id}`; action.append(edit);
+    if (volunteer.lifecycleStatus !== 'inactive') action.append(button('Remove', async () => {
+      if (!confirmAction(`Remove ${volunteer.name}? They will be marked inactive and left out of future schedules. Past schedules, availability, and links are kept.`)) return;
+      await api.call('admin.volunteer.remove', { volunteerId: volunteer.id }, data.dataRevision);
+      await refreshView('volunteers', 'Volunteer marked inactive.', `[data-focus-key="volunteer-${CSS.escape(volunteer.id)}"]`);
+    }, 'quiet danger'));
     return [nameCell, emailCell, statusPill(volunteer.lifecycleStatus), action];
   });
   if (rows.length) panel.append(table(['Name', 'Email', 'Status', 'Action'], rows)); else empty(panel, 'No volunteers.');

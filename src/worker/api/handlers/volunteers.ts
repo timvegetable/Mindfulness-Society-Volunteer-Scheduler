@@ -27,3 +27,14 @@ export function updateVolunteerDetails(ctx: HandlerContext, input: PayloadOf<'ad
     return { volunteer };
   });
 }
+
+// Removal never deletes: an inactive volunteer leaves future scheduling while past output and links stay intact.
+export function removeVolunteer(ctx: HandlerContext, input: PayloadOf<'admin.volunteer.remove'>) {
+  return Effect.gen(function* () {
+    const volunteer = ctx.state.volunteers.find((row) => row.id === input.volunteerId);
+    if (!volunteer) return yield* fail('NOT_FOUND', 'Volunteer not found.');
+    if (volunteer.lifecycleStatus === 'inactive') return yield* fail('CONFLICT', 'This volunteer is already inactive.');
+    Object.assign(volunteer, { lifecycleStatus: 'inactive', updatedAt: ctx.now.toISOString() });
+    return { volunteer };
+  });
+}
