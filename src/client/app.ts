@@ -723,6 +723,7 @@ function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
   const rows = sorted.map(volunteer => {
     const nameCell = el('div', volunteer.name); const emailCell = el('div', volunteer.email); const action = el('div', '', 'actions');
     const edit = button('Edit', () => {
+      const actions = [...action.childNodes];
       const editor = form(action, 'Save', async () => {
         await api.call('admin.volunteer.update', { volunteerId: volunteer.id, name: name.value, email: email.value }, data.dataRevision);
         await refreshView('volunteers', 'Volunteer details saved.', `[data-focus-key="volunteer-${CSS.escape(volunteer.id)}"]`);
@@ -733,7 +734,7 @@ function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
         control.setAttribute('form', editor.node.id); control.setAttribute('aria-label', `${label} for ${volunteer.name}`);
         control.addEventListener('input', () => markDirty(editor.node));
       }
-      const cancel = button('Cancel', () => { nameCell.replaceChildren(volunteer.name); emailCell.replaceChildren(volunteer.email); action.replaceChildren(edit); edit.focus(); }, 'quiet');
+      const cancel = button('Cancel', () => { nameCell.replaceChildren(volunteer.name); emailCell.replaceChildren(volunteer.email); action.replaceChildren(...actions); edit.focus(); }, 'quiet');
       append(editor.node, editor.submit, cancel);
       nameCell.replaceChildren(name); emailCell.replaceChildren(email); action.replaceChildren(editor.node); name.focus();
     }, 'quiet');

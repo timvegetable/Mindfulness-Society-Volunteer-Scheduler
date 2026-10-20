@@ -367,6 +367,16 @@ describe('client DOM behaviors', () => {
     expect(rows[1]).toContain('other@example.test'); expect(rows[1]).toContain('Updated'); expect(rows[1]).toContain('email: old@example.test → new@example.test');
   });
 
+  it('restores a volunteer row with both Edit and Remove after cancelling an edit', async () => {
+    roles = ['administrator']; await signIn(); click('Volunteers'); await settle();
+    const actions = () => [...document.querySelectorAll('.volunteers-panel tbody tr')[0]!.querySelectorAll('button')].map(node => node.textContent);
+    expect(actions()).toEqual(['Edit', 'Remove']);
+    click('Edit'); await settle(); click('Cancel'); await settle();
+    expect(actions()).toEqual(['Edit', 'Remove']);
+    expect(document.activeElement?.textContent).toBe('Edit');
+    expect(requests.some(item => item.operation === 'admin.volunteer.update')).toBe(false);
+  });
+
   it('describes the changes shown, and fetches the next older page with the cursor when asked', async () => {
     roles = ['administrator'];
     const change = (id: string, at: string) => ({ id, occurredAt: at, actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'updated' as const, changedFields: [{ field: 'name' as const, before: 'A', after: 'B' }] });
