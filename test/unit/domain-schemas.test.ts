@@ -46,7 +46,7 @@ const results: Record<string, object> = {
   'admin.insights.read': { leftoverVolunteers: [volunteer], grid: [{ weekday: 1, start: '09:00', end: '10:00', volunteers: [volunteer], count: 1 }] },
   'center.candidate.read': { candidates: [{ candidate, coverage }], centers: [center] },
   'center.candidate.update': { candidate, coverage }, 'admin.center.candidate.confirm': { candidate: { ...candidate, status: 'confirmed' }, session },
-  'admin.volunteer.read': { volunteers: [volunteer] }, 'admin.volunteer.create': { volunteer }, 'admin.volunteer.update': { volunteer },
+  'admin.volunteer.read': { volunteers: [volunteer], changes: [{ id: 'c1', occurredAt: '2026-10-04T12:00:00.000Z', actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Volunteer', kind: 'updated', fields: [{ field: 'name', before: 'Old', after: 'Volunteer' }] }] }, 'admin.volunteer.create': { volunteer }, 'admin.volunteer.update': { volunteer },
   'admin.volunteer.remove': { volunteer },
 };
 

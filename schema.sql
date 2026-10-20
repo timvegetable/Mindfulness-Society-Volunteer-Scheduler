@@ -1,6 +1,7 @@
 -- Destructive local-development/test reset. Never execute against production.
 DROP TABLE IF EXISTS schedule_read_parts;
 DROP TABLE IF EXISTS schedule_read_manifest;
+DROP TABLE IF EXISTS volunteer_changes;
 DROP TABLE IF EXISTS calendar_subscriptions;
 DROP TABLE IF EXISTS synchronization_artifacts;
 DROP TABLE IF EXISTS synchronization_outbox;
@@ -41,6 +42,18 @@ CREATE TABLE volunteers (
   created_at TEXT,
   updated_at TEXT
 );
+
+CREATE TABLE volunteer_changes (
+  id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  actor_email TEXT NOT NULL,
+  volunteer_id TEXT NOT NULL REFERENCES volunteers (id),
+  volunteer_name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('added', 'updated', 'removed')),
+  fields TEXT NOT NULL
+);
+CREATE INDEX volunteer_changes_occurred_at ON volunteer_changes (occurred_at DESC);
 
 CREATE TABLE users (
   id TEXT PRIMARY KEY,

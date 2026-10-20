@@ -73,7 +73,7 @@ const operationTableKeys: Partial<Record<Operation, readonly (typeof tables[numb
   'volunteer.calendar.disable': ['users', 'volunteers', 'calendarSubscriptions'],
   'center.candidate.read': ['users', 'centers', 'candidateSchedules', 'volunteers', 'recurringAvailability'],
   'admin.insights.read': ['users', 'volunteers', 'recurringAvailability', 'schedulingRuns', 'assignments'],
-  'admin.volunteer.read': ['users', 'volunteers'],
+  'admin.volunteer.read': ['users', 'volunteers', 'volunteerChanges'],
 };
 
 export async function readOperationSnapshot(db: D1Database, operation: Operation): Promise<Snapshot> {

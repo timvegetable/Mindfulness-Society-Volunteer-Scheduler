@@ -140,6 +140,10 @@ if (new URLSearchParams(location.search).has('collision')) {
   ] };
 }
 
+const changes: ResultOf<'admin.volunteer.read'>['changes'][number][] = [];
+const record = (volunteer: { id: string; name: string }, kind: 'added' | 'updated' | 'removed', fields: (typeof changes)[number]['fields']) => {
+  if (fields.length) changes.push({ id: `synthetic-change-${changes.length}`, occurredAt: '2026-10-04T12:00:00.000Z', actorId: 'synthetic-admin', actorEmail: 'admin@example.test', volunteerId: volunteer.id, volunteerName: volunteer.name, kind, fields });
+};
 const roster: ResultOf<'admin.volunteer.read'>['volunteers'][number][] = volunteers.map(volunteer => ({ ...volunteer }));
 
 const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-admin', email: 'admin@example.test', active: true, roles: ['administrator'], volunteerId: null, centerIds: [center.id] }, centers: [center] };
@@ -199,11 +203,12 @@ const fixtureFetch: typeof fetch = async (input, init) => {
     }
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;
-    case 'admin.volunteer.read': data = { ...revisions, volunteers: roster }; break;
+    case 'admin.volunteer.read': data = { ...revisions, volunteers: roster, changes: [...changes].reverse() }; break;
     case 'admin.volunteer.create': {
       if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
       const volunteer = { id: `synthetic-new-${roster.length}`, name: payload.name, email: payload.email, lifecycleStatus: 'newly-joined' as const, interviewStatus: 'incomplete' as const, readinessRank: null };
+      record(volunteer, 'added', [{ field: 'name', before: null, after: volunteer.name }, { field: 'email', before: null, after: volunteer.email }, { field: 'status', before: null, after: volunteer.lifecycleStatus }]);
       roster.push(volunteer); syncRoster.push({ id: volunteer.id, name: volunteer.name, email: volunteer.email });
       revisions.dataRevision++;
       data = { ...revisions, volunteer }; break;
@@ -213,6 +218,10 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
       const volunteer = roster.find(row => row.id === payload.volunteerId);
       if (!volunteer) return Response.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Volunteer not found.' } });
+      record({ id: volunteer.id, name: payload.name }, 'updated', [
+        ...volunteer.name === payload.name ? [] : [{ field: 'name' as const, before: volunteer.name, after: payload.name }],
+        ...volunteer.email === payload.email ? [] : [{ field: 'email' as const, before: volunteer.email, after: payload.email }],
+      ]);
       Object.assign(volunteer, { name: payload.name, email: payload.email });
       revisions.dataRevision++;
       data = { ...revisions, volunteer }; break;
@@ -223,6 +232,7 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
       const volunteer = roster.find(row => row.id === payload.volunteerId);
       if (!volunteer) return Response.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Volunteer not found.' } });
+      record(volunteer, 'removed', [{ field: 'status', before: volunteer.lifecycleStatus, after: 'inactive' }]);
       Object.assign(volunteer, { lifecycleStatus: 'inactive' });
       revisions.dataRevision++;
       data = { ...revisions, volunteer }; break;

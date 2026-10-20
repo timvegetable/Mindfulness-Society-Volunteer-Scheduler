@@ -746,6 +746,12 @@ function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
     return [nameCell, emailCell, statusPill(volunteer.lifecycleStatus), action];
   });
   if (rows.length) panel.append(table(['Name', 'Email', 'Status', 'Action'], rows)); else empty(panel, 'No volunteers.');
+  const history = el('details', '', 'card volunteer-changes'); history.append(el('summary', `Recent changes (${data.changes.length})`), el('p', 'Every add, edit, and removal on this tab, newest first. Entries are kept permanently.', 'muted')); content.append(history);
+  const kinds = { added: 'Added', updated: 'Updated', removed: 'Removed' };
+  if (data.changes.length) history.append(table(['When', 'Administrator', 'Volunteer', 'Change', 'Details'], data.changes.map(change => [
+    syncTime(change.occurredAt), change.actorEmail, change.volunteerName, kinds[change.kind],
+    change.fields.map(item => `${item.field}: ${item.before === null ? '(none)' : item.before} → ${item.after}`).join('; '),
+  ]))); else empty(history, 'No changes recorded yet.');
 }
 
 function insightsView(data: ResultOf<'admin.insights.read'>) {

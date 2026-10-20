@@ -53,6 +53,12 @@ For an existing local database, add personal calendar subscriptions without rese
 npx wrangler d1 execute DB --local --file=migrations/0005_calendar_subscriptions.sql
 ```
 
+For an existing local database, add the volunteer change history without resetting the roster:
+
+```sh
+npx wrangler d1 execute DB --local --file=migrations/0006_volunteer_changes.sql
+```
+
 Wrangler emulates the configured Queues locally; development does not require creating remote queues. Do not rerun the destructive initializer or seed an existing private roster just to add the pipeline.
 
 
@@ -164,7 +170,7 @@ GitHub Actions runs these checks on pushes and pull requests, with a manual run 
 - `src/shared/` contains Effect Schemas and pure intervals, availability, scheduling, coverage, and insights.
 - `src/worker/` contains typed Effect workflows, capability services, D1 repositories, and the HTTP boundary.
 - `src/client/` contains the SPA and response validation. Google credentials remain in memory only.
-- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql` through `migrations/0005_calendar_subscriptions.sql` are additive migrations.
+- `schema.sql` is the destructive local initializer; `migrations/0001_idempotency.sql` through `migrations/0006_volunteer_changes.sql` are additive migrations.
 
 Every mutation requires a reviewed `expectedRevision` and an `idempotencyKey`. Replays are scoped by actor and operation and compare a canonical serialization of validated, normalized payloads. Identical retries return the stored response bytes even after other writes advance the revision; changed input with the same key is rejected.
 
@@ -203,6 +209,8 @@ npx wrangler queues create mindfulness-scheduler-sync --config wrangler.producti
 npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0003_synchronization_jobs.sql
 # PRODUCTION WRITE: explicit approval required before releasing personal calendar subscriptions.
 npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0005_calendar_subscriptions.sql
+# PRODUCTION WRITE: explicit approval required before releasing the volunteer change history.
+npx wrangler d1 execute mindfulness-scheduler-prod --remote --config wrangler.production.local.json --file=migrations/0006_volunteer_changes.sql
 # PRODUCTION SECRET WRITE: explicit approval required; enter the key interactively.
 npx wrangler secret put EMAIL_API_KEY --config wrangler.production.local.json
 # PRODUCTION SECRET WRITE: generate and securely store a separate 32-byte base64url key before entering it.

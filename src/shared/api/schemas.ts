@@ -29,6 +29,10 @@ export const VolunteerSchema = object({
   id: text, name: text, email: text, lifecycleStatus: Schema.Literals(['active', 'newly-joined', 'inactive', 'graduated']),
   interviewStatus: Schema.Literals(['complete', 'incomplete']), readinessRank: Schema.NullOr(integer), source: maybeText, ...timestamps,
 });
+export const VolunteerChangeSchema = object({
+  id: text, occurredAt: text, actorId: text, actorEmail: text, volunteerId: text, volunteerName: text, kind: Schema.Literals(['added', 'updated', 'removed']),
+  fields: Schema.Array(object({ field: Schema.Literals(['name', 'email', 'status']), before: Schema.NullOr(Schema.String), after: Schema.String })),
+});
 export const UserSchema = object({ id: text, email: text, roles: Schema.Array(Schema.Literals(roles)), volunteerId: Schema.NullOr(text), centerIds: Schema.Array(text), active: Schema.Boolean });
 export const RecurringIntervalSchema = object({ id: text, volunteerId: text, ...interval, weekday, timeZone: zone, source: maybeText, updatedAt: maybeText }).check(validInterval);
 export const AvailabilityExceptionSchema = object({ id: text, volunteerId: text, date, kind: Schema.Literals(['available', 'unavailable']), ...interval, timeZone: zone, reason: maybeText, updatedAt: maybeText }).check(validInterval);
@@ -110,7 +114,7 @@ export const resultSchemas = {
   'center.candidate.read': object({ ...revisions, candidates: Schema.Array(CandidateWithCoverageSchema), centers: Schema.Array(CenterSchema) }),
   'center.candidate.update': object({ ...revisions, candidate: CandidateSchema, coverage: CoverageSchema }),
   'admin.center.candidate.confirm': object({ ...revisions, candidate: CandidateSchema, session: SessionSchema }),
-  'admin.volunteer.read': object({ ...revisions, volunteers: Schema.Array(VolunteerSchema) }),
+  'admin.volunteer.read': object({ ...revisions, volunteers: Schema.Array(VolunteerSchema), changes: Schema.Array(VolunteerChangeSchema) }),
   'admin.volunteer.create': object({ ...revisions, volunteer: VolunteerSchema }),
   'admin.volunteer.update': object({ ...revisions, volunteer: VolunteerSchema }),
   'admin.volunteer.remove': object({ ...revisions, volunteer: VolunteerSchema }),

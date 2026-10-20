@@ -295,6 +295,13 @@ test('an administrator corrects a volunteer name and email in the Volunteers tab
   const saved = rows.filter({ hasText: 'Synthetic Volunteer Corrected' });
   await expect(saved).toContainText('corrected@example.test');
   await expect(saved.getByRole('button', { name: 'Edit', exact: true })).toBeFocused();
+  await page.getByText('Recent changes (1)', { exact: true }).click();
+  const changes = page.locator('.volunteer-changes tbody tr');
+  await expect(changes).toHaveCount(1);
+  await expect(changes.first()).toContainText('admin@example.test');
+  await expect(changes.first()).toContainText('Synthetic Volunteer Corrected');
+  await expect(changes.first()).toContainText('name: Synthetic Volunteer 01 → Synthetic Volunteer Corrected');
+  await expect(changes.first()).toContainText('email: volunteer0@example.test → corrected@example.test');
   await expect(rows.filter({ hasText: 'volunteer0@example.test' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Reload view', exact: true }).click();
   await expect(rows.filter({ hasText: 'Synthetic Volunteer Corrected' })).toContainText('corrected@example.test');

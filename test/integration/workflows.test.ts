@@ -1,5 +1,7 @@
+import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { operations, isMutation, type Operation } from '../../src/shared/api/operations';
+import { applySql } from '../helpers/database';
 import { createApplication, addPublishedFixture, success, interval, candidateInput, type Application } from '../helpers/application';
 
 const apps: Application[] = [];
@@ -703,7 +705,7 @@ describe('administrator volunteer record edits', () => {
     const after = await app.read();
     expect(after.volunteers.find(row => row.id === 'volunteer-1')?.lifecycleStatus).toBe('inactive');
     expect(after.volunteers.map(row => row.id)).toEqual(before.volunteers.map(row => row.id));
-    const { volunteers: _after, dataRevision: _a, schedulingInputRevision: _b, ...otherAfter } = after; const { volunteers: _before, dataRevision: _c, schedulingInputRevision: _d, ...otherBefore } = before;
+    const { volunteers: _after, volunteerChanges: _log, dataRevision: _a, schedulingInputRevision: _b, ...otherAfter } = after; const { volunteers: _before, volunteerChanges: _prior, dataRevision: _c, schedulingInputRevision: _d, ...otherBefore } = before;
     expect(otherAfter).toEqual(otherBefore);
     expect(after.volunteers.filter(row => row.id !== 'volunteer-1')).toEqual(before.volunteers.filter(row => row.id !== 'volunteer-1'));
     const view = success(await app.request('admin.schedule.read'));
@@ -735,6 +737,73 @@ describe('administrator volunteer record edits', () => {
     expect(await app.rawRequest(raw)).toBe(first);
     expect(JSON.parse(await app.rawRequest({ ...raw, payload: { volunteerId: 'volunteer-2' }, idempotencyKey: 'volunteer-remove-2' }))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     expect(await app.read()).toEqual(saved);
+    expect(app.notifications).toHaveLength(0);
+  });
+});
+
+describe('volunteer change history', () => {
+  const edit = { volunteerId: 'volunteer-3', name: 'Casey Corrected', email: 'casey@example.test' };
+  it('records an edit with time, administrator, volunteer and before/after values of each changed field only', async () => {
+    const app = await application(); app.setNow('2026-10-04T13:30:00.000Z');
+    success(await app.request('admin.volunteer.update', edit));
+    expect(success(await app.request('admin.volunteer.read')).changes).toEqual([{
+      id: expect.any(String), occurredAt: '2026-10-04T13:30:00.000Z', actorId: 'user-admin', actorEmail: 'admin@example.test',
+      volunteerId: 'volunteer-3', volunteerName: 'Casey Corrected', kind: 'updated',
+      fields: [{ field: 'name', before: 'Casey Example', after: 'Casey Corrected' }],
+    }]);
+  });
+  it('records an addition with every initial field', async () => {
+    const app = await application();
+    const { volunteer } = success(await app.request('admin.volunteer.create', { name: 'Frankie Example', email: 'frankie@example.test' }));
+    expect(success(await app.request('admin.volunteer.read')).changes).toMatchObject([{
+      actorEmail: 'admin@example.test', volunteerId: volunteer.id, volunteerName: 'Frankie Example', kind: 'added',
+      fields: [{ field: 'name', before: null, after: 'Frankie Example' }, { field: 'email', before: null, after: 'frankie@example.test' }, { field: 'status', before: null, after: 'newly-joined' }],
+    }]);
+  });
+  it('records a removal as a status change', async () => {
+    const app = await application();
+    success(await app.request('admin.volunteer.remove', { volunteerId: 'volunteer-1' }));
+    expect(success(await app.request('admin.volunteer.read')).changes).toMatchObject([{
+      volunteerId: 'volunteer-1', volunteerName: 'Alex Example', kind: 'removed', fields: [{ field: 'status', before: 'active', after: 'inactive' }],
+    }]);
+  });
+  it('lists newest first', async () => {
+    const app = await application();
+    app.setNow('2026-10-04T13:00:00.000Z'); success(await app.request('admin.volunteer.update', edit));
+    app.setNow('2026-10-04T14:00:00.000Z'); success(await app.request('admin.volunteer.remove', { volunteerId: 'volunteer-2' }));
+    expect(success(await app.request('admin.volunteer.read')).changes.map(row => [row.occurredAt, row.kind])).toEqual([['2026-10-04T14:00:00.000Z', 'removed'], ['2026-10-04T13:00:00.000Z', 'updated']]);
+  });
+  it('adds no entry for a save that changes nothing or a rejected change', async () => {
+    const app = await application();
+    success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey@example.test' }));
+    expect(await app.request('admin.volunteer.update', { ...edit, email: 'blair@example.test' })).toMatchObject({ ok: false });
+    expect(success(await app.request('admin.volunteer.read')).changes).toEqual([]);
+  });
+  it('is added by an idempotent migration that leaves existing volunteers alone, and then records changes', async () => {
+    const app = await application(); const before = await app.read();
+    await app.db.prepare('DROP TABLE volunteer_changes').run();
+    const migration = await readFile(new URL('../../migrations/0006_volunteer_changes.sql', import.meta.url), 'utf8');
+    await applySql(app.db, migration); await applySql(app.db, migration);
+    expect(await app.read()).toEqual(before);
+    success(await app.request('admin.volunteer.update', edit));
+    expect((await app.read()).volunteerChanges).toHaveLength(1);
+  });
+  it('commits the entry with the change: a failed commit leaves neither', async () => {
+    const app = await application();
+    await app.db.prepare("CREATE TRIGGER refuse_history BEFORE INSERT ON volunteer_changes BEGIN SELECT RAISE(ABORT, 'refused'); END").run();
+    expect(await app.request('admin.volunteer.update', edit)).toMatchObject({ ok: false });
+    expect((await app.read()).volunteers.find(row => row.id === 'volunteer-3')?.name).toBe('Casey Example');
+  });
+  it('adds no entry for a stale or replayed request and no extra revision', async () => {
+    const app = await application();
+    const raw = { operation: 'admin.volunteer.update', payload: edit, credential: 'admin', expectedRevision: 0, idempotencyKey: 'history-edit' };
+    const first = await app.rawRequest(raw); expect(JSON.parse(first).ok).toBe(true);
+    const saved = await app.read();
+    expect(await app.rawRequest(raw)).toBe(first);
+    expect(JSON.parse(await app.rawRequest({ ...raw, payload: { ...edit, name: 'Casey Stale' }, idempotencyKey: 'history-edit-2' }))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    const after = await app.read();
+    expect(after).toEqual(saved); expect(after.volunteerChanges).toHaveLength(1);
+    expect(after.dataRevision).toBe(1); expect(after.schedulingInputRevision).toBe(1);
     expect(app.notifications).toHaveLength(0);
   });
 });

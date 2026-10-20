@@ -28,6 +28,7 @@ let insightsGrid: { weekday: number; start: string; end: string; count: number; 
 let syncPending: ResultOf<'admin.sync.read'>['pending'];
 let syncVolunteers: ResultOf<'admin.sync.read'>['volunteers'];
 let adminVolunteers: Volunteer[];
+let volunteerChanges: ResultOf<'admin.volunteer.read'>['changes'];
 let adminSchedule: ResultOf<'admin.schedule.read'> | undefined;
 let previewOutput: ResultOf<'admin.schedule.preview'>['output'] | undefined;
 const pendingParticipant = (id: string, name: string): ResultOf<'admin.sync.read'>['pending'][number] => ({
@@ -55,7 +56,7 @@ async function mount() {
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
       ...(body.operation === 'admin.sync.read' ? { pending: syncPending, imports: [], volunteers: syncVolunteers } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
-    else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: adminVolunteers };
+    else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: adminVolunteers, changes: volunteerChanges };
     else if (body.operation === 'admin.volunteer.create') {
       const payload = (body as unknown as { payload: { name: string; email: string } }).payload;
       const created = { ...volunteer, id: 'v-new', ...payload, lifecycleStatus: 'newly-joined' as const, interviewStatus: 'incomplete' as const, readinessRank: null };
@@ -69,7 +70,7 @@ async function mount() {
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
   requests = []; roles = ['volunteer']; confirmAnswer = false; confirmMessage = ''; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined; volunteerDashboardOverride = undefined;
-  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminVolunteers = [volunteer]; adminSchedule = undefined; previewOutput = undefined;
+  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminVolunteers = [volunteer]; volunteerChanges = []; adminSchedule = undefined; previewOutput = undefined;
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
 });
@@ -348,6 +349,25 @@ describe('client DOM behaviors', () => {
     expect(document.body.textContent).toContain('Volunteer added.');
     expect([...document.querySelectorAll('.volunteers-panel tbody tr')].map(row => row.textContent)).toEqual(expect.arrayContaining([expect.stringContaining('frankie@example.test')]));
     expect(document.activeElement).toBe(document.querySelector('[data-focus-key="volunteer-v-new"]'));
+  });
+
+  it('shows Recent changes below the roster in the order received, with administrator and before/after values', async () => {
+    roles = ['administrator'];
+    volunteerChanges = [
+      { id: 'c2', occurredAt: '2026-10-04T14:00:00.000Z', actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'removed', fields: [{ field: 'status', before: 'active', after: 'inactive' }] },
+      { id: 'c1', occurredAt: '2026-10-04T13:00:00.000Z', actorId: 'u2', actorEmail: 'other@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'updated', fields: [{ field: 'email', before: 'old@example.test', after: 'new@example.test' }] },
+    ];
+    await signIn(); click('Volunteers'); await settle();
+    expect(document.querySelector('.volunteers-panel')!.textContent).not.toContain('Recent changes');
+    const rows = [...document.querySelectorAll('.volunteer-changes tbody tr')].map(row => row.textContent!);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('admin@example.test'); expect(rows[0]).toContain('Removed'); expect(rows[0]).toContain('status: active → inactive');
+    expect(rows[1]).toContain('other@example.test'); expect(rows[1]).toContain('Updated'); expect(rows[1]).toContain('email: old@example.test → new@example.test');
+  });
+
+  it('says so when no volunteer changes have been recorded', async () => {
+    roles = ['administrator']; await signIn(); click('Volunteers'); await settle();
+    expect(document.querySelector('.volunteer-changes')!.textContent).toContain('No changes recorded yet.');
   });
 
   it('removes a volunteer only after confirming they will be marked inactive, and offers no removal for inactive volunteers', async () => {
