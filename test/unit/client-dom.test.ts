@@ -56,7 +56,11 @@ async function mount() {
       ...(body.operation === 'admin.sync.read' ? { pending: syncPending, imports: [], volunteers: syncVolunteers } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
     else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: adminVolunteers };
-    else throw new Error(`Unexpected mutation ${body.operation}`);
+    else if (body.operation === 'admin.volunteer.create') {
+      const payload = (body as unknown as { payload: { name: string; email: string } }).payload;
+      const created = { ...volunteer, id: 'v-new', ...payload, lifecycleStatus: 'newly-joined' as const, interviewStatus: 'incomplete' as const, readinessRank: null };
+      adminVolunteers = [...adminVolunteers, created]; data = { ...base, volunteer: created };
+    } else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));
   } });
 }
@@ -331,6 +335,17 @@ describe('client DOM behaviors', () => {
 
     expect([...document.querySelectorAll<HTMLButtonElement>('.volunteers-panel button[data-focus-key]')].map(node => node.dataset.focusKey))
       .toEqual(['volunteer-v-first', 'volunteer-v-tie-a', 'volunteer-v-tie-z', 'volunteer-v-z', 'volunteer-v-last']);
+  });
+
+  it('adds a volunteer from the Volunteers tab, shows it in the list and moves focus to its Edit button', async () => {
+    roles = ['administrator']; await signIn(); click('Volunteers'); await settle();
+    const [name, email] = [...document.querySelectorAll<HTMLInputElement>('.volunteers-panel form[aria-label="Add volunteer"] input')];
+    name!.value = 'Frankie Example'; email!.value = 'frankie@example.test';
+    document.querySelector<HTMLFormElement>('.volunteers-panel form[aria-label="Add volunteer"]')!.requestSubmit(); await settle();
+    expect(requests.find(item => item.operation === 'admin.volunteer.create')).toMatchObject({ payload: { name: 'Frankie Example', email: 'frankie@example.test' }, expectedRevision: 7 });
+    expect(document.body.textContent).toContain('Volunteer added.');
+    expect([...document.querySelectorAll('.volunteers-panel tbody tr')].map(row => row.textContent)).toEqual(expect.arrayContaining([expect.stringContaining('frankie@example.test')]));
+    expect(document.activeElement).toBe(document.querySelector('[data-focus-key="volunteer-v-new"]'));
   });
 
   it('keeps roster link choices alphabetized with deterministic ties in every pending participant picker', async () => {

@@ -219,7 +219,7 @@ tbody tr:hover {
   width: 100%;
   min-width: 14rem;
 }
-.volunteers-panel form {
+.volunteers-panel td form {
   margin: 0;
   flex-wrap: nowrap;
 }

@@ -113,7 +113,7 @@ const candidates: ResultOf<'center.candidate.read'> = {
     coverage: { volunteers: volunteers.slice(0, 2), requestedCount: 2, shortfall: 0 },
   })),
 };
-const syncRoster: ResultOf<'admin.sync.read'>['volunteers'] = new URLSearchParams(location.search).has('shuffled-roster')
+const syncRoster: { id: string; name: string; email: string }[] = new URLSearchParams(location.search).has('shuffled-roster')
   ? [
     { id: 'synthetic-v2', name: 'Zoe Example', email: 'zoe@example.test' },
     { id: 'synthetic-v3', name: 'ALex Example', email: 'z@example.test' },
@@ -140,7 +140,7 @@ if (new URLSearchParams(location.search).has('collision')) {
   ] };
 }
 
-const roster = volunteers.map(volunteer => ({ ...volunteer }));
+const roster: ResultOf<'admin.volunteer.read'>['volunteers'][number][] = volunteers.map(volunteer => ({ ...volunteer }));
 
 const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-admin', email: 'admin@example.test', active: true, roles: ['administrator'], volunteerId: null, centerIds: [center.id] }, centers: [center] };
 
@@ -200,6 +200,14 @@ const fixtureFetch: typeof fetch = async (input, init) => {
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;
     case 'admin.volunteer.read': data = { ...revisions, volunteers: roster }; break;
+    case 'admin.volunteer.create': {
+      if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
+      const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
+      const volunteer = { id: `synthetic-new-${roster.length}`, name: payload.name, email: payload.email, lifecycleStatus: 'newly-joined' as const, interviewStatus: 'incomplete' as const, readinessRank: null };
+      roster.push(volunteer); syncRoster.push({ id: volunteer.id, name: volunteer.name, email: volunteer.email });
+      revisions.dataRevision++;
+      data = { ...revisions, volunteer }; break;
+    }
     case 'admin.volunteer.update': {
       if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
@@ -249,7 +257,7 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     const sticky = Math.abs(header.getBoundingClientRect().top - before) < 2;
     const style = getComputedStyle(region);
     const page = document.querySelector('[aria-current="page"]')?.textContent;
-    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? rotatingWeeklySchedule ? 40 : weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : 40;
+    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? rotatingWeeklySchedule ? 40 : weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : page === 'Volunteers' ? roster.length : 40;
     // The reference fixture has two changed dates and two unchanged active dates.
     const comparisonRows = diffReference ? region.classList.contains('schedule-diff') ? 2 : region.closest('.schedule-unchanged') ? 1 : 3 : params.has('reference') && (region.classList.contains('schedule-diff') || region.closest('.schedule-unchanged')) ? 2 : expectedRows;
     check(rows === comparisonRows, 'Synthetic row count does not match the current records');

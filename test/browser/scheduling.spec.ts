@@ -301,6 +301,31 @@ test('an administrator corrects a volunteer name and email in the Volunteers tab
   await checkLayout(page);
 });
 
+test('an administrator adds a volunteer in the Volunteers tab and can link it in Availability sync', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?width=${viewport.width}&height=${viewport.height}`);
+  await page.getByRole('button', { name: 'Volunteers', exact: true }).click();
+  const rows = page.locator('.volunteers-panel tbody tr');
+  await expect(rows).toHaveCount(40);
+  await checkLayout(page);
+  const adder = page.getByRole('form', { name: 'Add volunteer', exact: true });
+  await adder.getByLabel('Name', { exact: true }).fill('Synthetic Added Volunteer');
+  await adder.getByLabel('Email', { exact: true }).fill('added@example.test');
+  await adder.getByRole('button', { name: 'Add volunteer', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Volunteer added.');
+  await expect(rows).toHaveCount(41);
+  const added = rows.filter({ hasText: 'Synthetic Added Volunteer' });
+  await expect(added).toContainText('added@example.test');
+  await expect(added).toContainText('newly-joined');
+  await expect(added.getByRole('button', { name: 'Edit', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Reload view', exact: true }).click();
+  await expect(rows.filter({ hasText: 'Synthetic Added Volunteer' })).toContainText('added@example.test');
+  await checkLayout(page);
+  await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
+  await expect(page.locator('.pending-participants tbody tr').first().getByRole('combobox').locator('option', { hasText: 'Synthetic Added Volunteer (added@example.test)' })).toHaveCount(1);
+});
+
 test('roster link pickers sort names and preserve selected IDs through a sync refresh', async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await page.goto('/__browser-check?shuffled-roster=1');

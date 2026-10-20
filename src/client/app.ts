@@ -711,7 +711,14 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
 }
 
 function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
-  const panel = card('Volunteers', 'Correct a name or email. Availability sync matches WhenIsGood submissions by email.'); panel.classList.add('volunteers-panel'); content.append(panel);
+  const panel = card('Volunteers', 'Add a volunteer or correct a name or email. Availability sync matches WhenIsGood submissions by email.'); panel.classList.add('volunteers-panel'); content.append(panel);
+  const adder = form(panel, 'Add volunteer', async () => {
+    const created = await api.call('admin.volunteer.create', { name: newName.value, email: newEmail.value }, data.dataRevision);
+    await refreshView('volunteers', 'Volunteer added.', `[data-focus-key="volunteer-${CSS.escape(created.volunteer.id)}"]`);
+  });
+  adder.node.setAttribute('aria-label', 'Add volunteer'); adder.node.classList.add('add-volunteer');
+  const newName = input('text'); const newEmail = input('email');
+  append(adder.node, field('Name', newName), field('Email', newEmail), adder.submit);
   const sorted = [...data.volunteers].sort(compareRoster);
   const rows = sorted.map(volunteer => {
     const nameCell = el('div', volunteer.name); const emailCell = el('div', volunteer.email); const action = el('div', '', 'actions');
