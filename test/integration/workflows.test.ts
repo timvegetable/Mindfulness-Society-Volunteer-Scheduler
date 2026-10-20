@@ -602,6 +602,42 @@ describe('administrator volunteer record edits', () => {
     const app = await application();
     expect(success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'Casey@Example.test' })).volunteer.email).toBe('Casey@Example.test');
   });
+  it('rejects an email that a saved email roster link sends to another volunteer, without writes', async () => {
+    const app = await application();
+    success(await app.request('admin.import.mapping.upsert', { sourceEmail: 'casey.new@example.test', volunteerId: 'volunteer-1' }));
+    const before = await app.read();
+    expect(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: ' Casey.New@Example.test ' })).toEqual({ ok: false, error: { code: 'CONFLICT', message: 'A saved roster link sends this email to another volunteer.' } });
+    expect(await app.read()).toEqual(before);
+  });
+  it('rejects an email whose synchronized participant has a source-ID roster link to another volunteer, without writes', async () => {
+    const app = await application();
+    app.setHtml(`<script>${JSON.stringify({ participants: [{ id: 'p-new', name: 'Someone Else', email: 'CASEY.NEW@example.test', availability: [{ weekday: 2, start: '09:00', end: '10:00' }] }] })}</script>`);
+    success(await app.request('admin.sync.now'));
+    success(await app.request('admin.import.mapping.upsert', { sourceParticipantId: 'p-new', volunteerId: 'volunteer-1' }));
+    expect((await app.read()).importMappings.map(({ sourceParticipantId, sourceEmail, volunteerId }) => ({ sourceParticipantId, sourceEmail, volunteerId }))).toEqual([{ sourceParticipantId: 'p-new', sourceEmail: null, volunteerId: 'volunteer-1' }]);
+    const before = await app.read();
+    expect(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey.new@example.test' })).toEqual({ ok: false, error: { code: 'CONFLICT', message: 'A saved roster link sends this email to another volunteer.' } });
+    expect(await app.read()).toEqual(before);
+  });
+  it('accepts an email whose saved roster link already points to the edited volunteer', async () => {
+    const app = await application();
+    success(await app.request('admin.import.mapping.upsert', { sourceEmail: 'casey.new@example.test', volunteerId: 'volunteer-3' }));
+    expect(success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey.new@example.test' })).volunteer.email).toBe('casey.new@example.test');
+  });
+  it('updates the linked sign-in account email in the same write and leaves other accounts alone', async () => {
+    const app = await application(); const before = await app.read();
+    const saved = success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-1', name: 'Alex Example', email: 'alex.new@example.test' }));
+    expect(saved.dataRevision).toBe(1);
+    const state = await app.read();
+    expect(state.volunteers.find(row => row.id === 'volunteer-1')?.email).toBe('alex.new@example.test');
+    expect(state.users.find(row => row.id === 'user-volunteer')?.email).toBe('alex.new@example.test');
+    expect(state.users.filter(row => row.id !== 'user-volunteer')).toEqual(before.users.filter(row => row.id !== 'user-volunteer'));
+  });
+  it.each(['contact@example.test', ' Contact@Example.TEST '])('rejects %j for a linked volunteer because another sign-in account uses it, without writes', async email => {
+    const app = await application(); const before = await app.read();
+    expect(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-1', name: 'Alex Example', email })).toEqual({ ok: false, error: { code: 'CONFLICT', message: 'Another sign-in account already uses this email.' } });
+    expect(await app.read()).toEqual(before);
+  });
   it('rejects a stale revision and replays a repeated idempotency key without another write', async () => {
     const app = await application();
     const raw = { operation: 'admin.volunteer.update', payload: { volunteerId: 'volunteer-3', name: 'Casey First', email: 'casey@example.test' }, credential: 'admin', expectedRevision: 0, idempotencyKey: 'volunteer-edit' };

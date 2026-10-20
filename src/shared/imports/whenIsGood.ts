@@ -149,6 +149,26 @@ function indexBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[
   return index;
 }
 
+function indexMappings(mappings: ImportMapping[]): MappingIndex {
+  const sourceMappings: MappingIndex = new Map();
+  for (const mapping of mappings) if (mapping.source === 'whenIsGood') {
+    const identity = mappingIdentity(mapping);
+    if (!identity) continue;
+    let index = sourceMappings.get(identity.kind);
+    if (!index) { index = new Map(); sourceMappings.set(identity.kind, index); }
+    const matches = index.get(identity.value);
+    if (matches) matches.push(mapping); else index.set(identity.value, [mapping]);
+  }
+  return sourceMappings;
+}
+
+/** The saved mapping staging would apply to one participant among its peers, using the same precedence as stageParticipants. */
+export function savedMappingFor(participant: ImportParticipant, participants: ImportParticipant[], mappings: ImportMapping[]): ImportMapping | null {
+  const result = mappingForParticipant(participant, indexMappings(mappings),
+    frequencies(participants.map(row => normalizeImportEmail(row.email))), frequencies(participants.map(row => normalizeImportName(row.name))));
+  return result.found ? result.mapping : null;
+}
+
 function mappingForParticipant(
   participant: ImportParticipant,
   mappings: MappingIndex,
@@ -277,15 +297,7 @@ export function parseWhenIsGood(html: string, timeZone: string, options: { stric
 
 export function stageParticipants(participants: ImportParticipant[], volunteers: Volunteer[], mappings: ImportMapping[], previous: StagedParticipant[] = []): { stagedAvailability: StagedParticipant[]; unmatched: ImportParticipant[]; matchedCount: number } {
   const volunteerIds = new Set(volunteers.map(volunteer => volunteer.id));
-  const sourceMappings: MappingIndex = new Map();
-  for (const mapping of mappings) if (mapping.source === 'whenIsGood') {
-    const identity = mappingIdentity(mapping);
-    if (!identity) continue;
-    let index = sourceMappings.get(identity.kind);
-    if (!index) { index = new Map(); sourceMappings.set(identity.kind, index); }
-    const matches = index.get(identity.value);
-    if (matches) matches.push(mapping); else index.set(identity.value, [mapping]);
-  }
+  const sourceMappings = indexMappings(mappings);
   const volunteersByEmail = indexBy(volunteers, row => normalizeImportEmail(row.email));
   const volunteersByName = indexBy(volunteers, row => normalizeImportName(row.name));
   const previousMatches = new Map<string, string>();
