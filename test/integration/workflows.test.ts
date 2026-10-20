@@ -21,7 +21,7 @@ const payloads: Record<Operation, unknown> = {
   'admin.insights.read': {}, 'center.candidate.read': {},
   'center.candidate.update': { ...candidateInput, centerId: 'center-1' },
   'admin.center.candidate.confirm': { candidateId: 'candidate-1' },
-  'admin.volunteer.read': {},
+  'admin.volunteer.read': {}, 'admin.volunteer.create': { name: 'Frankie Example', email: 'frankie@example.test' },
   'admin.volunteer.update': { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey.updated@example.test' },
 };
 // Independent expected policy, deliberately not calculated using the implementation.
@@ -557,6 +557,50 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     expect(before.recurringAvailability).toEqual(availabilityBefore);
     expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
     expect(await app.read()).toEqual(before); expect((await app.read()).importedAvailability).toHaveLength(0);
+  });
+});
+
+describe('administrator volunteer creation', () => {
+  it('creates a newly-joined volunteer silently, lists it, and offers it as a roster link', async () => {
+    const app = await application();
+    const created = success(await app.request('admin.volunteer.create', { name: '  Frankie Example ', email: ' frankie@example.test ' }));
+    expect(created.volunteer).toMatchObject({ name: 'Frankie Example', email: 'frankie@example.test', lifecycleStatus: 'newly-joined', interviewStatus: 'incomplete', readinessRank: null });
+    expect(created.dataRevision).toBe(1);
+    const view = success(await app.request('admin.volunteer.read'));
+    expect(view.volunteers.find(row => row.id === created.volunteer.id)).toEqual(created.volunteer);
+    expect(success(await app.request('admin.sync.read')).volunteers.map(row => row.id)).toContain(created.volunteer.id);
+    expect(app.notifications).toHaveLength(0);
+  });
+  it.each([
+    { name: '   ', email: 'frankie@example.test', code: 'INVALID_REQUEST', message: 'Enter the volunteer’s name.' },
+    { name: 'Frankie Example', email: 'frankie.example.test', code: 'INVALID_REQUEST', message: 'Enter a valid email address.' },
+    { name: 'Frankie Example', email: 'blair@example.test', code: 'CONFLICT', message: 'Another volunteer already uses this email.' },
+    { name: 'Frankie Example', email: ' BLAIR@Example.Test ', code: 'CONFLICT', message: 'Another volunteer already uses this email.' },
+  ])('rejects name $name and email $email without writes', async ({ name, email, code, message }) => {
+    const app = await application(); const before = await app.read();
+    expect(await app.request('admin.volunteer.create', { name, email })).toEqual({ ok: false, error: { code, message } });
+    expect(await app.read()).toEqual(before);
+  });
+  it('rejects an email that a saved roster link sends to another volunteer, without writes', async () => {
+    const app = await application();
+    success(await app.request('admin.import.mapping.upsert', { sourceEmail: 'frankie@example.test', volunteerId: 'volunteer-1' }));
+    const before = await app.read();
+    expect(await app.request('admin.volunteer.create', { name: 'Frankie Example', email: 'frankie@example.test' })).toEqual({ ok: false, error: { code: 'CONFLICT', message: 'A saved roster link sends this email to another volunteer.' } });
+    expect(await app.read()).toEqual(before);
+  });
+  it('rejects a stale revision and replays a repeated idempotency key without another write', async () => {
+    const app = await application();
+    const raw = { operation: 'admin.volunteer.create', payload: { name: 'Frankie Example', email: 'frankie@example.test' }, credential: 'admin', expectedRevision: 0, idempotencyKey: 'volunteer-create' };
+    const first = await app.rawRequest(raw); expect(JSON.parse(first).ok).toBe(true);
+    const saved = await app.read();
+    expect(await app.rawRequest(raw)).toBe(first);
+    expect(JSON.parse(await app.rawRequest({ ...raw, payload: { name: 'Gale Example', email: 'gale@example.test' }, idempotencyKey: 'volunteer-create-2' }))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    expect(await app.read()).toEqual(saved);
+    expect(app.notifications).toHaveLength(0);
+  });
+  it('is refused for non-administrators', async () => {
+    const app = await application();
+    for (const credential of ['volunteer', 'contact'] as const) expect(await app.request('admin.volunteer.create', { name: 'Frankie Example', email: 'frankie@example.test' }, credential)).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
   });
 });
 

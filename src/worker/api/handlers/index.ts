@@ -10,7 +10,7 @@ import { previewSchedule, publishSchedule } from './schedule';
 import { readCandidates, updateCandidate, confirmCandidate } from './candidates';
 import { previewImport, promoteImport, upsertMapping } from './imports';
 import { disableCalendarSubscription, enableCalendarSubscription, readCalendarSubscription, resetCalendarSubscription } from './calendar';
-import { updateVolunteerDetails } from './volunteers';
+import { createVolunteer, updateVolunteerDetails } from './volunteers';
 import { scheduleView, type HandlerContext } from './context';
 
 export function handleOperation(operation: Operation, payload: unknown, ctx: HandlerContext) {
@@ -43,6 +43,7 @@ export function handleOperation(operation: Operation, payload: unknown, ctx: Han
     case 'admin.import.mapping.upsert': return upsertMapping(ctx, input('admin.import.mapping.upsert'));
     case 'admin.insights.read': return Effect.succeed(computeInsights(ctx.state, ctx.config));
     case 'admin.volunteer.read': return Effect.succeed({ volunteers: ctx.state.volunteers });
+    case 'admin.volunteer.create': return createVolunteer(ctx, input('admin.volunteer.create'));
     case 'admin.volunteer.update': return updateVolunteerDetails(ctx, input('admin.volunteer.update'));
   }
 }
