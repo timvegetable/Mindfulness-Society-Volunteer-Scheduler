@@ -449,5 +449,16 @@ describe('automatic availability synchronization through local D1', () => {
     await Effect.runPromise(synchronize(testConfig, synchronizationSystemActor).pipe(Effect.provide(app.layer)));
     expect(success(await app.request('volunteer.dashboard', {}, 'volunteer')).recurringAvailability).toMatchObject([{ start: '10:00', end: '12:00' }]);
   });
+  it('matches a participant to a volunteer on the next check after an administrator corrects the email', async () => {
+    const app = await application();
+    app.setHtml(JSON.stringify({ participants: [{ id: 'casey-source', name: 'Casey', email: ' Casey.New@Example.test', availability: [[3, '13:00', '14:00']] }] }));
+    expect(success(await sync(app)).pending.map(row => [row.id, row.reason])).toEqual([['casey-source', 'new']]);
+    success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey.new@example.test' }));
+    app.setNow('2026-10-04T12:05:00.000Z');
+    const checked = success(await sync(app));
+    expect(checked.pending).toEqual([]);
+    expect(checked.status).toMatchObject({ participantCount: 1, matchedCount: 1, pendingCount: 0 });
+    expect((await app.read()).recurringAvailability.filter(row => row.volunteerId === 'volunteer-3')).toMatchObject([{ weekday: 3, start: '13:00', end: '14:00' }]);
+  });
 
 });

@@ -21,6 +21,8 @@ const payloads: Record<Operation, unknown> = {
   'admin.insights.read': {}, 'center.candidate.read': {},
   'center.candidate.update': { ...candidateInput, centerId: 'center-1' },
   'admin.center.candidate.confirm': { candidateId: 'candidate-1' },
+  'admin.volunteer.read': {},
+  'admin.volunteer.update': { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey.updated@example.test' },
 };
 // Independent expected policy, deliberately not calculated using the implementation.
 const volunteerAllowed = new Set<Operation>(['session.me', 'volunteer.dashboard', 'volunteer.availability.recurring.update', 'volunteer.availability.exception.create', 'volunteer.assignment.cancel', 'volunteer.calendar.read', 'volunteer.calendar.enable', 'volunteer.calendar.reset', 'volunteer.calendar.disable']);
@@ -555,5 +557,59 @@ describe('WhenIsGood staging, mappings and atomic promotion', () => {
     expect(before.recurringAvailability).toEqual(availabilityBefore);
     expect(await app.request('admin.import.whenIsGood.promote', {})).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
     expect(await app.read()).toEqual(before); expect((await app.read()).importedAvailability).toHaveLength(0);
+  });
+});
+
+describe('administrator volunteer record edits', () => {
+  it('lists every volunteer with name, email and lifecycle status', async () => {
+    const app = await application();
+    const view = success(await app.request('admin.volunteer.read'));
+    expect(view.volunteers.map(({ id, name, email, lifecycleStatus }) => ({ id, name, email, lifecycleStatus }))).toEqual([
+      { id: 'volunteer-1', name: 'Alex Example', email: 'alex@example.test', lifecycleStatus: 'active' },
+      { id: 'volunteer-2', name: 'Blair Example', email: 'blair@example.test', lifecycleStatus: 'active' },
+      { id: 'volunteer-3', name: 'Casey Example', email: 'casey@example.test', lifecycleStatus: 'newly-joined' },
+      { id: 'volunteer-4', name: 'Devon Example', email: 'devon@example.test', lifecycleStatus: 'inactive' },
+      { id: 'volunteer-5', name: 'Ellis Example', email: 'ellis@example.test', lifecycleStatus: 'active' },
+    ]);
+  });
+  it('saves a corrected name and email silently and returns them on the next read', async () => {
+    const app = await application();
+    const saved = success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: '  Casey Corrected ', email: ' casey.new@example.test ' }));
+    expect(saved.volunteer).toMatchObject({ id: 'volunteer-3', name: 'Casey Corrected', email: 'casey.new@example.test', lifecycleStatus: 'newly-joined', interviewStatus: 'complete', readinessRank: 3 });
+    expect(saved.dataRevision).toBe(1);
+    const view = success(await app.request('admin.volunteer.read'));
+    expect(view.volunteers.find(row => row.id === 'volunteer-3')).toMatchObject({ name: 'Casey Corrected', email: 'casey.new@example.test' });
+    expect(view.volunteers.filter(row => row.id !== 'volunteer-3').map(row => row.email)).toEqual(['alex@example.test', 'blair@example.test', 'devon@example.test', 'ellis@example.test']);
+    expect(app.notifications).toHaveLength(0);
+  });
+  it.each([
+    { name: '   ', email: 'casey@example.test', message: 'Enter the volunteer’s name.' },
+    { name: 'Casey Example', email: '', message: 'Enter a valid email address.' },
+    { name: 'Casey Example', email: 'casey.example.test', message: 'Enter a valid email address.' },
+    { name: 'Casey Example', email: 'casey@example', message: 'Enter a valid email address.' },
+    { name: 'Casey Example', email: 'casey example@example.test', message: 'Enter a valid email address.' },
+  ])('rejects name $name and email $email without writes', async ({ name, email, message }) => {
+    const app = await application(); const before = await app.read();
+    expect(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name, email })).toEqual({ ok: false, error: { code: 'INVALID_REQUEST', message } });
+    expect(await app.read()).toEqual(before);
+  });
+  it.each(['blair@example.test', ' BLAIR@Example.Test '])('rejects %j because it matches another volunteer after import normalization', async email => {
+    const app = await application(); const before = await app.read();
+    expect(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email })).toEqual({ ok: false, error: { code: 'CONFLICT', message: 'Another volunteer already uses this email.' } });
+    expect(await app.read()).toEqual(before);
+  });
+  it('allows a volunteer to keep their own email with different capitalization', async () => {
+    const app = await application();
+    expect(success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'Casey@Example.test' })).volunteer.email).toBe('Casey@Example.test');
+  });
+  it('rejects a stale revision and replays a repeated idempotency key without another write', async () => {
+    const app = await application();
+    const raw = { operation: 'admin.volunteer.update', payload: { volunteerId: 'volunteer-3', name: 'Casey First', email: 'casey@example.test' }, credential: 'admin', expectedRevision: 0, idempotencyKey: 'volunteer-edit' };
+    const first = await app.rawRequest(raw); expect(JSON.parse(first).ok).toBe(true);
+    const saved = await app.read();
+    expect(await app.rawRequest(raw)).toBe(first);
+    expect(JSON.parse(await app.rawRequest({ ...raw, payload: { ...raw.payload, name: 'Casey Second' }, idempotencyKey: 'volunteer-edit-2' }))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    expect(await app.read()).toEqual(saved);
+    expect(app.notifications).toHaveLength(0);
   });
 });

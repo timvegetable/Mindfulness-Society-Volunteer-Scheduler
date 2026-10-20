@@ -272,6 +272,35 @@ test('an administrator links a pending submission and immediately sees the resol
   await expect(page.locator('.pending-participants tbody tr')).toHaveCount(39);
 });
 
+test('an administrator corrects a volunteer name and email in the Volunteers tab', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?width=${viewport.width}&height=${viewport.height}`);
+  await page.getByRole('button', { name: 'Volunteers', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Volunteers', exact: true })).toBeVisible();
+  const rows = page.locator('.volunteers-panel tbody tr');
+  await expect(rows).toHaveCount(40);
+  await checkLayout(page);
+  const row = rows.filter({ hasText: 'Synthetic Volunteer 01' });
+  await expect(row).toContainText('volunteer0@example.test');
+  await expect(row).toContainText('active');
+  await row.getByRole('button', { name: 'Edit', exact: true }).click();
+  const name = page.getByLabel('Name for Synthetic Volunteer 01', { exact: true });
+  await expect(name).toBeFocused();
+  const editing = rows.filter({ has: name });
+  await name.fill('Synthetic Volunteer Corrected');
+  await editing.getByLabel('Email for Synthetic Volunteer 01', { exact: true }).fill('corrected@example.test');
+  await editing.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Volunteer details saved.');
+  const saved = rows.filter({ hasText: 'Synthetic Volunteer Corrected' });
+  await expect(saved).toContainText('corrected@example.test');
+  await expect(saved.getByRole('button', { name: 'Edit', exact: true })).toBeFocused();
+  await expect(rows.filter({ hasText: 'volunteer0@example.test' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Reload view', exact: true }).click();
+  await expect(rows.filter({ hasText: 'Synthetic Volunteer Corrected' })).toContainText('corrected@example.test');
+  await checkLayout(page);
+});
+
 test('roster link pickers sort names and preserve selected IDs through a sync refresh', async ({ page }) => {
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   await page.goto('/__browser-check?shuffled-roster=1');

@@ -54,6 +54,7 @@ async function mount() {
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
       ...(body.operation === 'admin.sync.read' ? { pending: syncPending, imports: [], volunteers: syncVolunteers } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
+    else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: [volunteer] };
     else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));
   } });
@@ -95,12 +96,12 @@ describe('client DOM behaviors', () => {
   });
   it.each<{ authorizedRoles: Role[]; views: [string, string][] }>([
     { authorizedRoles: ['volunteer'], views: [['My availability', 'Your assignments']] },
-    { authorizedRoles: ['administrator'], views: [['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['administrator'], views: [['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Volunteers', 'Volunteers'], ['Center proposals', 'New proposal']] },
     { authorizedRoles: ['center-contact'], views: [['Center proposals', 'New proposal']] },
-    { authorizedRoles: ['volunteer', 'administrator'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['volunteer', 'administrator'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Volunteers', 'Volunteers'], ['Center proposals', 'New proposal']] },
     { authorizedRoles: ['volunteer', 'center-contact'], views: [['My availability', 'Your assignments'], ['Center proposals', 'New proposal']] },
-    { authorizedRoles: ['administrator', 'center-contact'], views: [['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
-    { authorizedRoles: ['center-contact', 'administrator', 'volunteer'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['administrator', 'center-contact'], views: [['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Volunteers', 'Volunteers'], ['Center proposals', 'New proposal']] },
+    { authorizedRoles: ['center-contact', 'administrator', 'volunteer'], views: [['My availability', 'Your assignments'], ['Schedule', 'Session schedule'], ['Availability sync', 'Availability sync'], ['Insights', 'Volunteers with time to give'], ['Volunteers', 'Volunteers'], ['Center proposals', 'New proposal']] },
   ])('navigates and reloads exactly the authorized views for $authorizedRoles', async ({ authorizedRoles, views }) => {
     roles = authorizedRoles; await signIn();
     expect([...document.querySelectorAll('nav button')].map(node => node.textContent)).toEqual([...views.map(([label]) => label), 'Reload view']);

@@ -140,6 +140,8 @@ if (new URLSearchParams(location.search).has('collision')) {
   ] };
 }
 
+const roster = volunteers.map(volunteer => ({ ...volunteer }));
+
 const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-admin', email: 'admin@example.test', active: true, roles: ['administrator'], volunteerId: null, centerIds: [center.id] }, centers: [center] };
 
 const readSessions = new URLSearchParams(location.search).has('read-session');
@@ -197,6 +199,16 @@ const fixtureFetch: typeof fetch = async (input, init) => {
     }
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;
+    case 'admin.volunteer.read': data = { ...revisions, volunteers: roster }; break;
+    case 'admin.volunteer.update': {
+      if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
+      const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
+      const volunteer = roster.find(row => row.id === payload.volunteerId);
+      if (!volunteer) return Response.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Volunteer not found.' } });
+      Object.assign(volunteer, { name: payload.name, email: payload.email });
+      revisions.dataRevision++;
+      data = { ...revisions, volunteer }; break;
+    }
 
     default: return Response.json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'This synthetic workspace supports reads and previews only.' } });
   }

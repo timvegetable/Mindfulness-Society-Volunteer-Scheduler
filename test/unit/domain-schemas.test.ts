@@ -28,6 +28,7 @@ const payloads: Record<string, unknown> = {
   'admin.import.mapping.upsert': { sourceEmail: 'v@example.test', volunteerId: 'v1' },
   'admin.insights.read': {}, 'center.candidate.read': {}, 'center.candidate.update': { centerId: 'c1', ...weekly },
   'admin.center.candidate.confirm': { candidateId: 'c1' },
+  'admin.volunteer.read': {}, 'admin.volunteer.update': { volunteerId: 'v1', name: 'Volunteer', email: 'v@example.test' },
 };
 const syncView = { status: { lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null, outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 }, pending: [], imports: [], volunteers: [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }] };
 const results: Record<string, object> = {
@@ -44,6 +45,7 @@ const results: Record<string, object> = {
   'admin.insights.read': { leftoverVolunteers: [volunteer], grid: [{ weekday: 1, start: '09:00', end: '10:00', volunteers: [volunteer], count: 1 }] },
   'center.candidate.read': { candidates: [{ candidate, coverage }], centers: [center] },
   'center.candidate.update': { candidate, coverage }, 'admin.center.candidate.confirm': { candidate: { ...candidate, status: 'confirmed' }, session },
+  'admin.volunteer.read': { volunteers: [volunteer] }, 'admin.volunteer.update': { volunteer },
 };
 
 describe('shared API schemas', () => {

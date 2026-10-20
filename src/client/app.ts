@@ -145,7 +145,7 @@ function configureTabs() {
   const roles = me!.user.roles;
   const tabs: [string, string][] = [];
   if (roles.includes('volunteer')) tabs.push(['volunteer', 'My availability']);
-  if (roles.includes('administrator')) tabs.push(['schedule', 'Schedule'], ['imports', 'Availability sync'], ['insights', 'Insights']);
+  if (roles.includes('administrator')) tabs.push(['schedule', 'Schedule'], ['imports', 'Availability sync'], ['insights', 'Insights'], ['volunteers', 'Volunteers']);
   if (roles.includes('administrator') || roles.includes('center-contact')) tabs.push(['candidates', 'Center proposals']);
   tabs.forEach(([key, title]) => {
     const control = button(title, async () => {
@@ -202,6 +202,7 @@ async function showTab(tab: string, keepContent = false) {
     else if (tab === 'candidates') { const data = await api.call('center.candidate.read', {}); paint(() => candidatesView(data)); }
     else if (tab === 'insights') { const data = await api.call('admin.insights.read', {}); paint(() => insightsView(data)); }
     else if (tab === 'imports') { const data = await api.call('admin.sync.read', {}); paint(() => importsView(data)); }
+    else if (tab === 'volunteers') { const data = await api.call('admin.volunteer.read', {}); paint(() => volunteersView(data)); }
   } finally { if (generation === pageGeneration) content.setAttribute('aria-busy', 'false'); }
   return painted;
 }
@@ -705,6 +706,32 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
   const history = el('details', '', 'card'); history.append(el('summary', `Import history (${data.imports.length})`)); content.append(history);
   if (data.imports.length) history.append(table(['Checked', 'Status', 'Participants', 'Matched'], [...data.imports].reverse().map(run => [syncTime(run.startedAt ?? null), statusPill(run.status), String(run.participantCount), String(run.matchedCount ?? 0)])));
   else empty(history, 'No import history yet.');
+}
+
+function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
+  const panel = card('Volunteers', 'Correct a name or email. Availability sync matches WhenIsGood submissions by email.'); panel.classList.add('volunteers-panel'); content.append(panel);
+  const sorted = [...data.volunteers].sort((left, right) => rosterOptionCollator.compare(left.name, right.name) || rosterOptionCollator.compare(left.email, right.email));
+  const rows = sorted.map(volunteer => {
+    const nameCell = el('div', volunteer.name); const emailCell = el('div', volunteer.email); const action = el('div', '', 'actions');
+    const edit = button('Edit', () => {
+      const editor = form(action, 'Save', async () => {
+        await api.call('admin.volunteer.update', { volunteerId: volunteer.id, name: name.value, email: email.value }, data.dataRevision);
+        await refreshView('volunteers', 'Volunteer details saved.', `[data-focus-key="volunteer-${CSS.escape(volunteer.id)}"]`);
+      });
+      editor.node.id = `volunteer-editor-${volunteer.id}`;
+      const name = input('text', volunteer.name); const email = input('email', volunteer.email);
+      for (const [control, label] of [[name, 'Name'], [email, 'Email']] as const) {
+        control.setAttribute('form', editor.node.id); control.setAttribute('aria-label', `${label} for ${volunteer.name}`);
+        control.addEventListener('input', () => markDirty(editor.node));
+      }
+      const cancel = button('Cancel', () => { nameCell.replaceChildren(volunteer.name); emailCell.replaceChildren(volunteer.email); action.replaceChildren(edit); edit.focus(); }, 'quiet');
+      append(editor.node, editor.submit, cancel);
+      nameCell.replaceChildren(name); emailCell.replaceChildren(email); action.replaceChildren(editor.node); name.focus();
+    }, 'quiet');
+    edit.dataset.focusKey = `volunteer-${volunteer.id}`; action.append(edit);
+    return [nameCell, emailCell, statusPill(volunteer.lifecycleStatus), action];
+  });
+  if (rows.length) panel.append(table(['Name', 'Email', 'Status', 'Action'], rows)); else empty(panel, 'No volunteers.');
 }
 
 function insightsView(data: ResultOf<'admin.insights.read'>) {

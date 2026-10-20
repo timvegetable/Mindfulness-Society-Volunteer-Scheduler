@@ -212,6 +212,17 @@ tbody tr:hover {
 .pending-participants form {
   margin: 0;
 }
+.volunteers-panel table {
+  min-width: 48rem;
+}
+.volunteers-panel td input {
+  width: 100%;
+  min-width: 14rem;
+}
+.volunteers-panel form {
+  margin: 0;
+  flex-wrap: nowrap;
+}
 .session-status.session-status-success {
   color: var(--accent);
   background: #e3eee7;
