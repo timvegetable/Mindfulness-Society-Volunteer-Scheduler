@@ -218,6 +218,16 @@ const fixtureFetch: typeof fetch = async (input, init) => {
       data = { ...revisions, volunteer }; break;
     }
 
+    case 'admin.volunteer.remove': {
+      if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
+      const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
+      const volunteer = roster.find(row => row.id === payload.volunteerId);
+      if (!volunteer) return Response.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Volunteer not found.' } });
+      Object.assign(volunteer, { lifecycleStatus: 'inactive' });
+      revisions.dataRevision++;
+      data = { ...revisions, volunteer }; break;
+    }
+
     default: return Response.json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'This synthetic workspace supports reads and previews only.' } });
   }
   return Response.json({ ok: true, data });
@@ -280,4 +290,4 @@ window.google = { accounts: { id: {
   initialize({ callback }) { queueMicrotask(() => callback({ credential: 'synthetic-only' })); },
   renderButton() {}, disableAutoSelect() {},
 } } };
-await startClient({ fetch: fixtureFetch, confirm: () => false, prompt: () => null });
+await startClient({ fetch: fixtureFetch, confirm: message => message.startsWith('Remove '), prompt: () => null });

@@ -10,7 +10,7 @@ import { previewSchedule, publishSchedule } from './schedule';
 import { readCandidates, updateCandidate, confirmCandidate } from './candidates';
 import { previewImport, promoteImport, upsertMapping } from './imports';
 import { disableCalendarSubscription, enableCalendarSubscription, readCalendarSubscription, resetCalendarSubscription } from './calendar';
-import { createVolunteer, updateVolunteerDetails } from './volunteers';
+import { createVolunteer, removeVolunteer, updateVolunteerDetails } from './volunteers';
 import { scheduleView, type HandlerContext } from './context';
 
 export function handleOperation(operation: Operation, payload: unknown, ctx: HandlerContext) {
@@ -45,5 +45,6 @@ export function handleOperation(operation: Operation, payload: unknown, ctx: Han
     case 'admin.volunteer.read': return Effect.succeed({ volunteers: ctx.state.volunteers });
     case 'admin.volunteer.create': return createVolunteer(ctx, input('admin.volunteer.create'));
     case 'admin.volunteer.update': return updateVolunteerDetails(ctx, input('admin.volunteer.update'));
+    case 'admin.volunteer.remove': return removeVolunteer(ctx, input('admin.volunteer.remove'));
   }
 }

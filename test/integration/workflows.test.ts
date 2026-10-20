@@ -23,6 +23,7 @@ const payloads: Record<Operation, unknown> = {
   'admin.center.candidate.confirm': { candidateId: 'candidate-1' },
   'admin.volunteer.read': {}, 'admin.volunteer.create': { name: 'Frankie Example', email: 'frankie@example.test' },
   'admin.volunteer.update': { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey.updated@example.test' },
+  'admin.volunteer.remove': { volunteerId: 'volunteer-3' },
 };
 // Independent expected policy, deliberately not calculated using the implementation.
 const volunteerAllowed = new Set<Operation>(['session.me', 'volunteer.dashboard', 'volunteer.availability.recurring.update', 'volunteer.availability.exception.create', 'volunteer.assignment.cancel', 'volunteer.calendar.read', 'volunteer.calendar.enable', 'volunteer.calendar.reset', 'volunteer.calendar.disable']);
@@ -689,6 +690,50 @@ describe('administrator volunteer record edits', () => {
     const saved = await app.read();
     expect(await app.rawRequest(raw)).toBe(first);
     expect(JSON.parse(await app.rawRequest({ ...raw, payload: { ...raw.payload, name: 'Casey Second' }, idempotencyKey: 'volunteer-edit-2' }))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    expect(await app.read()).toEqual(saved);
+    expect(app.notifications).toHaveLength(0);
+  });
+  it('removes a volunteer by marking them inactive, silently, keeping every row and past schedule output', async () => {
+    const app = await application();
+    success(await app.request('admin.schedule.rerun')); const published = success(await app.request('admin.schedule.read'));
+    expect(published.assignments.some(row => row.volunteerId === 'volunteer-1')).toBe(true);
+    const before = await app.read(); const notified = app.notifications.length;
+    const removed = success(await app.request('admin.volunteer.remove', { volunteerId: 'volunteer-1' }));
+    expect(removed.volunteer).toMatchObject({ id: 'volunteer-1', lifecycleStatus: 'inactive' });
+    const after = await app.read();
+    expect(after.volunteers.find(row => row.id === 'volunteer-1')?.lifecycleStatus).toBe('inactive');
+    expect(after.volunteers.map(row => row.id)).toEqual(before.volunteers.map(row => row.id));
+    const { volunteers: _after, dataRevision: _a, schedulingInputRevision: _b, ...otherAfter } = after; const { volunteers: _before, dataRevision: _c, schedulingInputRevision: _d, ...otherBefore } = before;
+    expect(otherAfter).toEqual(otherBefore);
+    expect(after.volunteers.filter(row => row.id !== 'volunteer-1')).toEqual(before.volunteers.filter(row => row.id !== 'volunteer-1'));
+    const view = success(await app.request('admin.schedule.read'));
+    expect(view.stale).toBe(true);
+    expect(view.assignments).toEqual(published.assignments); expect(view.backups).toEqual(published.backups);
+    expect(app.notifications).toHaveLength(notified);
+  });
+  it('excludes a removed volunteer from the next schedule preview and publication', async () => {
+    const app = await application();
+    const first = success(await app.request('admin.schedule.preview'));
+    const removedId = first.output.assignments[0]!.volunteerId;
+    success(await app.request('admin.volunteer.remove', { volunteerId: removedId }));
+    const preview = success(await app.request('admin.schedule.preview'));
+    expect([...preview.output.assignments, ...preview.output.backups].some(row => row.volunteerId === removedId)).toBe(false);
+    const published = success(await app.request('admin.schedule.rerun'));
+    expect([...published.assignments, ...published.backups].some(row => row.volunteerId === removedId)).toBe(false);
+  });
+  it('rejects removing an unknown or already inactive volunteer without writes', async () => {
+    const app = await application(); const before = await app.read();
+    expect(await app.request('admin.volunteer.remove', { volunteerId: 'missing' })).toEqual({ ok: false, error: { code: 'NOT_FOUND', message: 'Volunteer not found.' } });
+    expect(await app.request('admin.volunteer.remove', { volunteerId: 'volunteer-4' })).toEqual({ ok: false, error: { code: 'CONFLICT', message: 'This volunteer is already inactive.' } });
+    expect(await app.read()).toEqual(before);
+  });
+  it('rejects a stale removal and replays a repeated removal key without another write', async () => {
+    const app = await application();
+    const raw = { operation: 'admin.volunteer.remove', payload: { volunteerId: 'volunteer-3' }, credential: 'admin', expectedRevision: 0, idempotencyKey: 'volunteer-remove' };
+    const first = await app.rawRequest(raw); expect(JSON.parse(first).ok).toBe(true);
+    const saved = await app.read();
+    expect(await app.rawRequest(raw)).toBe(first);
+    expect(JSON.parse(await app.rawRequest({ ...raw, payload: { volunteerId: 'volunteer-2' }, idempotencyKey: 'volunteer-remove-2' }))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     expect(await app.read()).toEqual(saved);
     expect(app.notifications).toHaveLength(0);
   });
