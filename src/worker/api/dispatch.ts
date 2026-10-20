@@ -6,7 +6,7 @@ import { Effect, Option } from 'effect';
 import { AppError } from '../../shared/api/errors';
 import { type Operation } from '../../shared/api/schemas';
 import { normalizeWeeklyIntervals } from '../../shared/domain/intervals';
-import type { Snapshot, User } from '../../shared/domain/models';
+import type { Snapshot, User, VolunteerChange } from '../../shared/domain/models';
 import { AuthService } from '../services/AuthService';
 import { Database, schedulingInputsChanged } from '../services/Database';
 import { Clock } from '../services/Clock';
@@ -90,13 +90,14 @@ export function dispatch(raw: unknown, config: AppConfig) {
       return yield* synchronize(config, { kind: 'administrator', id: user.id }, { key, fingerprint, before });
     }
     const state = write ? structuredClone(before) : before;
-    const result = yield* handleOperation(operation, payload, { state, user, config, now });
+    const volunteerChanges: VolunteerChange[] = [];
+    const result = yield* handleOperation(operation, payload, { state, user, config, now, volunteerChanges });
     const dataRevision = before.dataRevision + (write ? 1 : 0);
     const schedulingInputRevision = before.schedulingInputRevision + (write && schedulingInputsChanged(before, state) ? 1 : 0);
     const data = yield* Effect.try({ try: () => decodeResult(operation, { ...result, dataRevision, schedulingInputRevision }), catch: () => new AppError('INTERNAL_ERROR', 'The operation produced an invalid response.') });
     const response = JSON.stringify({ ok: true, data });
     if (!write) return response;
-    const committed = yield* database.commit({ before, after: state, key, fingerprint, response, createdAt: now.toISOString() }).pipe(Effect.match({ onSuccess: () => null, onFailure: (error) => error }));
+    const committed = yield* database.commit({ before, after: state, volunteerChanges, key, fingerprint, response, createdAt: now.toISOString() }).pipe(Effect.match({ onSuccess: () => null, onFailure: (error) => error }));
     if (committed) {
       const replay = yield* database.findIdempotency(key, now.toISOString());
       if (replay) {

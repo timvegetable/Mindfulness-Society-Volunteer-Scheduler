@@ -9,7 +9,7 @@ export const operations = [
   'admin.import.whenIsGood.preview', 'admin.import.whenIsGood.promote',
   'admin.import.mapping.upsert', 'admin.insights.read', 'center.candidate.read',
   'center.candidate.update', 'admin.center.candidate.confirm',
-  'admin.volunteer.read', 'admin.volunteer.update', 'admin.volunteer.create', 'admin.volunteer.remove',
+  'admin.volunteer.read', 'admin.volunteer.history', 'admin.volunteer.update', 'admin.volunteer.create', 'admin.volunteer.remove',
 ] as const;
 export type Operation = typeof operations[number];
 export const mutatingOperations = new Set<Operation>([
@@ -35,6 +35,6 @@ export const operationRoles: Record<Operation, readonly Role[]> = {
   'admin.import.whenIsGood.promote': ['administrator'], 'admin.import.mapping.upsert': ['administrator'],
   'admin.insights.read': ['administrator'], 'center.candidate.read': ['administrator', 'center-contact'],
   'center.candidate.update': ['administrator', 'center-contact'], 'admin.center.candidate.confirm': ['administrator'],
-  'admin.volunteer.read': ['administrator'], 'admin.volunteer.update': ['administrator'], 'admin.volunteer.create': ['administrator'],
+  'admin.volunteer.read': ['administrator'], 'admin.volunteer.history': ['administrator'], 'admin.volunteer.update': ['administrator'], 'admin.volunteer.create': ['administrator'],
   'admin.volunteer.remove': ['administrator'],
 };

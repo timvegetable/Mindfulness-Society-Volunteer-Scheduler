@@ -141,9 +141,16 @@ if (new URLSearchParams(location.search).has('collision')) {
 }
 
 const changes: ResultOf<'admin.volunteer.read'>['changes'][number][] = [];
-const record = (volunteer: { id: string; name: string }, kind: 'added' | 'updated' | 'removed', fields: (typeof changes)[number]['fields']) => {
-  if (fields.length) changes.push({ id: `synthetic-change-${changes.length}`, occurredAt: '2026-10-04T12:00:00.000Z', actorId: 'synthetic-admin', actorEmail: 'admin@example.test', volunteerId: volunteer.id, volunteerName: volunteer.name, kind, fields });
+const record = (volunteer: { id: string; name: string }, kind: (typeof changes)[number]['kind'], changedFields: (typeof changes)[number]['changedFields']) => {
+  if (changedFields.length) changes.push({ id: `synthetic-change-${String(changes.length).padStart(3, '0')}`, occurredAt: new Date(Date.UTC(2026, 9, 4, 12, 0, changes.length)).toISOString(), actorId: 'synthetic-admin', actorEmail: 'admin@example.test', volunteerId: volunteer.id, volunteerName: volunteer.name, kind, changedFields });
 };
+// Mirrors the Worker: newest first, 50 per page, resumed by the (occurredAt, id) of the last entry shown.
+const historyPage = (before: { id: string } | null): Pick<ResultOf<'admin.volunteer.history'>, 'changes' | 'older'> => {
+  const newest = [...changes].reverse(); const start = before ? newest.findIndex(row => row.id === before.id) + 1 : 0;
+  const page = newest.slice(start, start + 50);
+  return { changes: page, older: start + 50 < newest.length ? { occurredAt: page.at(-1)!.occurredAt, id: page.at(-1)!.id } : null };
+};
+for (let index = 0; index < Number(new URLSearchParams(location.search).get('history') ?? 0); index++) record({ id: volunteers[0]!.id, name: 'Synthetic Volunteer 01' }, 'updated', [{ field: 'name', before: `Earlier ${index}`, after: `Earlier ${index + 1}` }]);
 const roster: ResultOf<'admin.volunteer.read'>['volunteers'][number][] = volunteers.map(volunteer => ({ ...volunteer }));
 
 const identity: ResultOf<'session.me'> = { ...revisions, user: { id: 'synthetic-admin', email: 'admin@example.test', active: true, roles: ['administrator'], volunteerId: null, centerIds: [center.id] }, centers: [center] };
@@ -203,7 +210,8 @@ const fixtureFetch: typeof fetch = async (input, init) => {
     }
     case 'admin.insights.read': data = insights; break;
     case 'center.candidate.read': data = candidates; break;
-    case 'admin.volunteer.read': data = { ...revisions, volunteers: roster, changes: [...changes].reverse() }; break;
+    case 'admin.volunteer.read': data = { ...revisions, volunteers: roster, ...historyPage(null) }; break;
+    case 'admin.volunteer.history': data = { ...revisions, ...historyPage(Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload).before) }; break;
     case 'admin.volunteer.create': {
       if (request.expectedRevision !== revisions.dataRevision) return Response.json({ ok: false, error: { code: 'STALE_REVISION', message: 'Reload before saving.' } });
       const payload = Schema.decodeUnknownSync(payloadSchemas[operation])(request.payload);
@@ -277,7 +285,7 @@ document.querySelector('#check-layout')!.addEventListener('click', () => {
     const sticky = Math.abs(header.getBoundingClientRect().top - before) < 2;
     const style = getComputedStyle(region);
     const page = document.querySelector('[aria-current="page"]')?.textContent;
-    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? rotatingWeeklySchedule ? 40 : weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : page === 'Volunteers' ? roster.length : 40;
+    const expectedRows = page === 'Availability sync' ? synchronization.pending.length : page === 'Schedule' ? rotatingWeeklySchedule ? 40 : weeklySchedule ? 38 : schedule.sessions.filter(session => document.querySelector('.schedule-heading h2')?.textContent !== 'Schedule preview' || session.status !== 'cancelled').length : page === 'Volunteers' ? region.closest('.volunteer-changes') ? Number(region.closest('.volunteer-changes')!.textContent?.match(/Showing (?:the newest|all) (\d+) change/)?.[1]) : roster.length : 40;
     // The reference fixture has two changed dates and two unchanged active dates.
     const comparisonRows = diffReference ? region.classList.contains('schedule-diff') ? 2 : region.closest('.schedule-unchanged') ? 1 : 3 : params.has('reference') && (region.classList.contains('schedule-diff') || region.closest('.schedule-unchanged')) ? 2 : expectedRows;
     check(rows === comparisonRows, 'Synthetic row count does not match the current records');

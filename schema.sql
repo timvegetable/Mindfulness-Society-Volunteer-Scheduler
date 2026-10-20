@@ -51,9 +51,9 @@ CREATE TABLE volunteer_changes (
   volunteer_id TEXT NOT NULL REFERENCES volunteers (id),
   volunteer_name TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('added', 'updated', 'removed')),
-  fields TEXT NOT NULL
+  changed_fields TEXT NOT NULL
 );
-CREATE INDEX volunteer_changes_occurred_at ON volunteer_changes (occurred_at DESC);
+CREATE INDEX volunteer_changes_occurred_at ON volunteer_changes (occurred_at DESC, id DESC);
 
 CREATE TABLE users (
   id TEXT PRIMARY KEY,

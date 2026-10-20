@@ -295,7 +295,8 @@ test('an administrator corrects a volunteer name and email in the Volunteers tab
   const saved = rows.filter({ hasText: 'Synthetic Volunteer Corrected' });
   await expect(saved).toContainText('corrected@example.test');
   await expect(saved.getByRole('button', { name: 'Edit', exact: true })).toBeFocused();
-  await page.getByText('Recent changes (1)', { exact: true }).click();
+  await page.getByText('Change history', { exact: true }).click();
+  await expect(page.locator('.volunteer-changes')).toContainText('Showing all 1 change.');
   const changes = page.locator('.volunteer-changes tbody tr');
   await expect(changes).toHaveCount(1);
   await expect(changes.first()).toContainText('admin@example.test');
@@ -331,6 +332,27 @@ test('an administrator adds a volunteer in the Volunteers tab and can link it in
   await checkLayout(page);
   await page.getByRole('button', { name: 'Availability sync', exact: true }).click();
   await expect(page.locator('.pending-participants tbody tr').first().getByRole('combobox').locator('option', { hasText: 'Synthetic Added Volunteer (added@example.test)' })).toHaveCount(1);
+});
+
+test('the Volunteers tab shows the newest 50 changes and fetches older ones on request', async ({ page }) => {
+  await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
+  const viewport = page.viewportSize()!;
+  await page.goto(`/__browser-check?history=120&width=${viewport.width}&height=${viewport.height}`);
+  await page.getByRole('button', { name: 'Volunteers', exact: true }).click();
+  await page.getByText('Change history', { exact: true }).click();
+  const changes = page.locator('.volunteer-changes tbody tr');
+  await expect(changes).toHaveCount(50);
+  await expect(page.locator('.volunteer-changes')).toContainText('Showing the newest 50 changes.');
+  await expect(changes.first()).toContainText('Earlier 119 → Earlier 120');
+  const more = page.getByRole('button', { name: 'Show older', exact: true });
+  await more.click();
+  await expect(changes).toHaveCount(100);
+  await more.click();
+  await expect(changes).toHaveCount(120);
+  await expect(changes.last()).toContainText('Earlier 0 → Earlier 1');
+  await expect(page.locator('.volunteer-changes')).toContainText('Showing all 120 changes.');
+  await expect(more).toBeHidden();
+  await checkLayout(page);
 });
 
 test('an administrator removes a volunteer by marking them inactive in the Volunteers tab', async ({ page }) => {

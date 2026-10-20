@@ -29,6 +29,7 @@ let syncPending: ResultOf<'admin.sync.read'>['pending'];
 let syncVolunteers: ResultOf<'admin.sync.read'>['volunteers'];
 let adminVolunteers: Volunteer[];
 let volunteerChanges: ResultOf<'admin.volunteer.read'>['changes'];
+let volunteerPages: ResultOf<'admin.volunteer.history'>[];
 let adminSchedule: ResultOf<'admin.schedule.read'> | undefined;
 let previewOutput: ResultOf<'admin.schedule.preview'>['output'] | undefined;
 const pendingParticipant = (id: string, name: string): ResultOf<'admin.sync.read'>['pending'][number] => ({
@@ -56,7 +57,8 @@ async function mount() {
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
       ...(body.operation === 'admin.sync.read' ? { pending: syncPending, imports: [], volunteers: syncVolunteers } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
-    else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: adminVolunteers, changes: volunteerChanges };
+    else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: adminVolunteers, changes: volunteerChanges, older: volunteerPages.length ? { occurredAt: volunteerChanges.at(-1)!.occurredAt, id: volunteerChanges.at(-1)!.id } : null };
+    else if (body.operation === 'admin.volunteer.history') data = volunteerPages.shift()!;
     else if (body.operation === 'admin.volunteer.create') {
       const payload = (body as unknown as { payload: { name: string; email: string } }).payload;
       const created = { ...volunteer, id: 'v-new', ...payload, lifecycleStatus: 'newly-joined' as const, interviewStatus: 'incomplete' as const, readinessRank: null };
@@ -70,7 +72,7 @@ async function mount() {
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
   requests = []; roles = ['volunteer']; confirmAnswer = false; confirmMessage = ''; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined; volunteerDashboardOverride = undefined;
-  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminVolunteers = [volunteer]; volunteerChanges = []; adminSchedule = undefined; previewOutput = undefined;
+  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminVolunteers = [volunteer]; volunteerChanges = []; volunteerPages = []; adminSchedule = undefined; previewOutput = undefined;
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
 });
@@ -351,18 +353,35 @@ describe('client DOM behaviors', () => {
     expect(document.activeElement).toBe(document.querySelector('[data-focus-key="volunteer-v-new"]'));
   });
 
-  it('shows Recent changes below the roster in the order received, with administrator and before/after values', async () => {
+  it('shows the change history below the roster in the order received, with administrator and before/after values', async () => {
     roles = ['administrator'];
     volunteerChanges = [
-      { id: 'c2', occurredAt: '2026-10-04T14:00:00.000Z', actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'removed', fields: [{ field: 'status', before: 'active', after: 'inactive' }] },
-      { id: 'c1', occurredAt: '2026-10-04T13:00:00.000Z', actorId: 'u2', actorEmail: 'other@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'updated', fields: [{ field: 'email', before: 'old@example.test', after: 'new@example.test' }] },
+      { id: 'c2', occurredAt: '2026-10-04T14:00:00.000Z', actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'removed', changedFields: [{ field: 'status', before: 'active', after: 'inactive' }] },
+      { id: 'c1', occurredAt: '2026-10-04T13:00:00.000Z', actorId: 'u2', actorEmail: 'other@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'updated', changedFields: [{ field: 'email', before: 'old@example.test', after: 'new@example.test' }] },
     ];
     await signIn(); click('Volunteers'); await settle();
-    expect(document.querySelector('.volunteers-panel')!.textContent).not.toContain('Recent changes');
+    expect(document.querySelector('.volunteers-panel')!.textContent).not.toContain('Change history');
     const rows = [...document.querySelectorAll('.volunteer-changes tbody tr')].map(row => row.textContent!);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain('admin@example.test'); expect(rows[0]).toContain('Removed'); expect(rows[0]).toContain('status: active → inactive');
     expect(rows[1]).toContain('other@example.test'); expect(rows[1]).toContain('Updated'); expect(rows[1]).toContain('email: old@example.test → new@example.test');
+  });
+
+  it('describes the changes shown, and fetches the next older page with the cursor when asked', async () => {
+    roles = ['administrator'];
+    const change = (id: string, at: string) => ({ id, occurredAt: at, actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Alex Example', kind: 'updated' as const, changedFields: [{ field: 'name' as const, before: 'A', after: 'B' }] });
+    volunteerChanges = [change('c3', '2026-10-04T15:00:00.000Z'), change('c2', '2026-10-04T14:00:00.000Z')];
+    volunteerPages = [{ dataRevision: 7, schedulingInputRevision: 7, changes: [change('c1', '2026-10-04T13:00:00.000Z')], older: null }];
+    await signIn(); click('Volunteers'); await settle();
+    const panel = document.querySelector('.volunteer-changes')!;
+    expect(panel.textContent).toContain('Showing the newest 2 changes.'); expect(panel.textContent).not.toMatch(/Every add/);
+    expect(panel.querySelectorAll('tbody tr')).toHaveLength(2);
+    const more = [...panel.querySelectorAll('button')].find(node => node.textContent === 'Show older')!;
+    expect(more.hidden).toBe(false);
+    more.click(); await settle();
+    expect(requests.find(item => item.operation === 'admin.volunteer.history')).toMatchObject({ payload: { before: { occurredAt: '2026-10-04T14:00:00.000Z', id: 'c2' } } });
+    expect([...panel.querySelectorAll('tbody tr')].map(row => row.textContent)).toHaveLength(3);
+    expect(panel.textContent).toContain('Showing all 3 changes.'); expect(more.hidden).toBe(true);
   });
 
   it('says so when no volunteer changes have been recorded', async () => {

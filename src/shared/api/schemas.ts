@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 import { roles } from '../domain/roles';
 import { isISODate } from '../domain/dates';
 import { operations, type Operation } from './operations';
-import { applicationTimeZone } from '../domain/models';
+import { applicationTimeZone, volunteerChangeFields, volunteerChangeKinds } from '../domain/models';
 export type { Operation } from './operations';
 
 const strict = <S extends Schema.Top>(schema: S): S["Rebuild"] => schema.annotate({ parseOptions: { onExcessProperty: 'error' } });
@@ -30,9 +30,11 @@ export const VolunteerSchema = object({
   interviewStatus: Schema.Literals(['complete', 'incomplete']), readinessRank: Schema.NullOr(integer), source: maybeText, ...timestamps,
 });
 export const VolunteerChangeSchema = object({
-  id: text, occurredAt: text, actorId: text, actorEmail: text, volunteerId: text, volunteerName: text, kind: Schema.Literals(['added', 'updated', 'removed']),
-  fields: Schema.Array(object({ field: Schema.Literals(['name', 'email', 'status']), before: Schema.NullOr(Schema.String), after: Schema.String })),
+  id: text, occurredAt: text, actorId: text, actorEmail: text, volunteerId: text, volunteerName: text, kind: Schema.Literals(volunteerChangeKinds),
+  changedFields: Schema.Array(object({ field: Schema.Literals(volunteerChangeFields), before: Schema.NullOr(Schema.String), after: Schema.String })),
 });
+export const VolunteerChangeCursorSchema = object({ occurredAt: text, id: text });
+const volunteerChangePage = { changes: Schema.Array(VolunteerChangeSchema), older: Schema.NullOr(VolunteerChangeCursorSchema) };
 export const UserSchema = object({ id: text, email: text, roles: Schema.Array(Schema.Literals(roles)), volunteerId: Schema.NullOr(text), centerIds: Schema.Array(text), active: Schema.Boolean });
 export const RecurringIntervalSchema = object({ id: text, volunteerId: text, ...interval, weekday, timeZone: zone, source: maybeText, updatedAt: maybeText }).check(validInterval);
 export const AvailabilityExceptionSchema = object({ id: text, volunteerId: text, date, kind: Schema.Literals(['available', 'unavailable']), ...interval, timeZone: zone, reason: maybeText, updatedAt: maybeText }).check(validInterval);
@@ -85,6 +87,7 @@ export const payloadSchemas = {
   'center.candidate.update': candidateUpdate,
   'admin.center.candidate.confirm': object({ candidateId: text }),
   'admin.volunteer.read': empty,
+  'admin.volunteer.history': object({ before: VolunteerChangeCursorSchema }),
   // Name and email stay plain strings so the handler can explain blank or malformed values.
   'admin.volunteer.create': object({ name: Schema.String, email: Schema.String }),
   'admin.volunteer.update': object({ volunteerId: text, name: Schema.String, email: Schema.String }),
@@ -114,7 +117,8 @@ export const resultSchemas = {
   'center.candidate.read': object({ ...revisions, candidates: Schema.Array(CandidateWithCoverageSchema), centers: Schema.Array(CenterSchema) }),
   'center.candidate.update': object({ ...revisions, candidate: CandidateSchema, coverage: CoverageSchema }),
   'admin.center.candidate.confirm': object({ ...revisions, candidate: CandidateSchema, session: SessionSchema }),
-  'admin.volunteer.read': object({ ...revisions, volunteers: Schema.Array(VolunteerSchema), changes: Schema.Array(VolunteerChangeSchema) }),
+  'admin.volunteer.read': object({ ...revisions, volunteers: Schema.Array(VolunteerSchema), ...volunteerChangePage }),
+  'admin.volunteer.history': object({ ...revisions, ...volunteerChangePage }),
   'admin.volunteer.create': object({ ...revisions, volunteer: VolunteerSchema }),
   'admin.volunteer.update': object({ ...revisions, volunteer: VolunteerSchema }),
   'admin.volunteer.remove': object({ ...revisions, volunteer: VolunteerSchema }),

@@ -2,7 +2,8 @@ import { Effect } from 'effect';
 import type { PayloadOf } from '../../../shared/api/schemas';
 import { isEmailAddress } from '../../../shared/domain/email';
 import { normalizeImportEmail, savedMappingFor } from '../../../shared/imports/whenIsGood';
-import type { Snapshot, Volunteer, VolunteerChange } from '../../../shared/domain/models';
+import type { Volunteer, VolunteerChange, VolunteerChangeCursor } from '../../../shared/domain/models';
+import { Database } from '../../services/Database';
 import { IdGenerator } from '../../services/IdGenerator';
 import { accountEmailKey } from '../authorization';
 import { fail, type HandlerContext } from './context';
@@ -27,16 +28,20 @@ function checkVolunteerDetails(ctx: HandlerContext, volunteerId: string, input: 
   });
 }
 
-const RECENT_CHANGE_LIMIT = 50;
-export const recentVolunteerChanges = (state: Pick<Snapshot, 'volunteerChanges'>) =>
-  [...state.volunteerChanges].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id)).slice(0, RECENT_CHANGE_LIMIT);
+/** A bounded page of the history, newest first, read separately from the snapshot so no operation loads it all. */
+export const readVolunteerChanges = (before: VolunteerChangeCursor | null) =>
+  Effect.gen(function* () { return yield* (yield* Database).readVolunteerChanges(before); });
 
-/** Staged with the change itself, so the commit path saves both or neither. Entries are never edited or removed. */
-function recordChange(ctx: HandlerContext, volunteer: Volunteer, kind: VolunteerChange['kind'], fields: VolunteerChange['fields']) {
+const findVolunteer = (ctx: HandlerContext, volunteerId: string) => {
+  const volunteer = ctx.state.volunteers.find((row) => row.id === volunteerId);
+  return volunteer ? Effect.succeed(volunteer) : fail('NOT_FOUND', 'Volunteer not found.');
+};
+
+/** Collected on the context, so the commit path saves the entry in the same atomic batch as the change. */
+function recordChange(ctx: HandlerContext, volunteer: Volunteer, kind: VolunteerChange['kind'], changedFields: VolunteerChange['changedFields']) {
   return Effect.gen(function* () {
-    if (!fields.length) return;
     const id = yield* (yield* IdGenerator).next;
-    ctx.state.volunteerChanges.push({ id, occurredAt: ctx.now.toISOString(), actorId: ctx.user.id, actorEmail: ctx.user.email, volunteerId: volunteer.id, volunteerName: volunteer.name, kind, fields });
+    ctx.volunteerChanges.push({ id, occurredAt: ctx.now.toISOString(), actorId: ctx.user.id, actorEmail: ctx.user.email, volunteerId: volunteer.id, volunteerName: volunteer.name, kind, changedFields });
   });
 }
 
@@ -54,14 +59,14 @@ export function createVolunteer(ctx: HandlerContext, input: PayloadOf<'admin.vol
 
 export function updateVolunteerDetails(ctx: HandlerContext, input: PayloadOf<'admin.volunteer.update'>) {
   return Effect.gen(function* () {
-    const volunteer = ctx.state.volunteers.find((row) => row.id === input.volunteerId);
-    if (!volunteer) return yield* fail('NOT_FOUND', 'Volunteer not found.');
+    const volunteer = yield* findVolunteer(ctx, input.volunteerId);
+    const changedFields: VolunteerChange['changedFields'] = [];
+    if (volunteer.name !== input.name) changedFields.push({ field: 'name', before: volunteer.name, after: input.name });
+    if (volunteer.email !== input.email) changedFields.push({ field: 'email', before: volunteer.email, after: input.email });
+    if (!changedFields.length) return yield* fail('INVALID_REQUEST', 'No changes to save.');
     const accounts = yield* checkVolunteerDetails(ctx, volunteer.id, input);
-    const fields: VolunteerChange['fields'] = [];
-    if (volunteer.name !== input.name) fields.push({ field: 'name', before: volunteer.name, after: input.name });
-    if (volunteer.email !== input.email) fields.push({ field: 'email', before: volunteer.email, after: input.email });
     Object.assign(volunteer, { name: input.name, email: input.email, updatedAt: ctx.now.toISOString() });
-    yield* recordChange(ctx, volunteer, 'updated', fields);
+    yield* recordChange(ctx, volunteer, 'updated', changedFields);
     for (const account of accounts) account.email = input.email;
     return { volunteer };
   });
@@ -70,8 +75,7 @@ export function updateVolunteerDetails(ctx: HandlerContext, input: PayloadOf<'ad
 // Removal never deletes: an inactive volunteer leaves future scheduling while past output and links stay intact.
 export function removeVolunteer(ctx: HandlerContext, input: PayloadOf<'admin.volunteer.remove'>) {
   return Effect.gen(function* () {
-    const volunteer = ctx.state.volunteers.find((row) => row.id === input.volunteerId);
-    if (!volunteer) return yield* fail('NOT_FOUND', 'Volunteer not found.');
+    const volunteer = yield* findVolunteer(ctx, input.volunteerId);
     if (volunteer.lifecycleStatus === 'inactive') return yield* fail('CONFLICT', 'This volunteer is already inactive.');
     const before = volunteer.lifecycleStatus;
     Object.assign(volunteer, { lifecycleStatus: 'inactive', updatedAt: ctx.now.toISOString() });

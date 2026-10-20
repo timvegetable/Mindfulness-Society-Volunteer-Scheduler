@@ -1,7 +1,8 @@
 import { Context, Effect, Layer } from 'effect';
 import type { Operation } from '../../shared/api/operations';
 import { AppError } from '../../shared/api/errors';
-import type { Snapshot } from '../../shared/domain/models';
+import type { Snapshot, VolunteerChange, VolunteerChangeCursor } from '../../shared/domain/models';
+import { readVolunteerChangePage } from '../repositories/volunteerChanges';
 import { commit, findIdempotency, readSnapshot, readOperationSnapshot, readSynchronizationSnapshot, readSynchronizationHead, readSynchronizationCheck, storageError, type SynchronizationCheck, type CommitInput, type IdempotencyKey, type IdempotencyRecord } from '../repositories/database';
 
 export { schedulingInputsChanged } from '../repositories/database';
@@ -13,6 +14,7 @@ export interface DatabaseService {
   readonly readSynchronizationCheck?: (key: IdempotencyKey, now: string) => Effect.Effect<SynchronizationCheck, AppError>;
   readonly readSynchronizationHead?: Effect.Effect<Snapshot, AppError>;
   readonly readSynchronization?: Effect.Effect<Snapshot, AppError>;
+  readonly readVolunteerChanges: (before: VolunteerChangeCursor | null) => Effect.Effect<{ changes: VolunteerChange[]; older: VolunteerChangeCursor | null }, AppError>;
   readonly findIdempotency: (key: IdempotencyKey, now: string) => Effect.Effect<IdempotencyRecord | null, AppError>;
   readonly commit: (input: CommitInput) => Effect.Effect<void, AppError>;
 }
@@ -31,6 +33,7 @@ export function makeDatabase(db: D1Database, materializeSchedule = false): Datab
     readSynchronizationCheck: (key, now) => operation(() => readSynchronizationCheck(db, key, now)),
     readSynchronizationHead: operation(() => readSynchronizationHead(db)),
     readSynchronization: operation(() => readSynchronizationSnapshot(db)),
+    readVolunteerChanges: before => operation(() => readVolunteerChangePage(db, before)),
     findIdempotency: (key, now) => operation(() => findIdempotency(db, key, now)),
     commit: input => operation(() => commit(db, input, materializeSchedule)),
   };

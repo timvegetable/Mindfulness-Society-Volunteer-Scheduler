@@ -28,7 +28,7 @@ const payloads: Record<string, unknown> = {
   'admin.import.mapping.upsert': { sourceEmail: 'v@example.test', volunteerId: 'v1' },
   'admin.insights.read': {}, 'center.candidate.read': {}, 'center.candidate.update': { centerId: 'c1', ...weekly },
   'admin.center.candidate.confirm': { candidateId: 'c1' },
-  'admin.volunteer.read': {}, 'admin.volunteer.create': { name: 'Volunteer', email: 'v@example.test' }, 'admin.volunteer.update': { volunteerId: 'v1', name: 'Volunteer', email: 'v@example.test' },
+  'admin.volunteer.read': {}, 'admin.volunteer.history': { before: { occurredAt: '2026-10-04T12:00:00.000Z', id: 'c1' } }, 'admin.volunteer.create': { name: 'Volunteer', email: 'v@example.test' }, 'admin.volunteer.update': { volunteerId: 'v1', name: 'Volunteer', email: 'v@example.test' },
   'admin.volunteer.remove': { volunteerId: 'v1' },
 };
 const syncView = { status: { lastAttemptAt: null, lastSuccessAt: null, effectiveChangeAt: null, outcome: 'never', diagnostic: null, participantCount: 0, matchedCount: 0, pendingCount: 0 }, pending: [], imports: [], volunteers: [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }] };
@@ -46,7 +46,8 @@ const results: Record<string, object> = {
   'admin.insights.read': { leftoverVolunteers: [volunteer], grid: [{ weekday: 1, start: '09:00', end: '10:00', volunteers: [volunteer], count: 1 }] },
   'center.candidate.read': { candidates: [{ candidate, coverage }], centers: [center] },
   'center.candidate.update': { candidate, coverage }, 'admin.center.candidate.confirm': { candidate: { ...candidate, status: 'confirmed' }, session },
-  'admin.volunteer.read': { volunteers: [volunteer], changes: [{ id: 'c1', occurredAt: '2026-10-04T12:00:00.000Z', actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Volunteer', kind: 'updated', fields: [{ field: 'name', before: 'Old', after: 'Volunteer' }] }] }, 'admin.volunteer.create': { volunteer }, 'admin.volunteer.update': { volunteer },
+  'admin.volunteer.read': { volunteers: [volunteer], changes: [{ id: 'c1', occurredAt: '2026-10-04T12:00:00.000Z', actorId: 'u1', actorEmail: 'admin@example.test', volunteerId: 'v1', volunteerName: 'Volunteer', kind: 'updated', changedFields: [{ field: 'name', before: 'Old', after: 'Volunteer' }] }], older: null },
+  'admin.volunteer.history': { changes: [], older: { occurredAt: '2026-10-04T12:00:00.000Z', id: 'c1' } }, 'admin.volunteer.create': { volunteer }, 'admin.volunteer.update': { volunteer },
   'admin.volunteer.remove': { volunteer },
 };
 

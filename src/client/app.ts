@@ -1,6 +1,6 @@
 import { compareSchedule } from '../shared/domain/schedule-diff';
 import { ApiClient, ApiError } from './api';
-import type { Candidate, Session, Volunteer } from '../shared/domain/models';
+import type { Candidate, Session, Volunteer, VolunteerChangeKind } from '../shared/domain/models';
 import { formatSessionTitle } from '../shared/domain/session-label';
 import { groupWeeklyScheduleRows, type GroupedScheduleRow, type ScheduleOccurrence } from '../shared/domain/schedule-presentation';
 import { instantMilliseconds, sessionsStartingAfter } from '../shared/domain/availability';
@@ -746,12 +746,23 @@ function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
     return [nameCell, emailCell, statusPill(volunteer.lifecycleStatus), action];
   });
   if (rows.length) panel.append(table(['Name', 'Email', 'Status', 'Action'], rows)); else empty(panel, 'No volunteers.');
-  const history = el('details', '', 'card volunteer-changes'); history.append(el('summary', `Recent changes (${data.changes.length})`), el('p', 'Every add, edit, and removal on this tab, newest first. Entries are kept permanently.', 'muted')); content.append(history);
-  const kinds = { added: 'Added', updated: 'Updated', removed: 'Removed' };
-  if (data.changes.length) history.append(table(['When', 'Administrator', 'Volunteer', 'Change', 'Details'], data.changes.map(change => [
-    syncTime(change.occurredAt), change.actorEmail, change.volunteerName, kinds[change.kind],
-    change.fields.map(item => `${item.field}: ${item.before === null ? '(none)' : item.before} → ${item.after}`).join('; '),
-  ]))); else empty(history, 'No changes recorded yet.');
+  const history = el('details', '', 'card volunteer-changes'); const summary = el('summary', 'Change history');
+  const intro = el('p', 'Volunteers added, renamed, given a new email, or removed on this tab, newest first. Entries are kept permanently. Changes made elsewhere, such as by availability sync, are not listed.', 'muted');
+  const shown = [...data.changes]; let older = data.older;
+  const list = el('div'); const more = button('Show older', async () => {
+    const page = await api.call('admin.volunteer.history', { before: older! });
+    shown.push(...page.changes); older = page.older; renderChanges();
+  }, 'quiet');
+  const kinds: Record<VolunteerChangeKind, string> = { added: 'Added', updated: 'Updated', removed: 'Removed' };
+  const renderChanges = () => {
+    list.replaceChildren();
+    if (shown.length) list.append(el('p', `${older ? 'Showing the newest' : 'Showing all'} ${shown.length} ${shown.length === 1 ? 'change' : 'changes'}.`, 'muted'), table(['When', 'Administrator', 'Volunteer', 'Change', 'Details'], shown.map(change => [
+      syncTime(change.occurredAt), change.actorEmail, change.volunteerName, kinds[change.kind],
+      change.changedFields.map(item => `${item.field}: ${item.before === null ? '(none)' : item.before} → ${item.after}`).join('; '),
+    ]))); else empty(list, 'No changes recorded yet.');
+    more.hidden = !older;
+  };
+  renderChanges(); append(history, summary, intro, list, more); content.append(history);
 }
 
 function insightsView(data: ResultOf<'admin.insights.read'>) {

@@ -23,7 +23,7 @@ const payloads: Record<Operation, unknown> = {
   'admin.insights.read': {}, 'center.candidate.read': {},
   'center.candidate.update': { ...candidateInput, centerId: 'center-1' },
   'admin.center.candidate.confirm': { candidateId: 'candidate-1' },
-  'admin.volunteer.read': {}, 'admin.volunteer.create': { name: 'Frankie Example', email: 'frankie@example.test' },
+  'admin.volunteer.read': {}, 'admin.volunteer.history': { before: { occurredAt: '2026-10-05T00:00:00.000Z', id: 'change-1' } }, 'admin.volunteer.create': { name: 'Frankie Example', email: 'frankie@example.test' },
   'admin.volunteer.update': { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey.updated@example.test' },
   'admin.volunteer.remove': { volunteerId: 'volunteer-3' },
 };
@@ -705,7 +705,7 @@ describe('administrator volunteer record edits', () => {
     const after = await app.read();
     expect(after.volunteers.find(row => row.id === 'volunteer-1')?.lifecycleStatus).toBe('inactive');
     expect(after.volunteers.map(row => row.id)).toEqual(before.volunteers.map(row => row.id));
-    const { volunteers: _after, volunteerChanges: _log, dataRevision: _a, schedulingInputRevision: _b, ...otherAfter } = after; const { volunteers: _before, volunteerChanges: _prior, dataRevision: _c, schedulingInputRevision: _d, ...otherBefore } = before;
+    const { volunteers: _after, dataRevision: _a, schedulingInputRevision: _b, ...otherAfter } = after; const { volunteers: _before, dataRevision: _c, schedulingInputRevision: _d, ...otherBefore } = before;
     expect(otherAfter).toEqual(otherBefore);
     expect(after.volunteers.filter(row => row.id !== 'volunteer-1')).toEqual(before.volunteers.filter(row => row.id !== 'volunteer-1'));
     const view = success(await app.request('admin.schedule.read'));
@@ -743,13 +743,18 @@ describe('administrator volunteer record edits', () => {
 
 describe('volunteer change history', () => {
   const edit = { volunteerId: 'volunteer-3', name: 'Casey Corrected', email: 'casey@example.test' };
+  const historyCount = async (app: Application) => Number((await app.db.prepare('SELECT COUNT(*) AS n FROM volunteer_changes').first<{ n: number }>())!.n);
+  const seed = async (app: Application, count: number, occurredAt: (index: number) => string) => {
+    for (let index = 0; index < count; index++) await app.db.prepare("INSERT INTO volunteer_changes (id, occurred_at, actor_id, actor_email, volunteer_id, volunteer_name, kind, changed_fields) VALUES (?, ?, 'user-admin', 'admin@example.test', 'volunteer-3', 'Casey Example', 'updated', '[{\"field\":\"name\",\"before\":\"a\",\"after\":\"b\"}]')")
+      .bind(`seeded-${String(index).padStart(3, '0')}`, occurredAt(index)).run();
+  };
   it('records an edit with time, administrator, volunteer and before/after values of each changed field only', async () => {
     const app = await application(); app.setNow('2026-10-04T13:30:00.000Z');
     success(await app.request('admin.volunteer.update', edit));
     expect(success(await app.request('admin.volunteer.read')).changes).toEqual([{
       id: expect.any(String), occurredAt: '2026-10-04T13:30:00.000Z', actorId: 'user-admin', actorEmail: 'admin@example.test',
       volunteerId: 'volunteer-3', volunteerName: 'Casey Corrected', kind: 'updated',
-      fields: [{ field: 'name', before: 'Casey Example', after: 'Casey Corrected' }],
+      changedFields: [{ field: 'name', before: 'Casey Example', after: 'Casey Corrected' }],
     }]);
   });
   it('records an addition with every initial field', async () => {
@@ -757,14 +762,14 @@ describe('volunteer change history', () => {
     const { volunteer } = success(await app.request('admin.volunteer.create', { name: 'Frankie Example', email: 'frankie@example.test' }));
     expect(success(await app.request('admin.volunteer.read')).changes).toMatchObject([{
       actorEmail: 'admin@example.test', volunteerId: volunteer.id, volunteerName: 'Frankie Example', kind: 'added',
-      fields: [{ field: 'name', before: null, after: 'Frankie Example' }, { field: 'email', before: null, after: 'frankie@example.test' }, { field: 'status', before: null, after: 'newly-joined' }],
+      changedFields: [{ field: 'name', before: null, after: 'Frankie Example' }, { field: 'email', before: null, after: 'frankie@example.test' }, { field: 'status', before: null, after: 'newly-joined' }],
     }]);
   });
   it('records a removal as a status change', async () => {
     const app = await application();
     success(await app.request('admin.volunteer.remove', { volunteerId: 'volunteer-1' }));
     expect(success(await app.request('admin.volunteer.read')).changes).toMatchObject([{
-      volunteerId: 'volunteer-1', volunteerName: 'Alex Example', kind: 'removed', fields: [{ field: 'status', before: 'active', after: 'inactive' }],
+      volunteerId: 'volunteer-1', volunteerName: 'Alex Example', kind: 'removed', changedFields: [{ field: 'status', before: 'active', after: 'inactive' }],
     }]);
   });
   it('lists newest first', async () => {
@@ -773,11 +778,17 @@ describe('volunteer change history', () => {
     app.setNow('2026-10-04T14:00:00.000Z'); success(await app.request('admin.volunteer.remove', { volunteerId: 'volunteer-2' }));
     expect(success(await app.request('admin.volunteer.read')).changes.map(row => [row.occurredAt, row.kind])).toEqual([['2026-10-04T14:00:00.000Z', 'removed'], ['2026-10-04T13:00:00.000Z', 'updated']]);
   });
-  it('adds no entry for a save that changes nothing or a rejected change', async () => {
+  it('rejects a save that changes nothing, with no revision advance or entry, and records a case-only email edit', async () => {
+    const app = await application(); const before = await app.read();
+    expect(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: before.volunteers.find(row => row.id === 'volunteer-3')!.email })).toEqual({ ok: false, error: { code: 'INVALID_REQUEST', message: 'No changes to save.' } });
+    expect(await app.read()).toEqual(before); expect(await historyCount(app)).toBe(0);
+    success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'Casey@Example.test' }));
+    expect(success(await app.request('admin.volunteer.read')).changes).toMatchObject([{ changedFields: [{ field: 'email', before: 'casey@example.test', after: 'Casey@Example.test' }] }]);
+  });
+  it('adds no entry for a rejected change', async () => {
     const app = await application();
-    success(await app.request('admin.volunteer.update', { volunteerId: 'volunteer-3', name: 'Casey Example', email: 'casey@example.test' }));
     expect(await app.request('admin.volunteer.update', { ...edit, email: 'blair@example.test' })).toMatchObject({ ok: false });
-    expect(success(await app.request('admin.volunteer.read')).changes).toEqual([]);
+    expect(await historyCount(app)).toBe(0);
   });
   it('is added by an idempotent migration that leaves existing volunteers alone, and then records changes', async () => {
     const app = await application(); const before = await app.read();
@@ -786,13 +797,14 @@ describe('volunteer change history', () => {
     await applySql(app.db, migration); await applySql(app.db, migration);
     expect(await app.read()).toEqual(before);
     success(await app.request('admin.volunteer.update', edit));
-    expect((await app.read()).volunteerChanges).toHaveLength(1);
+    expect(await historyCount(app)).toBe(1);
   });
   it('commits the entry with the change: a failed commit leaves neither', async () => {
     const app = await application();
     await app.db.prepare("CREATE TRIGGER refuse_history BEFORE INSERT ON volunteer_changes BEGIN SELECT RAISE(ABORT, 'refused'); END").run();
     expect(await app.request('admin.volunteer.update', edit)).toMatchObject({ ok: false });
     expect((await app.read()).volunteers.find(row => row.id === 'volunteer-3')?.name).toBe('Casey Example');
+    expect((await app.read()).dataRevision).toBe(0);
   });
   it('adds no entry for a stale or replayed request and no extra revision', async () => {
     const app = await application();
@@ -802,8 +814,29 @@ describe('volunteer change history', () => {
     expect(await app.rawRequest(raw)).toBe(first);
     expect(JSON.parse(await app.rawRequest({ ...raw, payload: { ...edit, name: 'Casey Stale' }, idempotencyKey: 'history-edit-2' }))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     const after = await app.read();
-    expect(after).toEqual(saved); expect(after.volunteerChanges).toHaveLength(1);
+    expect(after).toEqual(saved); expect(await historyCount(app)).toBe(1);
     expect(after.dataRevision).toBe(1); expect(after.schedulingInputRevision).toBe(1);
     expect(app.notifications).toHaveLength(0);
+  });
+  it('is never part of the whole-database snapshot, so writes and reads do not load or diff the history', async () => {
+    const app = await application(); await seed(app, 120, index => `2026-10-01T00:00:${String(index % 60).padStart(2, '0')}.000Z`);
+    expect(Object.keys(await app.read())).not.toContain('volunteerChanges');
+    success(await app.request('admin.volunteer.update', edit));
+    expect(await historyCount(app)).toBe(121);
+  });
+  it('reads the newest 50 first and pages older entries by cursor with no gap or repeat across identical timestamps', async () => {
+    const app = await application(); await seed(app, 120, index => index < 60 ? '2026-10-01T00:00:00.000Z' : `2026-10-02T00:00:${String(index - 60).padStart(2, '0')}.000Z`);
+    const first = success(await app.request('admin.volunteer.read'));
+    expect(first.changes).toHaveLength(50); expect(first.older).not.toBeNull();
+    const seen = [...first.changes]; let older = first.older; let pages = 1;
+    while (older) { const page = success(await app.request('admin.volunteer.history', { before: older })); expect(page.changes.length).toBeLessThanOrEqual(50); seen.push(...page.changes); older = page.older; pages++; }
+    expect(pages).toBe(3);
+    // Newer timestamps (indexes 60-119) come first; the 60 identical-timestamp entries fall back to descending id.
+    expect(seen.map(row => row.id)).toEqual(Array.from({ length: 120 }, (_, i) => `seeded-${String(119 - i).padStart(3, '0')}`));
+  });
+  it('reports no older page when the history fits in one page', async () => {
+    const app = await application(); await seed(app, 50, index => `2026-10-01T00:00:${String(index).padStart(2, '0')}.000Z`);
+    const read = success(await app.request('admin.volunteer.read'));
+    expect(read.changes).toHaveLength(50); expect(read.older).toBeNull();
   });
 });

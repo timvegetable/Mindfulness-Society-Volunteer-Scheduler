@@ -10,7 +10,7 @@ import { previewSchedule, publishSchedule } from './schedule';
 import { readCandidates, updateCandidate, confirmCandidate } from './candidates';
 import { previewImport, promoteImport, upsertMapping } from './imports';
 import { disableCalendarSubscription, enableCalendarSubscription, readCalendarSubscription, resetCalendarSubscription } from './calendar';
-import { createVolunteer, recentVolunteerChanges, removeVolunteer, updateVolunteerDetails } from './volunteers';
+import { createVolunteer, readVolunteerChanges, removeVolunteer, updateVolunteerDetails } from './volunteers';
 import { scheduleView, type HandlerContext } from './context';
 
 export function handleOperation(operation: Operation, payload: unknown, ctx: HandlerContext) {
@@ -42,7 +42,8 @@ export function handleOperation(operation: Operation, payload: unknown, ctx: Han
     case 'admin.import.whenIsGood.promote': return promoteImport(ctx, whenIsGoodSource.resultId);
     case 'admin.import.mapping.upsert': return upsertMapping(ctx, input('admin.import.mapping.upsert'));
     case 'admin.insights.read': return Effect.succeed(computeInsights(ctx.state, ctx.config));
-    case 'admin.volunteer.read': return Effect.succeed({ volunteers: ctx.state.volunteers, changes: recentVolunteerChanges(ctx.state) });
+    case 'admin.volunteer.read': return Effect.map(readVolunteerChanges(null), page => ({ volunteers: ctx.state.volunteers, ...page }));
+    case 'admin.volunteer.history': return readVolunteerChanges(input('admin.volunteer.history').before);
     case 'admin.volunteer.create': return createVolunteer(ctx, input('admin.volunteer.create'));
     case 'admin.volunteer.update': return updateVolunteerDetails(ctx, input('admin.volunteer.update'));
     case 'admin.volunteer.remove': return removeVolunteer(ctx, input('admin.volunteer.remove'));

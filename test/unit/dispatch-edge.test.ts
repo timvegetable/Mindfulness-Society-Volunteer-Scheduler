@@ -32,6 +32,7 @@ function harness() {
     Layer.succeed(WhenIsGoodClient, { fetchResults: () => Effect.sync(() => html) }),
     Layer.succeed(Database, {
       read: Effect.sync(() => structuredClone(state)),
+      readVolunteerChanges: () => Effect.succeed({ changes: [], older: null }),
       findIdempotency: (key, instant) => Effect.sync(() => records.find(record => record.actorId === key.actorId && record.operation === key.operation && record.idempotencyKey === key.idempotencyKey && new Date(record.createdAt).getTime() >= new Date(instant).getTime() - 86400000) ?? null),
       commit: input => Effect.gen(function* () {
         if (input.before.dataRevision !== state.dataRevision) return yield* Effect.fail(new AppError('STALE_REVISION', 'Changed'));

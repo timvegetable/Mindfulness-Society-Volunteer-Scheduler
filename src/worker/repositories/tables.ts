@@ -22,7 +22,6 @@ function table(key: TableKey, name: string, columns: string, extra: Omit<Table, 
 export const tables: readonly Table[] = [
   table('centers', 'centers', 'id name active created_at updated_at', { booleans: ['active'] }),
   table('volunteers', 'volunteers', 'id name email lifecycle_status interview_status readiness_rank source created_at updated_at', { schedulingInput: true }),
-  table('volunteerChanges', 'volunteer_changes', 'id occurred_at actor_id actor_email volunteer_id volunteer_name kind fields', { json: ['fields'] }),
   table('users', 'users', 'id email roles volunteer_id center_ids active', { json: ['roles', 'center_ids'], booleans: ['active'] }),
   table('recurringAvailability', 'recurring_availability', 'id volunteer_id weekday start_time end_time time_zone source updated_at', { schedulingInput: true }),
   table('availabilityExceptions', 'availability_exceptions', 'id volunteer_id date kind start_time end_time time_zone reason updated_at', { schedulingInput: true }),

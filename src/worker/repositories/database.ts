@@ -2,7 +2,8 @@ import { prepareSchedule, preparedScheduleStatements } from '../scheduleRead/pre
 import { representationTables } from '../scheduleRead/storage';
 import type { Operation } from '../../shared/api/operations';
 import { AppError } from '../../shared/api/errors';
-import { emptySnapshot, type Snapshot } from '../../shared/domain/models';
+import { emptySnapshot, type Snapshot, type VolunteerChange } from '../../shared/domain/models';
+import { volunteerChangeStatement } from './volunteerChanges';
 import { decodeProjectedRow, rowProjection, tableDiff, tables } from './tables';
 
 export interface IdempotencyKey { actorId: string; operation: string; idempotencyKey: string }
@@ -14,6 +15,8 @@ export interface CommitInput {
   fingerprint: string;
   response: string;
   createdAt: string;
+  /** Append-only history entries written in the same atomic batch; never read back into `before`/`after`. */
+  volunteerChanges?: readonly VolunteerChange[];
   advanceDataRevision?: boolean;
   recordSynchronization?: boolean;
   synchronizedSourceHash?: string;
@@ -73,7 +76,8 @@ const operationTableKeys: Partial<Record<Operation, readonly (typeof tables[numb
   'volunteer.calendar.disable': ['users', 'volunteers', 'calendarSubscriptions'],
   'center.candidate.read': ['users', 'centers', 'candidateSchedules', 'volunteers', 'recurringAvailability'],
   'admin.insights.read': ['users', 'volunteers', 'recurringAvailability', 'schedulingRuns', 'assignments'],
-  'admin.volunteer.read': ['users', 'volunteers', 'volunteerChanges'],
+  'admin.volunteer.read': ['users', 'volunteers'],
+  'admin.volunteer.history': ['users'],
 };
 
 export async function readOperationSnapshot(db: D1Database, operation: Operation): Promise<Snapshot> {
@@ -186,6 +190,7 @@ export function prepareCommit(input: CommitInput, scheduleStatements: CommitStat
     const sql = `INSERT INTO ${table.name} (${table.columns.join(', ')}) SELECT ${values} FROM json_each(?) WHERE true ON CONFLICT(id) DO UPDATE SET ${update}`;
     statements.push(statement(sql, JSON.stringify(changed)));
   }
+  statements.push(...(input.volunteerChanges ?? []).map(volunteerChangeStatement));
   if (schedulingInputsChanged) {
     statements.push(statement(`INSERT INTO meta (key, value) VALUES ('schedulingInputRevision', '1')
       ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`));
