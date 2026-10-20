@@ -1,5 +1,6 @@
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet } from 'jose';
 import { AppError } from '../../shared/api/errors';
+import { isEmailAddress } from '../../shared/domain/email';
 import { readBoundedText, type Fetch } from './http';
 export interface VerifiedIdentity { email: string; expiresAt: number }
 const GOOGLE_JWKS = 'https://www.googleapis.com/oauth2/v3/certs';
@@ -41,7 +42,7 @@ export function makeGoogleVerifier(config: { audience: string; fetch: Fetch; now
           requiredClaims: ['exp', 'email', 'email_verified'],
           currentDate: new Date(config.now()),
         });
-        if (payload.email_verified !== true || typeof payload.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email.trim())) {
+        if (payload.email_verified !== true || typeof payload.email !== 'string' || !isEmailAddress(payload.email.trim())) {
           throw new Error('Verified email required');
         }
         if (!Number.isSafeInteger(payload.exp)) throw new Error('Invalid expiration');

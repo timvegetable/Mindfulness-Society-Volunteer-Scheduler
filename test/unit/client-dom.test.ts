@@ -27,6 +27,7 @@ let volunteerDashboardOverride: Partial<Pick<ResultOf<'volunteer.dashboard'>, 'a
 let insightsGrid: { weekday: number; start: string; end: string; count: number; volunteers: typeof volunteer[] }[];
 let syncPending: ResultOf<'admin.sync.read'>['pending'];
 let syncVolunteers: ResultOf<'admin.sync.read'>['volunteers'];
+let adminVolunteers: Volunteer[];
 let adminSchedule: ResultOf<'admin.schedule.read'> | undefined;
 let previewOutput: ResultOf<'admin.schedule.preview'>['output'] | undefined;
 const pendingParticipant = (id: string, name: string): ResultOf<'admin.sync.read'>['pending'][number] => ({
@@ -54,7 +55,7 @@ async function mount() {
       status: { lastAttemptAt: '2026-10-13T12:00:00Z', lastSuccessAt: '2026-10-13T12:00:00Z', effectiveChangeAt: null, outcome: 'unchanged', diagnostic: null, participantCount: 1, matchedCount: 1, pendingCount: 0 },
       ...(body.operation === 'admin.sync.read' ? { pending: syncPending, imports: [], volunteers: syncVolunteers } : {}) };
     else if (body.operation === 'admin.insights.read') data = { ...base, leftoverVolunteers: [volunteer], grid: insightsGrid };
-    else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: [volunteer] };
+    else if (body.operation === 'admin.volunteer.read') data = { ...base, volunteers: adminVolunteers };
     else throw new Error(`Unexpected mutation ${body.operation}`);
     return new Response(JSON.stringify({ ok: true, data }));
   } });
@@ -62,7 +63,7 @@ async function mount() {
 beforeEach(() => {
   document.body.replaceChildren(); const app = document.createElement('div'); app.id = 'app'; document.body.append(app);
   requests = []; roles = ['volunteer']; confirmAnswer = false; confirmMessage = ''; previewRevision = 7; configId = 'fake.apps.googleusercontent.com'; initialized = 0; dashboardRead = undefined; volunteerDashboardOverride = undefined;
-  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminSchedule = undefined; previewOutput = undefined;
+  syncPending = []; syncVolunteers = [{ id: volunteer.id, name: volunteer.name, email: volunteer.email }]; adminVolunteers = [volunteer]; adminSchedule = undefined; previewOutput = undefined;
   insightsGrid = [{ weekday: 1, start: '09:00', end: '10:00', count: 1, volunteers: [volunteer] }];
   window.google = { accounts: { id: { initialize(options) { initialized++; callback = options.callback; }, renderButton(node) { node.textContent = 'Google sign-in'; }, disableAutoSelect() {} } } };
 });
@@ -315,6 +316,21 @@ describe('client DOM behaviors', () => {
     expect(document.body.textContent).toContain('Availability is up to date.');
     expect(requests.some(item => item.operation === 'admin.sync.now')).toBe(true);
     expect(requests.some(item => item.operation.includes('promote') || item.operation.includes('whenIsGood.preview'))).toBe(false);
+  });
+
+  it('lists Volunteers tab rows in the same deterministic order as roster link choices', async () => {
+    roles = ['administrator'];
+    adminVolunteers = [
+      { ...volunteer, id: 'v-z', name: 'alex Morgan', email: 'z@example.test' },
+      { ...volunteer, id: 'v-tie-z', name: 'Alex Morgan', email: 'a@example.test' },
+      { ...volunteer, id: 'v-tie-a', name: 'ALEx Morgan', email: 'a@example.test' },
+      { ...volunteer, id: 'v-last', name: 'zoe Example', email: 'zoe@example.test' },
+      { ...volunteer, id: 'v-first', name: 'Ada Example', email: 'ada@example.test' },
+    ];
+    await signIn(); click('Volunteers'); await settle();
+
+    expect([...document.querySelectorAll<HTMLButtonElement>('.volunteers-panel button[data-focus-key]')].map(node => node.dataset.focusKey))
+      .toEqual(['volunteer-v-first', 'volunteer-v-tie-a', 'volunteer-v-tie-z', 'volunteer-v-z', 'volunteer-v-last']);
   });
 
   it('keeps roster link choices alphabetized with deterministic ties in every pending participant picker', async () => {

@@ -92,10 +92,12 @@ const timeRange = (start: string, end: string) => `${timeText(start)}–${timeTe
 const sessionText = (session: Session, centers: ResultOf<'volunteer.dashboard'>['centers']) => `${formatSessionTitle(session, centers)} · ${session.date} · ${timeRange(session.start, session.end)}`;
 const unfilledPlaces = (session: Session, assignedCount: number) => session.status === 'cancelled' ? 0 : Math.max(0, session.requiredStaffCount - assignedCount);
 const names = (ids: readonly string[], volunteers: readonly Volunteer[]) => ids.map(id => volunteers.find(volunteer => volunteer.id === id)?.name ?? 'Volunteer').join(', ') || '—';
-const sortedRosterOptions = (volunteers: ResultOf<'admin.sync.read'>['volunteers']) => [...volunteers]
-  .sort((left, right) => rosterOptionCollator.compare(left.name, right.name)
+const compareRoster = (left: Pick<Volunteer, 'id' | 'name' | 'email'>, right: Pick<Volunteer, 'id' | 'name' | 'email'>) =>
+  rosterOptionCollator.compare(left.name, right.name)
     || rosterOptionCollator.compare(left.email, right.email)
-    || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+const sortedRosterOptions = (volunteers: ResultOf<'admin.sync.read'>['volunteers']) => [...volunteers]
+  .sort(compareRoster)
   .map(volunteer => [volunteer.id, `${volunteer.name} (${volunteer.email})`] as [string, string]);
 
 function shell() {
@@ -710,7 +712,7 @@ function importsView(data: ResultOf<'admin.sync.read'>) {
 
 function volunteersView(data: ResultOf<'admin.volunteer.read'>) {
   const panel = card('Volunteers', 'Correct a name or email. Availability sync matches WhenIsGood submissions by email.'); panel.classList.add('volunteers-panel'); content.append(panel);
-  const sorted = [...data.volunteers].sort((left, right) => rosterOptionCollator.compare(left.name, right.name) || rosterOptionCollator.compare(left.email, right.email));
+  const sorted = [...data.volunteers].sort(compareRoster);
   const rows = sorted.map(volunteer => {
     const nameCell = el('div', volunteer.name); const emailCell = el('div', volunteer.email); const action = el('div', '', 'actions');
     const edit = button('Edit', () => {
